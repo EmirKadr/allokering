@@ -1,30 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-allokera5.0.py
+allokera8.5.py
 --------------
-- Nytt: Auto-refill
-  - Refill (HP = HUVUDPLOCK + SKRYMMANDE samt AUTOSTORE) beräknas automatiskt direkt efter allokering.
-  - "Öppna påfyllningspallar" visar den senast auto-beräknade rapporten (ingen extra beräkning krävs).
-- Nytt: Sales (frivilligt)
-  - Filväljare för plocklogg (CSV). När filen laddas beräknas försäljningsinsikter direkt:
-    Total_7/30/90, ADV_30/90, SenastPlockad, DagarSedanSenast, UnikaPlockdagar_90,
-    ABC_klass (Pareto 80/15/5), NollraderPerPlockdag_90 (medel antal rader med Plockat=0 per aktiv plockdag).
-  - Ny knapp "Öppna försäljningsinsikter" öppnar en Excel med:
-    "Top sellers (90d)", "Slow movers (≥90d/0)" och "Sammanställning".
-  - Valfri annotering: Om sales finns läggs kolumner (ADV_90, UnikaPlockdagar_90, ABC_klass,
-    DagarSedanSenast, NollraderPerPlockdag_90) till vid visning av refill-bladen. Påverkar inte logiken.
-- Förbättrat: Zonbaserad omklassificering
-  - Efter att HELPALL och AUTOSTORE har allokerats används orderfilens "Zon"‑kolumn
-    för att klassificera huvudplock. Om zonkoden är "S", "E", "A", "Q", "O" eller "F"
-    sätts Källtyp och "Zon (beräknad)" enligt mappningen: S→SKRYMMANDE, E→EHANDEL,
-    A→HUVUDPLOCK, Q→EHANDEL, O→SKRYMMANDE, F→BRAND. Ingen plockplats/saldofil krävs.
-- Refill-logik:
-  - HP-bladet inkluderar zon A + S; plocksaldo dras EN gång per artikel och fördelas proportionellt.
-  - 0-rader filtreras bort (HP + AUTOSTORE). HELPALL som använts exkluderas alltid från refill.
-- Rensning/underhåll:
-  - Tidigare checkbox för “exkludera HELPALL” och all relaterad kod borttagen (beteende alltid aktivt).
-  - Ingen "Öppna ej inlagrade"-knapp längre (filen kan fortfarande användas för kolumnen i refill).
+Denna version (8.5) utgår från 8.4 och lägger till en ny zonklassificering:
+
+  * "D" → ("DISPLAY", "D") för att märka displayplock.  Alla andra
+    förbättringar från tidigare versioner (sorterad prognosrapport,
+    robotfilter, buffertsaldo‑kolumn, grön rensa‑cache‑knapp och avskalad
+    kommentering) finns kvar.
 """
 
 from __future__ import annotations
@@ -34,7 +18,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Deque, Dict, List, Tuple, Optional
 
-# Drag & drop support
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
 except ImportError:
@@ -49,10 +32,6 @@ import sys
 import subprocess
 import numpy as np
 
-# --- Prognos-inläsning (frivillig) ---
-# Följande funktion normaliserar en prognosfil (XLSX) genom att kasta bort
-# onödiga rader/kolumner och standardisera rubriker. Den returnerar kolumnerna:
-#  Artikelnummer[str], Beskrivning[str], Antal styck[int], Antal rader[int], Antal butiker[int].
 def read_prognos_xlsx(path: str) -> pd.DataFrame:
     """
     Läser en prognos (XLSX) och returnerar ett normaliserat DataFrame.
@@ -68,23 +47,18 @@ def read_prognos_xlsx(path: str) -> pd.DataFrame:
       - Antal rader (int)
       - Antal butiker (int)
     """
-    df = pd.read_excel(path, header=None, dtype=object)
-    # Om tom fil
+    df = pd.read_excel(path, header=None, dtype=str, engine="openpyxl")
     if df.empty:
         return pd.DataFrame(columns=["Artikelnummer", "Beskrivning", "Antal styck", "Antal rader", "Antal butiker"])
-    # Rader att droppa: index 0,1,3
     drop_idx = [i for i in (0, 1, 3) if i < len(df.index)]
     df = df.drop(index=drop_idx, errors="ignore").reset_index(drop=True)
-    # Droppa första kolumnen (kolumn A)
     if df.shape[1] > 0:
         df = df.drop(columns=[df.columns[0]]).reset_index(drop=True)
     if df.empty:
         return pd.DataFrame(columns=["Artikelnummer", "Beskrivning", "Antal styck", "Antal rader", "Antal butiker"])
-    # Första rad som rubriker
     header = df.iloc[0].astype(str).str.strip().tolist()
     df = df.iloc[1:].reset_index(drop=True)
     df.columns = header
-    # Matcha kolumnnamn (case-insensitivt, alfanumeriskt)
     def _ci_match(name: str) -> str:
         return "".join(c.lower() for c in str(name).strip() if c.isalnum())
     def _pick_col(cols: List[str], candidates: List[str]) -> str | None:
@@ -120,16 +94,6 @@ def read_prognos_xlsx(path: str) -> pd.DataFrame:
     out = out.loc[mask_keep].reset_index(drop=True)
     return out
 
-# --- Kampanjvolymer (frivillig) ---
-# Denna funktion normaliserar en kampanjvolymfil (XLSX) enligt en specifik sekvens av rader och kolumner som ska tas bort.
-# Den förväntar sig ett Excel‑ark med samma struktur som "Granngården prognos kampanjvolymer per dag". Stegen är:
-#   1. Ta bort rad 5 (1‑baserat index) — motsvarar index 4.
-#   2. Ta bort raderna 1–3 (index 0–2).
-#   3. Ta bort alla kolumner från och med kolumn G *efter* första behållna kolumn (det vill säga, behåll upp till kolumn index 6). Detta
-#      innebär att vi sparar de sju första kolumnerna (index 0–6) och kastar resten.
-#   4. Ta bort kolumn F, E, D, B och A i just den ordningen. Efter dessa steg återstår kolumn C (Produktkod) och kolumn G
-#      (Projicerat antal) från originalfilen. Dessa döps till 'Artikelnummer' respektive 'Antal styck'.
-# Resultatet är en DataFrame med två kolumner: Artikelnummer (str) och Antal styck (int).
 
 def read_campaign_xlsx(path: str) -> pd.DataFrame:
     """
@@ -138,72 +102,47 @@ def read_campaign_xlsx(path: str) -> pd.DataFrame:
       - Artikelnummer (str)
       - Antal styck (int)
     """
-    # Läs hela arket utan rubriker
-    df = pd.read_excel(path, header=None, dtype=object)
+    df = pd.read_excel(path, header=None, dtype=str, engine="openpyxl")
     if df.empty:
         return pd.DataFrame(columns=["Artikelnummer", "Antal styck"])
-    # 1) Ta bort rad 5 (index 4)
     if len(df.index) > 4:
         df = df.drop(index=[4])
-    # 2) Ta bort rader 1–3 (index 0–2)
     drop_idx = [i for i in (0, 1, 2) if i < len(df.index)]
     df = df.drop(index=drop_idx)
-    # Återställ index efter rad‑borttagning
     df = df.reset_index(drop=True)
-    # 3) Ta bort alla kolumner från G och höger. G är kolumn 7 (A=1) → index 6 (0‑baserat).
-    # Vi vill behålla kolumnerna 0–6 (inklusive) och kasta övriga.
     keep_cols = [c for c in df.columns if c <= 6]
     df = df.loc[:, keep_cols]
-    # 4) Ta bort kolumn F (index 5) om den finns
     if 5 in df.columns:
         df = df.drop(columns=[5])
-    # 5) Ta bort kolumn E (index 4) om den finns
     if 4 in df.columns:
         df = df.drop(columns=[4])
-    # 6) Ta bort kolumn D (index 3) om den finns
     if 3 in df.columns:
         df = df.drop(columns=[3])
-    # 7) Ta bort kolumn B (index 1) om den finns
     if 1 in df.columns:
         df = df.drop(columns=[1])
-    # 8) Ta bort kolumn A (index 0) om den finns
     if 0 in df.columns:
         df = df.drop(columns=[0])
-    # Efter dessa steg bör endast två kolumner återstå, med index som ursprungligen var 2 (Produktkod) och 6 (Projicerat antal)
-    # Säkerställ att vi bara har två kolumner; annars returnera tom df
     if df.shape[1] != 2:
         return pd.DataFrame(columns=["Artikelnummer", "Antal styck"])
-    # Ge dem rubriker
     df = df.reset_index(drop=True)
     df.columns = ["Artikelnummer", "Antal styck"]
-    # Rensa och konvertera
     df["Artikelnummer"] = df["Artikelnummer"].astype(str).str.strip()
     df["Antal styck"] = pd.to_numeric(df["Antal styck"], errors="coerce").fillna(0).astype(int)
-    # Filtrera bort rader där artikelnummer saknas
     df = df.loc[df["Artikelnummer"].astype(str).str.len().gt(0)].reset_index(drop=True)
-    # Droppa header-rad om Artikelnummer är exakt "Produktkod" (kan förekomma efter radborttagning)
     if not df.empty and str(df.loc[0, "Artikelnummer"]).lower() in ("produktkod", "#"):
         df = df.drop(index=[0]).reset_index(drop=True)
     return df
 
-# --- Konfig/konstanter ----------------------------------------------------
 
-APP_TITLE = "Buffertpallar → Order-allokering (GUI) — 5.0"
+APP_TITLE = "Buffertpallar → Order-allokering (GUI) — 8.5"
 DEFAULT_OUTPUT = "allocated_orders.csv"
 
 INVALID_LOC_PREFIXES: Tuple[str, ...] = ("AA",)
 INVALID_LOC_EXACT: set[str] = {"TRANSIT", "TRANSIT_ERROR", "MISSING", "UT2"}
 
-# Allokering använder 29/30/32
 ALLOC_BUFFER_STATUSES: set[int] = {29, 30, 32}
-# Refill använder 29/30
 REFILL_BUFFER_STATUSES: set[int] = {29, 30}
 
-#
-# Near‐miss threshold expressed as a proportion of the remaining need.  A pallet will be
-# considered a “near miss” if it exceeds the outstanding demand by no more than this
-# fraction.  The default used to be 50 % (0.50) but has been lowered to 30 % (0.30)
-# based on user feedback.
 NEAR_MISS_PCT: float = 0.30  # 30 % över behov
 
 ORDER_SCHEMA: Dict[str, List[str]] = {
@@ -222,7 +161,6 @@ BUFFER_SCHEMA: Dict[str, List[str]] = {
     "status":  ["status", "pallstatus", "state"],
 }
 
-# Frivillig fil: "Ej inlagrade artiklar" – mappning
 NOT_PUTAWAY_SCHEMA: Dict[str, List[str]] = {
     "artikel":  ["artikel", "artnr", "art.nr", "artikelnummer"],
     "namn":     ["artikelnamn", "artikelbenämning", "benämning", "produktnamn", "namn", "artikel.1"],
@@ -234,7 +172,6 @@ NOT_PUTAWAY_SCHEMA: Dict[str, List[str]] = {
     "utgang":   ["utgång", "bäst före", "utgångsdatum", "utgangsdatum", "best före"],
 }
 
-# Nytt schema: "Saldo inkl. automation" – mappning
 SALDO_SCHEMA: Dict[str, List[str]] = {
     "artikel":    ["artikel", "artnr", "art.nr", "artikelnummer", "sku", "article"],
     "plocksaldo": ["plocksaldo", "plock saldo", "plock-saldo", "saldo", "pick saldo", "pick qty",
@@ -242,18 +179,14 @@ SALDO_SCHEMA: Dict[str, List[str]] = {
     "plockplats": ["plockplats", "huvudplock", "mainpick", "hyllplats", "bin", "location", "lagerplats"],
 }
 
-# Schema för item option-fil: artikel och staplingsbar-flagga. Kolumnnamnet i filen kan vara
-# "Staplingsbar" eller "Ej staplingsbar" beroende på filversion. Inkludera vanliga varianter.
 ITEM_SCHEMA: Dict[str, List[str]] = {
     "artikel": ORDER_SCHEMA["artikel"],  # återanvänd artikel-kandidater från beställningar
-    # Kandidater för staplingsbar/ej staplingsbar
     "staplingsbar": [
         "staplingsbar", "staplings bar", "staplbar", "stackable",
         "ej staplingsbar", "ejstaplingsbar", "ej_staplingsbar", "non stackable"
     ]
 }
 
-# --- Hjälpare -------------------------------------------------------------
 
 def _open_df_in_excel(df, label: str = "data") -> str:
     """Skriv DF (eller {blad: DF}) till temporär fil och öppna i OS:et."""
@@ -301,7 +234,6 @@ def smart_to_datetime(s) -> pd.Series:
         ser = pd.Series(s) if not isinstance(s, pd.Series) else s
         vals = ser.dropna().astype(str).str.strip()
         sample = vals.head(50)
-        # Försök YYYYMMDD först
         numeric_like = (sample.str.match(r"^\d{8}$").sum() >= max(1, int(len(sample) * 0.6)))
         if numeric_like:
             dt = pd.to_datetime(ser, format="%Y%m%d", errors="coerce")
@@ -348,7 +280,6 @@ def _first_path_from_dnd(event_data: str) -> str:
     if raw.startswith('"') and raw.endswith('"'): raw = raw[1:-1]
     return raw
 
-# -------- "Ej inlagrade" (mappning) --------------------------------------
 
 def _read_not_putaway_csv(path: str) -> pd.DataFrame:
     """Läs CSV för 'Ej inlagrade'. Försök auto-separator, fallback TAB."""
@@ -389,7 +320,6 @@ def normalize_not_putaway(df_raw: pd.DataFrame) -> pd.DataFrame:
         if c in out.columns: out[c] = out[c].fillna("").astype(str).str.strip()
     return out
 
-# -------- "Saldo inkl. automation" (mappning) -----------------------------
 
 def normalize_saldo(df_raw: pd.DataFrame) -> pd.DataFrame:
     """Mappa saldofil till struktur per artikel: Plocksaldo (sum) + Plockplats (första icke-tom)."""
@@ -412,9 +342,7 @@ def normalize_saldo(df_raw: pd.DataFrame) -> pd.DataFrame:
               .agg({"Plocksaldo":"sum","Plockplats":lambda s: next((x for x in s if isinstance(x,str) and x.strip()), "")}))
     return agg
 
-# ====================== SALES (inbakat) ======================
 
-# Robust kolumnmatchning för plocklogg
 PICK_LOG_SCHEMA: dict[str, list[str]] = {
     "artikel": ["artikel", "artikelnr", "artnr", "art.nr", "artikelnummer", "sku", "article"],
     "antal":   ["plockat", "antal", "quantity", "qty", "picked", "units"],
@@ -433,7 +361,6 @@ def normalize_pick_log(df_raw: pd.DataFrame) -> pd.DataFrame:
     qty_col = find_col(df, PICK_LOG_SCHEMA["antal"], required=True)
     dt_col  = find_col(df, PICK_LOG_SCHEMA["datum"], required=True)
 
-    # Försök hitta ett namn/benämning
     name_col = None
     for cand in ["artikelnamn","namn","benämning","artikelbenämning","produktnamn"]:
         try:
@@ -485,30 +412,24 @@ def compute_sales_metrics(df_norm: pd.DataFrame, today=None) -> pd.DataFrame:
     df["DatumNorm"] = pd.to_datetime(df["Datum"]).dt.normalize()
     df["Plockat"] = pd.to_numeric(df["Plockat"], errors="coerce").fillna(0.0)
 
-    # Fönsterfilter
     mask7  = df["DatumNorm"] >= (today - pd.Timedelta(days=7))
     mask30 = df["DatumNorm"] >= (today - pd.Timedelta(days=30))
     mask90 = df["DatumNorm"] >= (today - pd.Timedelta(days=90))
 
-    # Summeringar per Artikelnummer
     total7  = df.loc[mask7].groupby("Artikelnummer")["Plockat"].sum()
     total30 = df.loc[mask30].groupby("Artikelnummer")["Plockat"].sum()
     total90 = df.loc[mask90].groupby("Artikelnummer")["Plockat"].sum()
 
-    # Senaste plock (>0)
     positive = df[df["Plockat"] > 0]
     last_pick = positive.groupby("Artikelnummer")["DatumNorm"].max() if not positive.empty else pd.Series(dtype="datetime64[ns]")
     last_pick = last_pick.reindex(df["Artikelnummer"].unique())
 
-    # Dagar sedan senaste
     days_since = (today - last_pick).dt.days
     days_since = days_since.where(~days_since.isna(), other=pd.NA)
 
-    # Unika plockdagar under 90 (Plockat>0)
     sub90_pos = df.loc[mask90 & (df["Plockat"] > 0)]
     unique_days_90 = sub90_pos.groupby("Artikelnummer")["DatumNorm"].nunique()
 
-    # Nollrader per plockdag sista 90
     sub90 = df.loc[mask90].copy()
     zero_rows = (sub90.assign(IsZero=(sub90["Plockat"]==0))
                         .groupby(["Artikelnummer","DatumNorm"])["IsZero"].sum()
@@ -516,7 +437,6 @@ def compute_sales_metrics(df_norm: pd.DataFrame, today=None) -> pd.DataFrame:
     zero_avg = zero_rows.reset_index().groupby("Artikelnummer")["ZeroRows"].mean()
     zero_avg = zero_avg.reindex(df["Artikelnummer"].unique()).fillna(0.0)
 
-    # Bygg metrics
     idx = pd.Index(sorted(df["Artikelnummer"].astype(str).unique()), name="Artikelnummer")
     out = pd.DataFrame(index=idx)
     out["Total_7"]  = total7.reindex(idx).fillna(0).round().astype(int)
@@ -529,7 +449,6 @@ def compute_sales_metrics(df_norm: pd.DataFrame, today=None) -> pd.DataFrame:
     out["UnikaPlockdagar_90"] = unique_days_90.reindex(idx).fillna(0).astype(int)
     out["NollraderPerPlockdag_90"] = zero_avg.reindex(idx).fillna(0.0).astype(float)
 
-    # ABC-klass baserat på Total_90 (Pareto 80/15/5)
     tmp = out["Total_90"].astype(float).sort_values(ascending=False)
     total_sum = float(tmp.sum())
     if total_sum <= 0:
@@ -544,14 +463,12 @@ def compute_sales_metrics(df_norm: pd.DataFrame, today=None) -> pd.DataFrame:
 
     out = out.reset_index()
 
-    # Lägg på Artikelnamn om det finns i df_norm
     if "Artikel" in df_norm.columns:
         out = out.merge(df_norm[["Artikelnummer","Artikel"]].drop_duplicates(),
                         on="Artikelnummer", how="left")
     else:
         out["Artikel"] = out["Artikelnummer"]
 
-    # Lägg om kolumnordningen
     cols = ["Artikelnummer","Artikel"] + [c for c in out.columns if c not in ["Artikelnummer","Artikel"]]
     out = out[cols]
 
@@ -569,7 +486,6 @@ def _open_sales_excel(df_or_dict, label: str = "sales") -> str:
         s = s.strip("'")  # ledande/avslutande apostrof ställer också till det
         if not s:
             s = "Sheet"
-        # Max 31 tecken i Excel
         return s[:31]
 
     def _dedupe(name: str, used: set[str]) -> str:
@@ -628,7 +544,6 @@ def open_sales_insights(df_metrics: pd.DataFrame) -> str:
     if df_metrics is None or df_metrics.empty:
         raise RuntimeError("Inga försäljningsinsikter att visa (tom metrics).")
 
-    # Se till att Artikel finns först
     cols = ["Artikel"] + [c for c in df_metrics.columns if c != "Artikel"]
     df = df_metrics[cols].copy()
 
@@ -656,7 +571,6 @@ def annotate_refill(refill_df: pd.DataFrame, df_metrics: pd.DataFrame) -> pd.Dat
     out = refill_df.merge(df_metrics[cols], on="Artikel", how="left")
     return out
 
-# --- Item normalisering -------------------------------------------------
 
 def normalize_items(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
@@ -669,7 +583,6 @@ def normalize_items(df_raw: pd.DataFrame) -> pd.DataFrame:
     if df_raw is None or df_raw.empty:
         return pd.DataFrame(columns=["Artikel", "Staplingsbar"])
     df = df_raw.copy()
-    # Städa kolumner från BOM och whitespace
     df = _clean_columns(df)
     try:
         art_col = find_col(df, ITEM_SCHEMA["artikel"], required=True)
@@ -682,24 +595,16 @@ def normalize_items(df_raw: pd.DataFrame) -> pd.DataFrame:
     if not art_col:
         return pd.DataFrame(columns=["Artikel", "Staplingsbar"])
     if not stap_col or stap_col not in df.columns:
-        # Om Staplingsbar inte finns, returnera bara artikel-kolumn med tom flagga
         tmp = df[[art_col]].copy()
         tmp.columns = ["Artikel"]
-        # Skapa en kolumn för Ej Staplingsbar med tom sträng
         tmp["Ej Staplingsbar"] = ""
-        # Ta bort dubbletter, behåll första
         return tmp.drop_duplicates(subset=["Artikel"]).reset_index(drop=True)
-    # Extrahera och normalisera
     tmp = df[[art_col, stap_col]].copy()
-    # Döp om kolumnerna till standardnamn
     tmp.columns = ["Artikel", "Ej Staplingsbar"]
-    # Städa upp: trimma strängar och ersätt NaN med tomt
     tmp["Artikel"] = tmp["Artikel"].astype(str).str.strip()
     tmp["Ej Staplingsbar"] = tmp["Ej Staplingsbar"].fillna("").astype(str).str.strip()
-    # Ta bort dubbletter, behåll första förekomsten
     return tmp.drop_duplicates(subset=["Artikel"]).reset_index(drop=True)
 
-# --- Pallplatser (kundsammanställning) ---------------------------------
 
 def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -715,7 +620,6 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
     if result_df is None or result_df.empty:
         return pd.DataFrame(columns=["Kund", "Kund1", "Botten Pallar", "Topp Pallar", "Totalt Pallar", "Pallplatser"])
     df = result_df.copy()
-    # Identifiera kolumner
     try:
         kund_col = find_col(df, ["kund", "customer"], required=True)
     except Exception:
@@ -734,7 +638,6 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
     if zone_col is None or palltyp_col is None:
         return pd.DataFrame(columns=["Kund", "Kund1", "Botten Pallar", "Topp Pallar", "Totalt Pallar", "Pallplatser"])
 
-    # Förbereda kolumner
     df[zone_col] = df[zone_col].fillna("").astype(str).str.strip().str.upper()
     if stack_col:
         df[stack_col] = df[stack_col].fillna("").astype(str).str.strip().str.upper()
@@ -743,34 +646,26 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
         stack_col = "_stack_tmp"
     df[palltyp_col] = df[palltyp_col].fillna("").astype(str).str.strip().str.upper()
 
-    # Gruppberäkning
     groups = df.groupby([kund_col] if kund1_col is None else [kund_col, kund1_col])
     records: list[dict] = []
     import math
     for keys, sub in groups:
-        # unpack keys
         if kund1_col is None:
             kund_val = keys
             kund1_val = ""
         else:
             kund_val, kund1_val = keys
-        # Bottenpallar: zon H och Ej Staplingsbar = N eller tomt
-        # Om kolumnen är tom (""), räknas den som staplingsbar=N.
         mask_bottom = (sub[zone_col] == "H") & ((sub[stack_col] == "N") | (sub[stack_col] == ""))
         B = int(mask_bottom.sum())
-        # Toppallar A
         rows_A = int((sub[zone_col] == "A").sum())
-        # En pall rymmer 20 rader. Om det finns några rader ska minst 1 pall avsättas, så runda uppåt.
         if rows_A > 0:
             top_A = math.ceil(rows_A / 20.0)
         else:
             top_A = 0
-        # Toppallar H: ej staplingsbar = Y och palltyp != SJÖ
         mask_topH = (sub[zone_col] == "H") & (sub[stack_col] == "Y") & (sub[palltyp_col] != "SJÖ")
         top_H = int(mask_topH.sum())
-        # Toppallar R: baserat på antal rader
         rows_R = int((sub[zone_col] == "R").sum())
-        if rows_R == 0:
+        if rows_R < 27:
             top_R = 0
         elif rows_R <= 96:
             top_R = 1
@@ -780,7 +675,6 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
             top_R = 3
         else:
             top_R = 4
-        # Toppallar S: baserat på antal rader
         rows_S = int((sub[zone_col] == "S").sum())
         if rows_S == 0:
             top_S = 0
@@ -794,33 +688,20 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
             top_S = 4
         else:
             top_S = 5
-        # Sjörader (H-zon med palltyp SJÖ)
         mask_sjo = (sub[zone_col] == "H") & (sub[palltyp_col] == "SJÖ")
         S_rows = int(mask_sjo.sum())
-        # Totala topplar (kan vara float)
         T = top_A + top_H + top_R + top_S
-        # Beräkna pallplatser
         half_sum = (B + T) / 2.0
         P_component = math.ceil(half_sum)
-        # Välj max mellan T och avrundade halvsumman
         max_val = T if T > P_component else P_component
         P = max_val + 2 * S_rows
-        # Totalt pallar (sjöpallar räknas som 1 pall per rad)
         total_pallar = B + T + S_rows
-        # Bygg resultatrad med extra rubriker för helpall/hellpall, sjöpall, skrymme, plockpall och autostore
-        # helpall stapelbar = antal rader i H-zon med Ej Staplingsbar = N eller tomt (B)
         helpall_stapelbar = B
-        # helpall ej stapelbar = antal rader i H-zon med Ej Staplingsbar = Y och palltyp != SJÖ
         helpall_ej_stapelbar = top_H
-        # Sjö pall = antal rader i H-zon där palltyp = SJÖ
         sjo_pall = S_rows
-        # Skrymme = antal pallar från S-zon (skrymmande) enligt toppal-logik
         skrymme_pallar = top_S
-        # Plockpall = antal pallar från A-zon (huvudplock), en pall per 20 rader (avrundat uppåt)
         plockpall = top_A
-        # autostore = antal pallar från R-zon (AUTOSTORE) enligt toppal-logik
         autostore_pallar = top_R
-        # Totalt pallar har samma beräkning som tidigare (B + T + S_rows)
         record = {
             "Kund": kund_val,
             "Kund1": kund1_val,
@@ -838,7 +719,6 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
         records.append(record)
     return pd.DataFrame(records)
 
-# == Prognosrapport (prognos vs autoplock) ==
 
 def _safe_str_series(s: pd.Series) -> pd.Series:
     """
@@ -903,18 +783,15 @@ def _fifo_pallar_for_article(buffer_df: Optional[pd.DataFrame], article: str, ne
     Filtrerar bufferten enligt REFILL_BUFFER_STATUSES och exkluderar angivna käll-ID.
     Returnerar ett flyttal med antalet pallar (heltal). Om inget behövs → 0. Om underlag saknas → NaN.
     """
-    # Om inget behov finns
     if needed_units <= 0:
         return 0.0
     if not isinstance(buffer_df, pd.DataFrame) or buffer_df.empty:
         return np.nan
     df = buffer_df.copy()
-    # Rensa BOM och trimma kolumnnamn
     try:
         df.rename(columns=lambda c: str(c).replace("\ufeff", "").strip(), inplace=True)
     except Exception:
         pass
-    # Identifiera kolumner
     try:
         art_col = find_col(df, BUFFER_SCHEMA["artikel"], required=True)
         qty_col = find_col(df, BUFFER_SCHEMA["qty"], required=True)
@@ -923,11 +800,9 @@ def _fifo_pallar_for_article(buffer_df: Optional[pd.DataFrame], article: str, ne
         id_col = find_col(df, BUFFER_SCHEMA["id"], required=False, default=None)
     except Exception:
         return np.nan
-    # Filtrera på artikel
     sub = df.loc[_safe_str_series(df[art_col]) == str(article)].copy()
     if sub.empty:
         return 0.0
-    # Filtrera status enligt REFILL_BUFFER_STATUSES (kan vara sträng eller numerisk)
     if status_col and status_col in sub.columns:
         s = _safe_str_series(sub[status_col])
         s_num = pd.to_numeric(s.str.extract(r"(-?\d+)")[0], errors="coerce")
@@ -935,7 +810,6 @@ def _fifo_pallar_for_article(buffer_df: Optional[pd.DataFrame], article: str, ne
         sub = sub[s.isin(allowed_str) | s_num.isin(REFILL_BUFFER_STATUSES)].copy()
         if sub.empty:
             return 0.0
-    # Exkludera käll-ID:n om angivet
     if exclude_source_ids:
         if id_col and id_col in sub.columns:
             sub["_source_id"] = _safe_str_series(sub[id_col])
@@ -944,12 +818,9 @@ def _fifo_pallar_for_article(buffer_df: Optional[pd.DataFrame], article: str, ne
         sub = sub[~sub["_source_id"].isin(exclude_source_ids)].copy()
         if sub.empty:
             return 0.0
-    # Konvertera kvantitet till numeriskt
     sub["__qty__"] = _num_series(sub[qty_col])
-    # FIFO-sortering efter datum om det finns
     if dt_col and dt_col in sub.columns:
         sub = sub.sort_values(dt_col, kind="mergesort", na_position="last")
-    # Summera pallar tills behovet täcks
     acc = 0.0
     pall_count = 0
     for q in sub["__qty__"]:
@@ -980,7 +851,6 @@ def build_prognos_vs_autoplock_report(
     """
     meta: Dict[str, str] = {"partial": "no", "missing": "", "note": ""}
     missing: List[str] = []
-    # Om prognos saknas → tomt resultat
     if not isinstance(prognos_df, pd.DataFrame) or prognos_df.empty:
         empty = pd.DataFrame(columns=[
             "Artikelnummer",
@@ -993,7 +863,6 @@ def build_prognos_vs_autoplock_report(
         meta.update({"partial": "yes", "missing": "prognos", "note": "Ingen prognos inläst."})
         return empty, meta
     pr = prognos_df.copy()
-    # Säkerställ kolumnnamn Artikelnummer och Antal styck
     if "Artikelnummer" not in pr.columns or "Antal styck" not in pr.columns:
         rename_map: Dict[str, str] = {}
         for col in pr.columns:
@@ -1006,32 +875,24 @@ def build_prognos_vs_autoplock_report(
             pr = pr.rename(columns=rename_map)
     pr["Artikelnummer"] = _safe_str_series(pr.get("Artikelnummer", ""))
     pr["Antal styck"] = _num_series(pr.get("Antal styck", 0))
-    # --- Saldomappning ---
     if isinstance(saldo_norm_df, pd.DataFrame) and not saldo_norm_df.empty:
-        # Kontrollera om saldodatat verkligen innehåller autoplock-fält (Robot + Saldo autoplock).
-        # Om inte, behandla saldo som saknat underlag (så att vi inte filtrerar bort allt).
         orig_cols = [str(c).strip().lower() for c in saldo_norm_df.columns]
         has_robot_col = any("robot" == c for c in orig_cols)
         has_auto_col = any("saldo autoplock" in c for c in orig_cols)
-        # Om Robot‑kolumnen saknas betraktas saldo som helt saknat underlag. I så fall filtrerar vi inte på robot.
         if not has_robot_col:
             missing.append("saldo")
             pr["Robot"] = "N"
             pr["Saldo i autoplock"] = 0.0
         else:
-            # Saldodatat innehåller åtminstone Robot‑kolumnen. Vi kan filtrera prognosen på Robot=Y.
             s = saldo_norm_df.copy()
-            # Mappa artikelkolumnen om nödvändigt
             if "Artikel" not in s.columns:
                 for c in s.columns:
                     lc = str(c).strip().lower()
                     if lc in ("artikel", "artikelnummer", "sku", "artnr", "art.nr", "article"):
                         s = s.rename(columns={c: "Artikel"})
                         break
-            # Se till att Robot-kolumnen finns
             if "Robot" not in s.columns:
                 s["Robot"] = "N"
-            # Om saldokolumn saknas sätter vi 0. Detta påverkar bara kolumnen "Saldo i autoplock" (C)
             if "Saldo autoplock" not in s.columns:
                 s["Saldo autoplock"] = 0.0
             s["Artikel"] = _safe_str_series(s["Artikel"])
@@ -1045,48 +906,90 @@ def build_prognos_vs_autoplock_report(
         missing.append("saldo")
         pr["Robot"] = "N"
         pr["Saldo i autoplock"] = 0.0
-    # Kolumner B, C, D
     pr["Behov i prognosen (antal styck)"] = _num_series(pr["Antal styck"])
     pr["Saldo i autoplock"] = _num_series(pr["Saldo i autoplock"])
     pr["Behov efter saldo"] = (pr["Behov i prognosen (antal styck)"] - pr["Saldo i autoplock"]).clip(lower=0)
-    # E: ej inlagrade har tagits bort. Sätt kolumnen till 0 (bevaras enbart för bakåtkompatibilitet)
     pr["Summa antal i ej inlagrade artiklar"] = 0.0
-    # F: FIFO-baserad pallberäkning. Kvarvarande behov = behov efter saldo (ingen avdrag för ej inlagrade)
     shortage = pr["Behov efter saldo"].copy()
-    # Hämta exclude_source_ids från allocated_df om ej angivet
     if exclude_source_ids is None and isinstance(allocated_df, pd.DataFrame):
         exclude_source_ids = _collect_exclude_source_ids(allocated_df)
     if not exclude_source_ids:
         exclude_source_ids = None
     if isinstance(buffer_df, pd.DataFrame) and not buffer_df.empty:
-        pr["FIFO-baserad beräkning (antal pall)"] = [
-            _fifo_pallar_for_article(buffer_df, art, need, exclude_source_ids=exclude_source_ids)
-            for art, need in zip(pr["Artikelnummer"], shortage)
-        ]
+        buf = buffer_df.copy()
+        try:
+            buf.rename(columns=lambda c: str(c).replace("\ufeff", "").strip(), inplace=True)
+        except Exception:
+            pass
+        try:
+            art_col = find_col(buf, BUFFER_SCHEMA["artikel"], required=True)
+            qty_col = find_col(buf, BUFFER_SCHEMA["qty"], required=True)
+            dt_col = find_col(buf, BUFFER_SCHEMA["dt"], required=False, default=None)
+            status_col = find_col(buf, BUFFER_SCHEMA["status"], required=False, default=None)
+            id_col = find_col(buf, BUFFER_SCHEMA["id"], required=False, default=None)
+        except Exception:
+            missing.append("buffert")
+            pr["FIFO-baserad beräkning (antal pall)"] = np.nan
+            pr["Buffertsaldo (status 29,30)"] = 0.0
+        if status_col and status_col in buf.columns:
+            s_str = _safe_str_series(buf[status_col])
+            s_num = pd.to_numeric(s_str.str.extract(r"(-?\d+)")[0], errors="coerce")
+            allowed_str = {str(x) for x in REFILL_BUFFER_STATUSES}
+            mask_status = s_str.isin(allowed_str) | s_num.isin(REFILL_BUFFER_STATUSES)
+            buf = buf.loc[mask_status].copy()
+        if exclude_source_ids:
+            if id_col and id_col in buf.columns:
+                buf["_source_id"] = _safe_str_series(buf[id_col])
+            else:
+                buf["_source_id"] = "SRC-" + buf.index.astype(str)
+            buf = buf[~buf["_source_id"].isin(exclude_source_ids)].copy()
+        buf["__qty__"] = _num_series(buf[qty_col])
+        prefix_dict: Dict[str, np.ndarray] = {}
+        if dt_col and dt_col in buf.columns:
+            buf = buf.sort_values([art_col, dt_col], kind="mergesort", na_position="last")
+        for art, group in buf.groupby(buf[art_col]):
+            qty_vals = group["__qty__"].to_numpy()
+            if qty_vals.size == 0:
+                continue
+            prefix = np.cumsum(qty_vals)
+            prefix_dict[str(art)] = prefix
+
+        buffer_sum_series = buf.groupby(buf[art_col])["__qty__"].sum()
+        buffer_sum_dict = {str(k): v for k, v in buffer_sum_series.items()}
+        pr["Buffertsaldo (status 29,30)"] = pr["Artikelnummer"].map(lambda x: buffer_sum_dict.get(str(x), 0.0))
+        def calc_pallar(art: Any, need: float) -> float:
+            if need <= 0:
+                return 0.0
+            pref = prefix_dict.get(str(art))
+            if pref is None:
+                return 0.0
+            idx = np.searchsorted(pref, float(need), side="left")
+            if idx >= len(pref):
+                return float(len(pref))
+            else:
+                return float(idx + 1)
+        pr["FIFO-baserad beräkning (antal pall)"] = [calc_pallar(a, n) for a, n in zip(pr["Artikelnummer"], shortage)]
     else:
         missing.append("buffert")
         pr["FIFO-baserad beräkning (antal pall)"] = np.nan
-    # Om saldo finns filtrera Robot=Y och behov efter saldo > 0
-    if "saldo" not in missing:
-        pr = pr.loc[(pr["Robot"] == "Y") & (pr["Behov efter saldo"] > 0)].copy()
-    # Slutlig kolumnordning
-    # Slutlig kolumnordning: utan 'Summa antal i ej inlagrade artiklar'
+        pr["Buffertsaldo (status 29,30)"] = 0.0
+    pr = pr.loc[(pr["Robot"].astype(str).str.upper() == "Y") & (pr["Behov efter saldo"] > 0)].copy()
     out_cols = [
         "Artikelnummer",
         "Behov i prognosen (antal styck)",
         "Saldo i autoplock",
         "Behov efter saldo",
+        "Buffertsaldo (status 29,30)",
         "FIFO-baserad beräkning (antal pall)",
     ]
     for c in out_cols:
         if c not in pr.columns:
             pr[c] = np.nan if c.startswith("FIFO") else 0.0
     report = pr[out_cols].reset_index(drop=True)
-    # Meta
     if missing:
         notes: List[str] = []
         if "saldo" in missing:
-            notes.append("Saldo saknas → visar ej Robot-filter eller Saldo i autoplock (C=0, D=B).")
+            notes.append("Saldo saknas → Saldo i autoplock antas 0 (C=0, D=B).")
         if "buffert" in missing:
             notes.append("Buffert saknas → F kan inte beräknas.")
         meta = {
@@ -1106,7 +1009,6 @@ def open_prognos_vs_autoplock_excel(report_df: pd.DataFrame, meta: Optional[dict
     Returnerar sökvägen till den skapade filen.
     """
     sheets: dict[str, pd.DataFrame] = {}
-    # Info-blad vid partiell rapport
     if isinstance(meta, dict) and (meta.get("partial") == "yes" or meta.get("note")):
         lines: list[str] = []
         if meta.get("partial") == "yes":
@@ -1118,16 +1020,20 @@ def open_prognos_vs_autoplock_excel(report_df: pd.DataFrame, meta: Optional[dict
             lines.append(str(meta["note"]))
         if lines:
             sheets["Info"] = pd.DataFrame({"Info": [" ".join(lines)]})
-    # Huvudbladet
     if not isinstance(report_df, pd.DataFrame):
         report_df = pd.DataFrame()
+    else:
+        col_name = "FIFO-baserad beräkning (antal pall)"
+        if col_name in report_df.columns:
+            try:
+                report_df = report_df.sort_values(by=col_name, ascending=False).reset_index(drop=True)
+            except Exception:
+                pass
     sheets["Prognos vs Autoplock"] = report_df
     return _open_df_in_excel(sheets, label="prognos_vs_autoplock")
 
-# =================== SLUT SALES (inbakat) ===================
 
 
-# --- Kärnlogik: allokering -----------------------------------------------
 
 def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -1140,7 +1046,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
         if log:
             log(msg)
 
-    # Kolumnupptäckt via schema
     order_article_col = find_col(orders_raw, ORDER_SCHEMA["artikel"])
     order_qty_col     = find_col(orders_raw, ORDER_SCHEMA["qty"])
     order_id_col      = find_col(orders_raw, ORDER_SCHEMA["ordid"], required=False, default=None)
@@ -1153,10 +1058,7 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     buff_dt_col       = find_col(buffer_raw, BUFFER_SCHEMA["dt"], required=False, default=None)
     buff_id_col       = find_col(buffer_raw, BUFFER_SCHEMA["id"], required=False, default=None)
     buff_status_col   = find_col(buffer_raw, BUFFER_SCHEMA["status"], required=False, default=None)
-    # Försök hitta en kolumn för palltyp i bufferten (t.ex. "Palltyp").
-    # Innehåller typ av pall (t.ex. EUR, EIG, SJÖ eller BIN-x) som vi vill föra vidare till resultatet.
     try:
-        # Hitta kolumn för palltyp. Vi matchar på "palltyp" och vanliga variationer.
         buff_type_col = find_col(buffer_raw, [
             "palltyp", "pall typ", "pall type"
         ], required=False, default=None)
@@ -1166,14 +1068,12 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     _log(f"Order-kolumner: Artikel='{order_article_col}', Antal='{order_qty_col}', OrderId='{order_id_col}', Rad='{order_line_col}', Status='{order_status_col}'")
     _log(f"Buffert-kolumner: Artikel='{buff_article_col}', Antal='{buff_qty_col}', Lagerplats='{buff_loc_col}', Tid='{buff_dt_col}', ID='{buff_id_col}', Status='{buff_status_col}'")
 
-    # Normalisera orders
     orders = orders_raw.copy()
     orders["_artikel"] = orders[order_article_col].astype(str).str.strip()
     orders["_qty"] = orders[order_qty_col].map(to_num).astype(float)
     orders["_order_id"] = orders[order_id_col].astype(str) if order_id_col and order_id_col in orders.columns else ""
     orders["_order_line"] = orders[order_line_col].astype(str) if order_line_col and order_line_col in orders.columns else orders.index.astype(str)
 
-    # Ignorera Status=35
     if order_status_col and order_status_col in orders.columns:
         _status_str = orders[order_status_col].astype(str).str.strip()
         _status_num = pd.to_numeric(_status_str.str.extract(r"(-?\d+)")[0], errors="coerce")
@@ -1185,24 +1085,18 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     else:
         _log("OBS: Ingen order-statuskolumn hittad; kan inte filtrera Status = 35.")
 
-    # Normalisera buffert
     buffer_df = buffer_raw.copy()
     buffer_df["_artikel"] = buffer_df[buff_article_col].astype(str).str.strip()
     buffer_df["_qty"] = buffer_df[buff_qty_col].map(to_num).astype(float)
     buffer_df["_loc"] = buffer_df[buff_loc_col].astype(str).str.strip()
     buffer_df["_received"] = smart_to_datetime(buffer_df[buff_dt_col]) if buff_dt_col and buff_dt_col in buffer_df.columns else pd.NaT
     buffer_df["_source_id"] = buffer_df[buff_id_col].astype(str) if buff_id_col and buff_id_col in buffer_df.columns else "SRC-" + buffer_df.index.astype(str)
-    # Kopiera palltyp (om kolumn hittades) till intern kolumn.
-    # Fyll ut NaN och eventuella tomma/vita strängar med "" så att "nan" inte sprids till resultatet.
     if buff_type_col and buff_type_col in buffer_df.columns:
-        # str() på NaN ger "nan", så ersätt detta i efterhand. fillna hanterar även None.
         tmp_palltyp = buffer_df[buff_type_col].fillna("").astype(str).str.strip()
-        # Ersätt "nan" (som str(NaN) ger) med tom sträng
         buffer_df["_palltyp"] = tmp_palltyp.replace({"nan": "", "": ""})
     else:
         buffer_df["_palltyp"] = ""
 
-    # Statusfilter (29/30/32)
     if buff_status_col and buff_status_col in buffer_df.columns:
         status_series = buffer_df[buff_status_col].astype(str).str.strip()
         status_num = pd.to_numeric(status_series.str.extract(r"(-?\d+)")[0], errors="coerce")
@@ -1215,7 +1109,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     else:
         _log("OBS: Hittade ingen statuskolumn; ingen statusfiltrering tillämpas.")
 
-    # Platsfilter
     loc_upper = buffer_df["_loc"].str.upper()
     mask_exclude = loc_upper.str.startswith(INVALID_LOC_PREFIXES, na=False) | loc_upper.isin(INVALID_LOC_EXACT)
     excluded_count = int(mask_exclude.sum())
@@ -1223,7 +1116,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
         _log(f"Filtrerar bort {excluded_count} rad(er) från bufferten pga lagerplats-regler ({INVALID_LOC_PREFIXES}*, {', '.join(sorted(INVALID_LOC_EXACT))}).")
     buffer_df = buffer_df[~mask_exclude].copy()
 
-    # Säker, lätt minnesoptimering
     try:
         buffer_df["_artikel"] = buffer_df["_artikel"].astype("category")
     except Exception:
@@ -1245,7 +1137,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             "qty": float(r["_qty"]),
             "loc": r["_loc"],
             "received": r["_received"],
-            # För intern pallsort: använd alltid sträng och ersätt NaN med tom sträng
             "palltyp": (r.get("_palltyp", "") if pd.notna(r.get("_palltyp", "")) else "")
         })
 
@@ -1256,13 +1147,11 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             "qty": float(r["_qty"]),
             "loc": r["_loc"],
             "received": r["_received"],
-            # För intern pallsort: använd alltid sträng och ersätt NaN med tom sträng
             "palltyp": (r.get("_palltyp", "") if pd.notna(r.get("_palltyp", "")) else "")
         })
 
     allocated_rows: List[dict] = []
     near_miss_rows: List[dict] = []
-    # Track which articles have already been recorded for near-miss to avoid logging the same article many times
     near_miss_article_set: set[str] = set()
 
     def clone_row(orow: pd.Series) -> dict:
@@ -1283,7 +1172,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
         pct = diff / need
         if pct <= NEAR_MISS_PCT:
             art_id = str(orow["_artikel"]).strip()
-            # Only record the first near-miss event per article
             if art_id in near_miss_article_set:
                 return
             near_miss_article_set.add(art_id)
@@ -1298,9 +1186,7 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
                 "Pall_kvantitet": pal["qty"],
                 "Skillnad": diff,
                 "Procentuell skillnad (%)": pct * 100.0,
-                # Beskrivning av anledningen använder den aktuella near‑miss‑gränsen i procent.
                 "Anledning": f"Pallen var ≤{int(NEAR_MISS_PCT * 100)}% större än återstående behov (kan ej brytas)",
-                # Placeholder for classification; will be updated later in run_allocation
                 "Gäller (INSTEAD R/A)": None
             })
 
@@ -1310,7 +1196,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
         if need <= 0:
             continue
 
-        # 1) HELPALL
         pq = pallet_queues.get(art, deque())
         new_pq = deque()
         tmp = deque(pq)
@@ -1325,7 +1210,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
                 sub["Källtyp"] = "HELPALL"
                 sub["Källa"] = pal["source_id"]
                 sub["Källplats"] = pal["loc"]
-                # Lägg till matchad palltyp. Ersätt NaN/"nan"/None med tom sträng.
                 paltyp_val = pal.get("palltyp", "")
                 if not paltyp_val or str(paltyp_val).lower() == "nan":
                     paltyp_val = ""
@@ -1340,7 +1224,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             new_pq.append(tmp.popleft())
         pallet_queues[art] = new_pq
 
-        # 2) AUTOSTORE
         any_autostore = False
         bq = bin_queues.get(art, deque())
         new_bq = deque()
@@ -1354,7 +1237,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
                 sub["Källtyp"] = "AUTOSTORE"
                 sub["Källa"] = binr["source_id"]
                 sub["Källplats"] = binr["loc"]
-                # Lägg till matchad palltyp. Ersätt NaN/"nan"/None med tom sträng.
                 bin_palltyp_val = binr.get("palltyp", "")
                 if not bin_palltyp_val or str(bin_palltyp_val).lower() == "nan":
                     bin_palltyp_val = ""
@@ -1369,7 +1251,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             new_bq.append(bq.popleft())
         bin_queues[art] = new_bq
 
-        # 3) HUVUDPLOCK
         any_mainpick = False
         if need > 0:
             sub = clone_row(orow)
@@ -1378,13 +1259,11 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             sub["Källtyp"] = "HUVUDPLOCK"
             sub["Källa"] = ""
             sub["Källplats"] = ""
-            # Ingen palltyp vid huvudplock
             sub["Palltyp (matchad)"] = ""
             allocated_rows.append(sub)
             any_mainpick = True
             need = 0.0
 
-        # Near-miss markering
         if not any_helpall and (any_autostore or any_mainpick):
             for r in near_miss_rows:
                 if r["OrderID"] == str(orow["_order_id"]) and r["OrderRad"] == str(orow["_order_line"]):
@@ -1396,7 +1275,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
 
     allocated_df = pd.DataFrame(allocated_rows)
 
-    # Om en artikel har AUTOSTORE-rad → gör alla dess icke-HELPALL till AUTOSTORE
     try:
         if not allocated_df.empty and ("Källtyp" in allocated_df.columns):
             if "Zon (beräknad)" not in allocated_df.columns:
@@ -1417,7 +1295,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     except Exception:
         pass
 
-    # Utökade kolumner som läggs till i resultatet
     added_cols = ["Zon (beräknad)", "Källtyp", "Källa", "Källplats", "Palltyp (matchad)"]
     ordered_cols = [c for c in orders_raw.columns] + [c for c in added_cols if c not in orders_raw.columns]
     if not allocated_df.empty:
@@ -1428,7 +1305,6 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     near_miss_df = pd.DataFrame(near_miss_rows)
     return allocated_df, near_miss_df
 
-# --- Refill (HP: A+S, med saldoreduktion proportionerligt; 0-filter) ------
 
 def calculate_refill(allocated_df: pd.DataFrame,
                      buffer_raw: pd.DataFrame,
@@ -1447,7 +1323,6 @@ def calculate_refill(allocated_df: pd.DataFrame,
     result = allocated_df.copy()
     buff = buffer_raw.copy()
 
-    # Identifiera kolumner
     art_col_res = find_col(result, ORDER_SCHEMA["artikel"])
     qty_col_res = find_col(result, ORDER_SCHEMA["qty"])
 
@@ -1457,26 +1332,22 @@ def calculate_refill(allocated_df: pd.DataFrame,
     id_col_buf  = find_col(buff, BUFFER_SCHEMA["id"], required=False, default=None)
     status_col_buf = find_col(buff, BUFFER_SCHEMA["status"], required=False, default=None)
 
-    # Normalisera buffert
     b = buff.copy()
     b["_artikel"] = b[art_col_buf].astype(str).str.strip()
     b["_qty"] = b[qty_col_buf].map(to_num).astype(float)
     b["_received"] = smart_to_datetime(b[dt_col_buf]) if dt_col_buf and dt_col_buf in b.columns else pd.NaT
     b["_source_id"] = b[id_col_buf].astype(str) if id_col_buf and id_col_buf in b.columns else "SRC-" + b.index.astype(str)
 
-    # Statusfilter refill
     if status_col_buf and status_col_buf in b.columns:
         _s = b[status_col_buf].astype(str).str.strip()
         _snum = pd.to_numeric(_s.str.extract(r"(-?\d+)")[0], errors="coerce")
         allowed_str = {str(x) for x in REFILL_BUFFER_STATUSES}
         b = b[_s.isin(allowed_str) | _snum.isin(REFILL_BUFFER_STATUSES)].copy()
 
-    # HELPALL-pallar som redan använts (exkludera alltid)
     used_help_ids: set[str] = set()
     if "Källtyp" in result.columns and "Källa" in result.columns:
         used_help_ids = set(result[result["Källtyp"].astype(str) == "HELPALL"]["Källa"].dropna().astype(str).tolist())
 
-    # Bygg plocksaldo/plockplats
     saldo_sum: Dict[str, float] = {}
     plockplats_by_art: Dict[str, str] = {}
     if isinstance(saldo_df, pd.DataFrame) and not saldo_df.empty:
@@ -1492,7 +1363,6 @@ def calculate_refill(allocated_df: pd.DataFrame,
             saldo_sum = {}
             plockplats_by_art = {}
 
-    # Bygg "ej inlagrade" summor
     npu_sum: Dict[str, float] = {}
     if isinstance(not_putaway_df, pd.DataFrame) and not not_putaway_df.empty:
         try:
@@ -1504,20 +1374,16 @@ def calculate_refill(allocated_df: pd.DataFrame,
         except Exception:
             npu_sum = {}
 
-    # FIFO helper per artikel
     def fifo_for_art(art_key: str) -> pd.DataFrame:
         d = b[b["_artikel"] == art_key].copy()
         if not d.empty and used_help_ids:
             d = d[~d["_source_id"].astype(str).isin(used_help_ids)].copy()
         return d.sort_values("_received")
 
-    # --- HP (A + S) ---
     hp_like = result[result.get("Källtyp", "").isin(["HUVUDPLOCK", "SKRYMMANDE"])].copy()
     rows_hp: List[dict] = []
     if not hp_like.empty:
-        # lägg zon-kod
         hp_like["_zon"] = np.where(hp_like["Källtyp"].astype(str) == "SKRYMMANDE", "S", "A")
-        # behov per artikel och zon
         needs = (hp_like
                  .assign(_art=hp_like[art_col_res].astype(str).str.strip(),
                          _qty=pd.to_numeric(hp_like[qty_col_res], errors="coerce").fillna(0.0))
@@ -1527,10 +1393,8 @@ def calculate_refill(allocated_df: pd.DataFrame,
             total_need = float(grp_art["_qty"].sum())
             if total_need <= 0:
                 continue
-            # plocksaldo dras en gång
             adjusted_total = max(0.0, round(total_need) - float(saldo_sum.get(art_key, 0.0)))
 
-            # proportionell fördelning mellan zoner
             if adjusted_total <= 0:
                 continue  # 0-rad; hoppa över helt
 
@@ -1542,12 +1406,10 @@ def calculate_refill(allocated_df: pd.DataFrame,
                 val = int(round(part))
                 parts.append([zone, val])
                 allocated_sum += val
-            # justera avrundningsdiff på första posten
             diff = int(adjusted_total) - int(allocated_sum)
             if parts:
                 parts[0][1] += diff
 
-            # FIFO info för artikeln
             fifo_df = fifo_for_art(art_key)
             tillgangligt = float(pd.to_numeric(fifo_df["_qty"], errors="coerce").sum()) if not fifo_df.empty else 0.0
 
@@ -1555,7 +1417,6 @@ def calculate_refill(allocated_df: pd.DataFrame,
                 behov_int = int(max(0, behov_int))
                 if behov_int <= 0:
                     continue  # 0-rad → bort
-                # simulera pallar
                 behov_kvar = float(behov_int)
                 pall_count = 0
                 for q in (fifo_df["_qty"].astype(float) if not fifo_df.empty else []):
@@ -1578,7 +1439,6 @@ def calculate_refill(allocated_df: pd.DataFrame,
     if not refill_hp_df.empty:
         refill_hp_df = refill_hp_df.sort_values(["Zon", "FIFO-baserad beräkning"], ascending=[True, False])
 
-    # --- AUTOSTORE (R) ---
     refill_autostore_df = pd.DataFrame()
     try:
         as_df = result.copy()
@@ -1626,15 +1486,20 @@ def calculate_refill(allocated_df: pd.DataFrame,
 
     return refill_hp_df, refill_autostore_df
 
-# --- GUI ------------------------------------------------------------------
 
 class App(ttk.Frame):
     def __init__(self, master):
         super().__init__(master)
         self.master = master
         self.pack(fill="both", expand=True)
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass  # om temat inte finns, använd standard
+        style.configure("Accent.TButton", padding=10, foreground="white", background="#2D7FF9")
+        style.configure("Green.TButton", padding=10, foreground="white", background="#28a745")
         self._create_widgets()
-        # Interna variabler för kampanjvolymer
         self._campaign_norm: Optional[pd.DataFrame] = None
         self._campaign_raw: Optional[pd.DataFrame] = None
 
@@ -1642,79 +1507,78 @@ class App(ttk.Frame):
         logprintln(self.log, msg)
 
     def _create_widgets(self) -> None:
-        self.columnconfigure(1, weight=1)
-
-        ttk.Label(self, text="Beställningslinjer (CSV):").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        self.columnconfigure(0, weight=1)
+        indata_frame = ttk.LabelFrame(self, text="Indatafiler")
+        indata_frame.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
+        indata_frame.columnconfigure(1, weight=1)
+        ttk.Label(indata_frame, text="Beställningslinjer (CSV):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.orders_var = tk.StringVar()
-        self.orders_entry = ttk.Entry(self, textvariable=self.orders_var)
-        self.orders_entry.grid(row=0, column=1, sticky="ew", padx=8)
-        ttk.Button(self, text="Bläddra...", command=self.pick_orders).grid(row=0, column=2, padx=8)
-
-        ttk.Label(self, text="Buffertpallar (CSV):").grid(row=1, column=0, sticky="w", padx=8, pady=6)
+        self.orders_entry = ttk.Entry(indata_frame, textvariable=self.orders_var)
+        self.orders_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(indata_frame, text="Bläddra...", command=self.pick_orders).grid(row=0, column=2, padx=4)
+        ttk.Label(indata_frame, text="Buffertpallar (CSV):").grid(row=1, column=0, sticky="w", padx=4, pady=4)
         self.buffer_var = tk.StringVar()
-        self.buffer_entry = ttk.Entry(self, textvariable=self.buffer_var)
-        self.buffer_entry.grid(row=1, column=1, sticky="ew", padx=8)
-        ttk.Button(self, text="Bläddra...", command=self.pick_buffer).grid(row=1, column=2, padx=8)
-
-        ttk.Label(self, text="Saldo inkl. automation (CSV):").grid(row=2, column=0, sticky="w", padx=8, pady=6)
+        self.buffer_entry = ttk.Entry(indata_frame, textvariable=self.buffer_var)
+        self.buffer_entry.grid(row=1, column=1, sticky="ew", padx=4)
+        ttk.Button(indata_frame, text="Bläddra...", command=self.pick_buffer).grid(row=1, column=2, padx=4)
+        ttk.Label(indata_frame, text="Saldo inkl. automation (CSV):").grid(row=2, column=0, sticky="w", padx=4, pady=4)
         self.automation_var = tk.StringVar()
-        self.automation_entry = ttk.Entry(self, textvariable=self.automation_var)
-        self.automation_entry.grid(row=2, column=1, sticky="ew", padx=8)
-        ttk.Button(self, text="Bläddra...", command=self.pick_automation).grid(row=2, column=2, padx=8)
-
-        # Item option-fil för Ej Staplingsbar (frivillig)
-        ttk.Label(self, text="Item option (CSV):").grid(row=3, column=0, sticky="w", padx=8, pady=6)
+        self.automation_entry = ttk.Entry(indata_frame, textvariable=self.automation_var)
+        self.automation_entry.grid(row=2, column=1, sticky="ew", padx=4)
+        ttk.Button(indata_frame, text="Bläddra...", command=self.pick_automation).grid(row=2, column=2, padx=4)
+        ttk.Label(indata_frame, text="Item option (CSV):").grid(row=3, column=0, sticky="w", padx=4, pady=4)
         self.item_var = tk.StringVar()
-        self.item_entry = ttk.Entry(self, textvariable=self.item_var)
-        self.item_entry.grid(row=3, column=1, sticky="ew", padx=8)
-        ttk.Button(self, text="Bläddra...", command=self.pick_item).grid(row=3, column=2, padx=8)
+        self.item_entry = ttk.Entry(indata_frame, textvariable=self.item_var)
+        self.item_entry.grid(row=3, column=1, sticky="ew", padx=4)
+        ttk.Button(indata_frame, text="Bläddra...", command=self.pick_item).grid(row=3, column=2, padx=4)
 
-        # Prognos (XLSX)
-        ttk.Label(self, text="Prognos (XLSX):").grid(row=4, column=0, sticky="w", padx=8, pady=6)
+        self.drop_zone = ttk.Label(indata_frame, text="Drag och släpp alla filer här", relief="groove", padding=20)
+        self.drop_zone.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=4, pady=8)
+        if TkinterDnD and DND_FILES:
+            try:
+                self.drop_zone.drop_target_register(DND_FILES)
+                def _on_drop_all(event):
+                    self._handle_drop_all(event)
+                self.drop_zone.dnd_bind("<<Drop>>", _on_drop_all)
+            except Exception:
+                pass
+
+        prog_frame = ttk.LabelFrame(self, text="Prognos / Kampanj")
+        prog_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
+        prog_frame.columnconfigure(1, weight=1)
+        ttk.Label(prog_frame, text="Prognos (XLSX):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.prognos_var = tk.StringVar()
-        self.prognos_entry = ttk.Entry(self, textvariable=self.prognos_var)
-        self.prognos_entry.grid(row=4, column=1, sticky="ew", padx=8)
-        ttk.Button(self, text="Bläddra...", command=self.pick_prognos).grid(row=4, column=2, padx=8)
-
-        # Kampanjvolymer (XLSX)
-        ttk.Label(self, text="Kampanjvolymer (XLSX):").grid(row=5, column=0, sticky="w", padx=8, pady=6)
+        self.prognos_entry = ttk.Entry(prog_frame, textvariable=self.prognos_var)
+        self.prognos_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(prog_frame, text="Bläddra...", command=self.pick_prognos).grid(row=0, column=2, padx=4)
+        ttk.Label(prog_frame, text="Kampanjvolymer (XLSX):").grid(row=1, column=0, sticky="w", padx=4, pady=4)
         self.campaign_var = tk.StringVar()
-        self.campaign_entry = ttk.Entry(self, textvariable=self.campaign_var)
-        self.campaign_entry.grid(row=5, column=1, sticky="ew", padx=8)
-        ttk.Button(self, text="Bläddra...", command=self.pick_campaign).grid(row=5, column=2, padx=8)
+        self.campaign_entry = ttk.Entry(prog_frame, textvariable=self.campaign_var)
+        self.campaign_entry.grid(row=1, column=1, sticky="ew", padx=4)
+        ttk.Button(prog_frame, text="Bläddra...", command=self.pick_campaign).grid(row=1, column=2, padx=4)
 
-        # Kör-knapp
-        self.run_btn = ttk.Button(self, text="Kör allokering", command=self.run_allocation)
-        self.run_btn.grid(row=6, column=0, columnspan=3, pady=10)
+        self.run_btn = ttk.Button(self, text="Kör allokering", command=self.run_allocation, style="Accent.TButton")
+        self.run_btn.grid(row=2, column=0, columnspan=3, pady=10)
 
-        # Öppna-knappar (för resultat, near-miss, pallplatsrapport och prognos) och rensa-cache.
-        # Resultat
-        self.open_result_btn = ttk.Button(self, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
-        # Near-miss (INSTEAD R/A)
-        self.open_nearmiss_btn = ttk.Button(self, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
-        # Pallplatser per kund
-        self.open_palletspaces_btn = ttk.Button(self, text="Öppna pallplatser", command=self.open_pallet_spaces_in_excel, state="disabled")
-        # Prognos
-        self.open_prognos_btn = ttk.Button(self, text="Öppna prognos", command=self.open_prognos_in_excel, state="disabled")
-        # Positionera knappar på samma rad. Lägg till extra kolumn för pallplatser och prognos.
-        self.open_result_btn.grid(row=99, column=0, pady=10)
-        self.open_nearmiss_btn.grid(row=99, column=1, pady=10)
-        self.open_palletspaces_btn.grid(row=99, column=2, pady=10)
-        self.open_prognos_btn.grid(row=99, column=3, pady=10)
+        open_frame = ttk.Frame(self)
+        open_frame.grid(row=3, column=0, columnspan=3, pady=10)
+        self.open_result_btn = ttk.Button(open_frame, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
+        self.open_result_btn.grid(row=0, column=0, padx=4)
+        self.open_nearmiss_btn = ttk.Button(open_frame, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
+        self.open_nearmiss_btn.grid(row=0, column=1, padx=4)
+        self.open_palletspaces_btn = ttk.Button(open_frame, text="Öppna pallplatser", command=self.open_pallet_spaces_in_excel, state="disabled")
+        self.open_palletspaces_btn.grid(row=0, column=2, padx=4)
+        self.open_prognos_btn = ttk.Button(open_frame, text="Öppna prognos", command=self.open_prognos_in_excel, state="disabled")
+        self.open_prognos_btn.grid(row=0, column=3, padx=4)
+        self.reset_cache_btn = ttk.Button(open_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
+        self.reset_cache_btn.grid(row=0, column=4, padx=4)
 
-        # Rensa cache-knapp: återställ alla internt beräknade data och töm loggen
-        self.reset_cache_btn = ttk.Button(self, text="Rensa cache", command=self.reset_cache)
-        # Placera den i nästa kolumn på samma rad som övriga öppna-knappar
-        self.reset_cache_btn.grid(row=99, column=4, pady=10)
-
-        # Logg
-        ttk.Label(self, text="Logg / Summering:").grid(row=6, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
         self.log = tk.Text(self, height=14, width=110, state="disabled")
-        self.log.grid(row=7, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
-        self.rowconfigure(7, weight=1)
+        self.log.grid(row=5, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
+        self.rowconfigure(5, weight=1)
 
-        # Summeringstabell (inkl. SKRYMMANDE)
-        ttk.Label(self, text="Summering per Källtyp").grid(row=8, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Summering per Källtyp").grid(row=6, column=0, sticky="w", padx=8)
         self.summary_table = ttk.Treeview(self, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
         self.summary_table.heading("ktyp", text="Källtyp")
         self.summary_table.heading("antal_rader", text="antal rader")
@@ -1722,46 +1586,34 @@ class App(ttk.Frame):
         self.summary_table.column("ktyp", anchor="w", width=160)
         self.summary_table.column("antal_rader", anchor="e", width=140)
         self.summary_table.column("antal_kolli", anchor="e", width=140)
-        self.summary_table.grid(row=9, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
-        # Tabellrader sätts dynamiskt i update_summary_table() baserat på faktiska Källtyp-värden
+        self.summary_table.grid(row=7, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
 
-        # Senaste resultat i minnet
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
         self._orders_raw: pd.DataFrame | None = None
         self._buffer_raw: pd.DataFrame | None = None
         self._result_df: pd.DataFrame | None = None
 
-        # Lagring: ej-inlagrade & saldo normaliserat (utan öppna-knapp)
         self._not_putaway_raw: pd.DataFrame | None = None
         self._not_putaway_norm: pd.DataFrame | None = None
         self._saldo_norm: pd.DataFrame | None = None
 
-        # Rå saldodata (inkl. Robot-kolumn)
         self._saldo_raw: pd.DataFrame | None = None
 
-        # Lagring: item-fil (staplingsbar)
         self._item_raw: pd.DataFrame | None = None
         self._item_norm: pd.DataFrame | None = None
 
-        # Sales cache
         self._sales_metrics_df: pd.DataFrame | None = None
 
-        # Auto-refill cache (beräknas i run_allocation)
         self._last_refill_hp_df: pd.DataFrame | None = None
         self._last_refill_autostore_df: pd.DataFrame | None = None
 
-        # Pallplatser (kundsammanställning)
         self._pallet_spaces_df: pd.DataFrame | None = None
 
-        # Prognos data (normaliserad)
         self._prognos_df: pd.DataFrame | None = None
 
-        #
-        # Inga cache-data att återställa här; rensningslogik implementeras i reset_cache()
 
 
-        # DnD – bind en gång per entry
         if TkinterDnD and DND_FILES:
             def bind_drop(entry_widget: ttk.Entry, var: tk.StringVar) -> None:
                 try:
@@ -1770,10 +1622,8 @@ class App(ttk.Frame):
                         path = _first_path_from_dnd(event.data)
                         if path:
                             _var.set(path)
-                            # Om prognos, ladda prognosen direkt
                             if _var is self.prognos_var:
                                 self._load_prognos(path)
-                            # Om kampanjvolymer, ladda kampanjfilen direkt
                             elif _var is self.campaign_var:
                                 self._load_campaign(path)
                     entry_widget.dnd_bind("<<Drop>>", _on_drop)
@@ -1783,14 +1633,10 @@ class App(ttk.Frame):
             bind_drop(self.buffer_entry, self.buffer_var)
             bind_drop(self.automation_entry, self.automation_var)
             bind_drop(self.item_entry, self.item_var)
-            # Prognos DnD
             bind_drop(self.prognos_entry, self.prognos_var)
-            # Kampanjvolymer DnD
             if hasattr(self, "campaign_entry"):
                 bind_drop(self.campaign_entry, self.campaign_var)
-            # Fält för ej inlagrade artiklar och plocklogg har tagits bort.
 
-    # --- File pickers ------------------------------------------------------
 
     def pick_orders(self) -> None:
         path = filedialog.askopenfilename(title="Välj beställningsrader (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
@@ -1818,18 +1664,123 @@ class App(ttk.Frame):
         """
         return
 
+    def _parse_dnd_paths(self, event_data: str) -> list[str]:
+        """Tolka en DnD-sträng (kan innehålla en eller flera filvägar inom klamrar) till en lista med paths."""
+        raw = str(event_data).strip()
+        paths: list[str] = []
+        i = 0
+        while raw:
+            raw = raw.strip()
+            if not raw:
+                break
+            if raw.startswith("{"):
+                end = raw.find("}")
+                if end == -1:
+                    break
+                path = raw[1:end]
+                paths.append(path)
+                raw = raw[end+1:]
+            else:
+                if ' ' in raw:
+                    part, raw = raw.split(' ', 1)
+                else:
+                    part, raw = raw, ''
+                if part:
+                    paths.append(part)
+        return paths
+
+    def _detect_file_type(self, path: str) -> str | None:
+        """Försök avgöra vilken sorts fil det är (orders, buffer, automation, item, prognos, campaign).
+        Returnerar en sträng med typen eller None om okänd.
+        """
+        import os
+        import pandas as _pd
+        ext = os.path.splitext(path)[1].lower().lstrip('.')
+        if ext in ("xlsx", "xlsm", "xls"):
+            try:
+                df_c = read_campaign_xlsx(path)
+                if isinstance(df_c, _pd.DataFrame) and not df_c.empty and list(df_c.columns) == ["Artikelnummer", "Antal styck"]:
+                    return "campaign"
+            except Exception:
+                pass
+            try:
+                df_p = read_prognos_xlsx(path)
+                if isinstance(df_p, _pd.DataFrame) and not df_p.empty and len(df_p.columns) >= 3 and any(str(c).strip().lower() in ("antal styck", "quantity", "qty") for c in df_p.columns):
+                    return "prognos"
+            except Exception:
+                pass
+            return None
+        try:
+            df = _pd.read_csv(path, dtype=str, nrows=50, sep=None, engine="python", encoding="utf-8-sig")
+            if df.shape[1] == 1:
+                df = _pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
+        except Exception:
+            try:
+                df = _pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
+            except Exception:
+                return None
+        cols = [str(c).strip().lower() for c in df.columns]
+        has_art = any(c in ("artikel", "artikelnummer", "artnr", "art.nr", "sku", "article") for c in cols)
+        has_qty = any(c in ("beställt", "antal", "qty", "quantity", "bestalld", "order qty", "antal styck") for c in cols)
+        has_ord = any(c in ("ordernr", "order nr", "order number", "kund", "kundnr", "order id") for c in cols)
+        has_rad = any(c in ("radnr", "rad nr", "line id", "rad", "struktur", "radsnr") for c in cols)
+        if has_art and has_qty and (has_ord or has_rad):
+            return "orders"
+        has_lagerplats = any("lagerplats" in c or "plats" == c or "location" == c or "bin" == c for c in cols)
+        has_pallid = any(c in ("pallid", "pall id", "id", "sscc", "etikett", "batch") for c in cols)
+        has_status = any(c == "status" for c in cols)
+        if has_art and has_qty and has_lagerplats:
+            return "buffer"
+        has_robot = any(c == "robot" for c in cols)
+        has_saldo = any("saldo autoplock" in c for c in cols)
+        if has_robot or has_saldo:
+            return "automation"
+        has_pack = any("pack klass" in c or "staplingsbar" in c for c in cols)
+        if has_pack:
+            return "item"
+        return None
+
+    def _handle_drop_all(self, event) -> None:
+        """Hantera drop av en eller flera filer i den gemensamma drop-zonen."""
+        paths = self._parse_dnd_paths(event.data)
+        for p in paths:
+            p = p.strip()
+            if not p:
+                continue
+            file_type = self._detect_file_type(p)
+            if file_type == "orders":
+                self.orders_var.set(p)
+            elif file_type == "buffer":
+                self.buffer_var.set(p)
+            elif file_type == "automation":
+                self.automation_var.set(p)
+            elif file_type == "item":
+                self.item_var.set(p)
+            elif file_type == "prognos":
+                self.prognos_var.set(p)
+                try:
+                    self._load_prognos(p)
+                except Exception:
+                    pass
+            elif file_type == "campaign":
+                self.campaign_var.set(p)
+                try:
+                    self._load_campaign(p)
+                except Exception:
+                    pass
+            else:
+                self._log(f"Okänd filtyp: {p}")
+
     def pick_sales(self) -> None:
         """
         Stub för filval av plocklogg. Denna funktion gör inget i denna version.
         """
         return
 
-    # --- Öppna/Export -----------------------------------------------------
 
     def open_result_in_excel(self) -> None:
         if isinstance(self.last_result_df, pd.DataFrame) and not self.last_result_df.empty:
             try:
-                # Spara resultatet i en temporär Excel-fil med eget bladnamn
                 path = _open_df_in_excel({"Allokerade order": self.last_result_df.copy()}, label="allocated_orders")
                 self._log(f"Öppnade resultat i Excel (temporär fil): {path}")
             except Exception as e:
@@ -1840,14 +1791,9 @@ class App(ttk.Frame):
     def open_nearmiss_in_excel(self) -> None:
         if isinstance(self.last_nearmiss_instead_df, pd.DataFrame) and not self.last_nearmiss_instead_df.empty:
             try:
-                # Spara near-miss i en temporär Excel-fil med eget bladnamn
                 nm_df = self.last_nearmiss_instead_df.copy()
-                # Visa endast den första near-miss för varje artikel
                 if "Artikel" in nm_df.columns:
-                    # Behåll första förekomsten per artikel
                     nm_df = nm_df.drop_duplicates(subset=["Artikel"], keep="first").reset_index(drop=True)
-                # Använd ett bladnamn utan snedstreck ("/") eftersom Excel inte tillåter det
-                # Bladnamnet och etiketten ska spegla den aktuella near‑miss‑gränsen
                 pct_str = f"{int(NEAR_MISS_PCT * 100)}%"
                 sheet_name = f"Near-miss {pct_str} (unika artiklar)"
                 label = f"near_miss_{int(NEAR_MISS_PCT * 100)}pct"
@@ -1865,7 +1811,6 @@ class App(ttk.Frame):
         """
         if isinstance(self._pallet_spaces_df, pd.DataFrame) and not self._pallet_spaces_df.empty:
             try:
-                # Spara pallplatsrapport i en temporär Excel-fil med eget bladnamn
                 ps_df = self._pallet_spaces_df.copy()
                 path = _open_df_in_excel({"Pallplatser": ps_df}, label="pallplatser")
                 self._log(f"Öppnade pallplatser i Excel (temporär fil): {path}")
@@ -1874,7 +1819,6 @@ class App(ttk.Frame):
         else:
             messagebox.showinfo(APP_TITLE, "Det finns ingen pallplatsrapport att öppna ännu. Kör allokeringen först.")
 
-    # --- Prognos (inläsning och öppning) ---
     def pick_prognos(self) -> None:
         """Visa en filväljare för att välja en prognosfil (XLSX)."""
         path = filedialog.askopenfilename(title="Välj prognos (XLSX)", filetypes=[("Excel", "*.xlsx"), ("Alla filer","*.*")])
@@ -1882,7 +1826,6 @@ class App(ttk.Frame):
             self.prognos_var.set(path)
             self._load_prognos(path)
         else:
-            # Om inget valdes, nollställ prognosen och inaktivera knappen
             self._prognos_df = None
             self.open_prognos_btn.configure(state="disabled")
 
@@ -1891,13 +1834,11 @@ class App(ttk.Frame):
         try:
             df = read_prognos_xlsx(path)
             self._prognos_df = df
-            # Logga antal rader/artiklar
             try:
                 n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
                 self._log(f"Prognos inläst: {len(df)} rader, {n_art} artiklar.")
             except Exception:
                 self._log(f"Prognos inläst: {len(df)} rader.")
-            # Aktivera öppna-knappen
             self.open_prognos_btn.configure(state="normal")
         except Exception as e:
             self._prognos_df = None
@@ -1911,7 +1852,6 @@ class App(ttk.Frame):
             self.campaign_var.set(path)
             self._load_campaign(path)
         else:
-            # Om inget valdes, nollställ kampanjdata
             self._campaign_norm = None
 
     def _load_campaign(self, path: str) -> None:
@@ -1919,13 +1859,11 @@ class App(ttk.Frame):
         try:
             df = read_campaign_xlsx(path)
             self._campaign_norm = df
-            # Logga antal kampanjrader/artiklar
             try:
                 n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
                 self._log(f"Kampanjvolymer inlästa: {len(df)} rader, {n_art} artiklar.")
             except Exception:
                 self._log(f"Kampanjvolymer inlästa: {len(df)} rader.")
-            # Aktivera prognos-knappen om vi har minst en av prognos eller kampanjvolymer
             try:
                 if (self._prognos_df is not None and isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty) or (isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty):
                     self.open_prognos_btn.configure(state="normal")
@@ -1943,27 +1881,20 @@ class App(ttk.Frame):
         (FIFO‑logik) och följer exakt samma uträkningar som i originalprojektet. Om prognosen inte
         har lästs in ännu visas ett meddelande istället.
         """
-        # Kontrollera att det finns underlag: antingen prognos eller kampanjvolymer
         has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
         has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
         if not has_prognos and not has_campaign:
             messagebox.showinfo(APP_TITLE, "Välj och läs in antingen prognosfilen eller kampanjvolymerna först.")
             return
         try:
-            # Utgå från inläst prognos eller skapa ett tomt DataFrame
             if has_prognos:
                 combined_df: pd.DataFrame = self._prognos_df.copy()
             else:
-                # Om ingen prognos finns, utgå från kampanjvolymer och skapa motsvarande kolumner
-                # Skapa en DataFrame med samma format som prognos_df (Artikelnummer + Beskrivning + Antal styck + Antal rader + Antal butiker)
                 combined_df = pd.DataFrame(columns=["Artikelnummer", "Beskrivning", "Antal styck", "Antal rader", "Antal butiker"])
-            # Om en normaliserad kampanjvolym finns och saldodata finns kan vi slå ihop kampanjvolymerna
             if isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty:
-                # Filtrera kampanjvolymer på Robot=Y om saldo finns och har Robot-kolumn
                 camp_df = self._campaign_norm.copy()
                 if isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty:
                     s = self._saldo_raw.copy()
-                    # Identifiera artikel- och robotkolumn i saldofilen
                     art_col_sal = None
                     robot_col_sal = None
                     for c in s.columns:
@@ -1977,32 +1908,23 @@ class App(ttk.Frame):
                         s.columns = ["Artikelnummer", "Robot"]
                         s["Artikelnummer"] = s["Artikelnummer"].astype(str).str.strip()
                         s["Robot"] = s["Robot"].astype(str).str.upper().str.strip()
-                        # Endast Robot = Y
                         s = s.loc[s["Robot"] == "Y"]
                         if not s.empty:
                             camp_df = camp_df.merge(s[["Artikelnummer"]], on="Artikelnummer", how="inner")
                         else:
                             camp_df = camp_df.iloc[0:0]
                     else:
-                        # Om robot eller artikelkolumn saknas, ta bort alla kampanjrader (ingen match)
                         camp_df = camp_df.iloc[0:0]
-                # Om camp_df fortfarande har rader, summera volym per artikel
                 if not camp_df.empty:
-                    # Summera per artikel
                     vol_by_art = camp_df.groupby("Artikelnummer")["Antal styck"].sum().to_dict()
-                    # Lägg samman med ordinarie prognos
-                    # Konvertera Artikelnummer i prognosen
                     combined_df["Artikelnummer"] = combined_df["Artikelnummer"].astype(str).str.strip()
                     combined_df["Antal styck"] = pd.to_numeric(combined_df.get("Antal styck", 0), errors="coerce").fillna(0).astype(int)
-                    # Håll koll på vilka artiklar som finns
                     existing_arts = set(combined_df["Artikelnummer"].astype(str))
-                    # Addera kampanjvolymer till befintliga rader
                     for art, vol in vol_by_art.items():
                         if art in existing_arts:
                             mask = combined_df["Artikelnummer"] == art
                             combined_df.loc[mask, "Antal styck"] = (combined_df.loc[mask, "Antal styck"].astype(int) + int(vol)).astype(int)
                         else:
-                            # Lägg till en ny rad för artiklar som inte finns i prognosen
                             combined_df = pd.concat([
                                 combined_df,
                                 pd.DataFrame({
@@ -2013,7 +1935,6 @@ class App(ttk.Frame):
                                     "Antal butiker": [0],
                                 })
                             ], ignore_index=True)
-            # Beräkna prognosrapporten baserat på kombinerad prognos, saldo, buffert
             report_df, meta = build_prognos_vs_autoplock_report(
                 prognos_df=combined_df,
                 saldo_norm_df=(self._saldo_raw if isinstance(self._saldo_raw, pd.DataFrame) else None),
@@ -2021,9 +1942,7 @@ class App(ttk.Frame):
                 exclude_source_ids=None,
                 allocated_df=None,
             )
-            # Skapa och öppna Excel-filen med rapporten och eventuellt ett Info-blad
             path = open_prognos_vs_autoplock_excel(report_df, meta)
-            # Logga en kort rapport i loggrutan
             msg = f"Prognosrapport skapad ({len(report_df)} rader)."
             if isinstance(meta, dict) and meta.get("partial") == "yes":
                 miss = meta.get("missing", "").replace(",", ", ")
@@ -2033,7 +1952,6 @@ class App(ttk.Frame):
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna prognosrapporten:\n{e}")
 
-    # --- Cache-reset ------------------------------------------------------
     def reset_cache(self) -> None:
         """
         Rensa alla cacher och temporära variabler i applikationen. Detta nollställer
@@ -2042,7 +1960,6 @@ class App(ttk.Frame):
         öppna-knapparna. Pathvariabler för filval påverkas inte.
         """
         try:
-            # Töm internt lagrade resultat
             self.last_result_df = None
             self.last_nearmiss_instead_df = None
             self._orders_raw = None
@@ -2062,26 +1979,22 @@ class App(ttk.Frame):
             self._campaign_raw = None
             self._campaign_norm = None
 
-            # Töm loggen
             self.log.configure(state="normal")
             self.log.delete("1.0", tk.END)
             self.log.configure(state="disabled")
 
-            # Återställ summeringstabellen: ta bort alla rader
             try:
                 for child in self.summary_table.get_children(""):
                     self.summary_table.delete(child)
             except Exception:
                 pass
 
-            # Inaktivera öppna-knapparna
             for btn in (self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn, self.open_prognos_btn):
                 try:
                     btn.configure(state="disabled")
                 except Exception:
                     pass
 
-            # Töm även filvägarna i gränssnittet så att användaren ser att alla val är återställda
             try:
                 self.orders_var.set("")
                 self.buffer_var.set("")
@@ -2090,13 +2003,10 @@ class App(ttk.Frame):
                 self.prognos_var.set("")
                 self.campaign_var.set("")
             except Exception:
-                # Om någon av variablerna saknas av någon anledning, ignorera
                 pass
 
-            # Logga att cache rensades
             self._log("Cache och temporära data har rensats.")
         except Exception:
-            # Om något går fel i reset-cache, visa ändå en loggrad
             try:
                 self._log("Kunde inte genomföra fullständig cache-rensning (internt fel).")
             except Exception:
@@ -2108,7 +2018,6 @@ class App(ttk.Frame):
             try:
                 hp = self._last_refill_hp_df.copy() if isinstance(self._last_refill_hp_df, pd.DataFrame) else pd.DataFrame()
                 asr = self._last_refill_autostore_df.copy() if isinstance(self._last_refill_autostore_df, pd.DataFrame) else pd.DataFrame()
-                # Annotera med sales om finns
                 if isinstance(self._sales_metrics_df, pd.DataFrame) and not self._sales_metrics_df.empty:
                     hp = annotate_refill(hp, self._sales_metrics_df)
                     asr = annotate_refill(asr, self._sales_metrics_df)
@@ -2129,7 +2038,6 @@ class App(ttk.Frame):
         else:
             messagebox.showinfo(APP_TITLE, "Det finns inga försäljningsinsikter att öppna ännu. Läs in en plocklogg först.")
 
-    # --- Sales inläsning ---------------------------------------------------
 
     def _on_sales_file_selected(self) -> None:
         """
@@ -2139,7 +2047,6 @@ class App(ttk.Frame):
         """
         return
 
-    # --- Summering ---------------------------------------------------------
 
     def update_summary_table(self, result_df: pd.DataFrame) -> None:
         """
@@ -2148,25 +2055,20 @@ class App(ttk.Frame):
         HELPALL visas som antal pallar, AUTOSTORE som antal rader, och övriga typer som
         antal rader samt motsvarande pallantal (20 rader per pall).
         """
-        # Rensa befintliga rader i sammanställningstabellen
         for child in self.summary_table.get_children(""):
             self.summary_table.delete(child)
-        # Hämta kolumn för kvantitet (antal) om den finns
         try:
             qty_col = find_col(result_df, ORDER_SCHEMA["qty"], required=False, default=None)
         except Exception:
             qty_col = None
-        # Samtliga unika Källtyp-värden (strängar), sortera med HELPALL och AUTOSTORE först
         ktyp_series = result_df.get("Källtyp", pd.Series([], dtype=object)).astype(str)
         unique_types = [k for k in sorted(set(ktyp_series.dropna())) if k]
-        # Prioriterad ordning
         ordered = []
         for prv in ("HELPALL", "AUTOSTORE"):
             if prv in unique_types:
                 ordered.append(prv)
                 unique_types.remove(prv)
         ordered.extend(unique_types)
-        # Uppdatera tabellen för varje Källtyp
         for ktyp in ordered:
             try:
                 sub = result_df[ktyp_series == ktyp]
@@ -2176,19 +2078,16 @@ class App(ttk.Frame):
                     kolli = float(pd.to_numeric(sub[qty_col], errors="coerce").sum())
             except Exception:
                 row_count, kolli = 0, 0.0
-            # Bestäm text för radantal och pallantal
             if ktyp == "HELPALL":
                 row_text = f"{row_count} pallar"
             elif ktyp == "AUTOSTORE":
                 row_text = f"{row_count} rader"
             else:
-                pallar = (row_count / 20.0) if row_count else 0.0
-                pallar_str = f"{pallar:.2f}".replace(".", ",")
-                row_text = f"{row_count} rader ({pallar_str} pallar)"
+                # För övriga Källtyper visas endast antal rader (ingen pallar‑beräkning i parentes)
+                row_text = f"{row_count} rader"
             kolli_text = f"{int(round(kolli))}"
             self.summary_table.insert("", "end", iid=ktyp, values=(ktyp, row_text, kolli_text))
 
-# --- Zonbaserad omklassificering --------------------------------------
 
     @staticmethod
     def _reclassify_skrymmande(result_df: pd.DataFrame, saldo_norm: pd.DataFrame | None) -> pd.DataFrame:
@@ -2211,11 +2110,9 @@ class App(ttk.Frame):
         oförändrade. Om ingen "Zon"‑kolumn hittas returneras oförändrat DataFrame.
         Den medskickade saldofil används inte i denna metod.
         """
-        # Inga omklassificeringar om result_df saknas eller är tomt
         if result_df is None or result_df.empty:
             return result_df
         res = result_df.copy()
-        # Hitta zonkolumnen (case-insensitive match mot exakt "zon")
         zon_col = None
         for c in res.columns:
             if str(c).strip().lower() == "zon":
@@ -2223,15 +2120,12 @@ class App(ttk.Frame):
                 break
         if not zon_col:
             return res
-        # Se till att kolumnen "Zon (beräknad)" finns
         if "Zon (beräknad)" not in res.columns:
             res["Zon (beräknad)"] = ""
-        # Identifiera vilka rader som kan omklassificeras (inte HELPALL/AUTOSTORE)
         ktyp_series = res.get("Källtyp", pd.Series("", index=res.index)).astype(str)
         mask_to_change = ~(ktyp_series.isin(["HELPALL", "AUTOSTORE"]))
         if not mask_to_change.any():
             return res
-        # Skapa mappning från zonkod till (källtyp, zon)
         mapping: Dict[str, Tuple[str, str]] = {
             "S": ("SKRYMMANDE",   "S"),
             "E": ("EHANDEL",      "E"),
@@ -2239,8 +2133,8 @@ class App(ttk.Frame):
             "Q": ("EHANDEL",      "Q"),
             "O": ("SKRYMMANDE",   "O"),
             "F": ("BRAND",        "F"),
+            "D": ("DISPLAY",      "D"),
         }
-        # Standardisera zonkod till stor bokstav
         zones = res.loc[mask_to_change, zon_col].astype(str).str.strip().str.upper()
         for zone_code, (ktyp_val, zon_val) in mapping.items():
             idx = res.loc[mask_to_change].index[zones == zone_code]
@@ -2249,14 +2143,12 @@ class App(ttk.Frame):
                 res.loc[idx, "Zon (beräknad)"] = zon_val
         return res
 
-    # --- Orkestrering ------------------------------------------------------
 
     def run_allocation(self) -> None:
         orders_path = self.orders_var.get().strip()
         buffer_path = self.buffer_var.get().strip()
         automation_path = self.automation_var.get().strip()
         item_path = self.item_var.get().strip()
-        # Fältet för ej inlagrade artiklar är borttaget, så ingen separat fil hämtas
         not_putaway_path = ""
 
         if not orders_path or not buffer_path:
@@ -2268,33 +2160,25 @@ class App(ttk.Frame):
             orders_raw = pd.read_csv(orders_path, dtype=str, sep=None, engine="python")
             buffer_raw = pd.read_csv(buffer_path, dtype=str, sep=None, engine="python")
 
-            # Ej inlagrade är borttaget; sätt alltid till None
             self._not_putaway_raw = None
             self._not_putaway_norm = None
 
-            # Saldofil (frivillig)
             if automation_path:
                 auto_raw = pd.read_csv(automation_path, dtype=str, sep=None, engine="python")
-                # Rensa eventuella BOM/whitespace i kolumnnamn för robustare matchning
                 auto_raw_clean = _clean_columns(auto_raw.copy())
-                # Spara både rå- och normaliserad saldodata. Den normaliserade används i allokering/refill,
-                # medan den rensade råfilen (med Robot-kolumn) används för prognosrapporten.
                 self._saldo_raw = auto_raw_clean.copy()
                 self._saldo_norm = normalize_saldo(auto_raw_clean)
             else:
                 self._saldo_norm = None
                 self._saldo_raw = None
 
-            # Item-fil (staplingsbar), frivillig
             self._item_raw = None
             self._item_norm = None
             if item_path:
                 try:
-                    # Försök läsa automatiskt med python-engine (sniffar separator). dtype=str bevarar strängar.
                     item_raw = pd.read_csv(item_path, dtype=str, sep=None, engine="python")
                 except Exception:
                     try:
-                        # Fallback: anta tab-separerad
                         item_raw = pd.read_csv(item_path, dtype=str, sep="\t", quoting=3, engine="python")
                     except Exception as ie:
                         raise RuntimeError(f"Kunde inte läsa item-fil: {ie}")
@@ -2307,93 +2191,71 @@ class App(ttk.Frame):
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa CSV-filerna:\n{e}")
             return
 
-        # --- Allokering + omklassificering SKRYMMANDE
         try:
             self._log("\n--------------")
-            # Log message reflecting the current near‑miss threshold (NEAR_MISS_PCT)
             self._log(f"Kör allokering (Helpall → AutoStore → Huvudplock, FIFO) + {int(NEAR_MISS_PCT * 100)}%-near-miss loggning + Status {sorted(ALLOC_BUFFER_STATUSES)}-filter...")
             result, near = allocate(orders_raw, buffer_raw, log=self._log)
 
-            # Omklassificera huvudplock till SKRYMMANDE utifrån plockplats i saldofil
             result = self._reclassify_skrymmande(result, self._saldo_norm)
 
-            # Lägg till staplingsbar från item-fil om tillgänglig
             try:
                 if isinstance(self._item_norm, pd.DataFrame) and not self._item_norm.empty and isinstance(result, pd.DataFrame) and not result.empty:
-                    # Hitta kolumn för artikel i resultatet
                     try:
                         art_col_res = find_col(result, ORDER_SCHEMA["artikel"], required=True)
                     except Exception:
                         art_col_res = None
                     if art_col_res:
-                        # Slå ihop på artikelnumret
                         temp_merge = result.merge(self._item_norm, how="left", left_on=art_col_res, right_on="Artikel", suffixes=("", "_item"))
-                        # Ta bort extra Artikel-kolumn från item_df
                         if "Artikel_item" in temp_merge.columns:
                             temp_merge.drop(columns=["Artikel_item"], inplace=True, errors=False)
-                        # Om båda Artikel-kolumner kvar, försök att droppa den vi inte behöver
                         if "Artikel_y" in temp_merge.columns:
                             temp_merge.drop(columns=["Artikel_y"], inplace=True, errors=False)
-                        # Efter merge: kombinera staplingsbar från item-fil med befintlig (om någon)
-                        # Om både _x och _y finns, prioritera _y (från item), annars _x.
                         if "Ej Staplingsbar_y" in temp_merge.columns or "Ej Staplingsbar_x" in temp_merge.columns:
                             if "Ej Staplingsbar_y" in temp_merge.columns:
                                 temp_merge["Ej Staplingsbar"] = temp_merge["Ej Staplingsbar_y"].fillna("")
                             elif "Ej Staplingsbar_x" in temp_merge.columns:
                                 temp_merge["Ej Staplingsbar"] = temp_merge["Ej Staplingsbar_x"].fillna("")
-                            # Ta bort de temporära kolumnerna
                             for _col in ["Ej Staplingsbar_x", "Ej Staplingsbar_y"]:
                                 if _col in temp_merge.columns:
                                     temp_merge.drop(columns=[_col], inplace=True)
-                        # Om det fortfarande inte finns kolumn, skapa en tom
                         if "Ej Staplingsbar" not in temp_merge.columns:
                             temp_merge["Ej Staplingsbar"] = ""
-                        # Se till att kolumnen för Ej Staplingsbar ligger sist i kolumnordningen
                         cols = [c for c in temp_merge.columns if c != "Ej Staplingsbar"] + ["Ej Staplingsbar"]
                         temp_merge = temp_merge[cols]
                         result = temp_merge
-                # Om kolumnen för Ej Staplingsbar inte har lagts till efter merges (ingen item-fil), skapa en tom kolumn
                 if isinstance(result, pd.DataFrame) and ("Ej Staplingsbar" not in result.columns):
                     result["Ej Staplingsbar"] = ""
                     cols = [c for c in result.columns if c != "Ej Staplingsbar"] + ["Ej Staplingsbar"]
                     result = result[cols]
             except Exception as e:
-                # Logga men fortsätt
                 try:
                     self._log(f"Kunde inte slå ihop item-fil: {e}")
                 except Exception:
                     pass
             self._log("Skapar resultat i minnet...")
 
-            # Spara resultat och near-miss innan statistik bearbetas
-            # near_instead_df will be overwritten in the near-miss statistics section but initialise with the raw near-miss data now
             self.last_result_df = result.copy()
-            # Store the raw near-miss dataframe here; it will later be enriched with zone information and reassigned
             self.last_nearmiss_instead_df = near.copy()
             self._orders_raw = orders_raw.copy()
             self._buffer_raw = buffer_raw.copy()
             self._result_df = result.copy()
 
-            # Beräkna pallplatsbehov per kund på allokeringsresultatet
             try:
                 self._pallet_spaces_df = compute_pallet_spaces(self._result_df)
             except Exception:
                 self._pallet_spaces_df = None
 
-            # Uppdatera summering
             try:
                 self.update_summary_table(result)
             except Exception as _e_upd:
                 self._log(f"Summering per Källtyp kunde inte uppdateras: {_e_upd}")
 
-            # Auto-refill: beräkna och cacha direkt efter allokering
             try:
                 hp_df, as_df = calculate_refill(
                     result, buffer_raw,
                     saldo_df=self._saldo_norm,
                     not_putaway_df=self._not_putaway_norm
                 )
-                # 0-rader är redan bortfiltrerade i beräkningen
                 self._last_refill_hp_df = hp_df.copy()
                 self._last_refill_autostore_df = as_df.copy()
                 self._log(f"Auto-refill klar: HP {len(hp_df)} rader, AUTOSTORE {len(as_df)} rader (cachad).")
@@ -2402,27 +2264,20 @@ class App(ttk.Frame):
                 self._last_refill_autostore_df = None
                 self._log(f"Auto-refill misslyckades: {e}")
 
-            # Enable-knappar för resultat och near-miss
             self.open_result_btn.configure(state="normal" if not result.empty else "disabled")
-            # Enable the near‑miss button only if a non‑empty near‑miss DataFrame was produced.
-            # The variable `near` holds the raw near‑miss rows returned from allocate().
             try:
                 self.open_nearmiss_btn.configure(state="normal" if isinstance(near, pd.DataFrame) and not near.empty else "disabled")
             except Exception:
                 self.open_nearmiss_btn.configure(state="disabled")
-            # Aktivera pallplats-knappen om rapporten finns
             try:
                 has_pallet = isinstance(self._pallet_spaces_df, pd.DataFrame) and not self._pallet_spaces_df.empty
                 self.open_palletspaces_btn.configure(state="normal" if has_pallet else "disabled")
             except Exception:
-                # Om något går fel, inaktivera knappen
                 self.open_palletspaces_btn.configure(state="disabled")
-            # Knappar för refill och försäljningsinsikter finns inte längre
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Fel under allokering:\n{e}")
             return
 
-        # Summering per zon
         try:
             zon_col = "Zon (beräknad)"
             qty_col = find_col(result, ORDER_SCHEMA["qty"], required=True)
@@ -2433,69 +2288,48 @@ class App(ttk.Frame):
         except Exception:
             pass
 
-        # Near-miss statistik
         try:
-            # Header for the near‑miss statistics uses the current threshold in percent
             self._log(f"\n{int(NEAR_MISS_PCT * 100)}% near-miss statistik:")
-            # Only compute statistics if we have a non-empty near-miss DataFrame
             if isinstance(near, pd.DataFrame) and not near.empty:
-                # Identify the article column in the near-miss DataFrame
                 near_art_col = None
                 for c in ["Artikel", "artikel", "Artikelnummer", "artikelnummer", "_artikel"]:
                     if c in near.columns:
                         near_art_col = c
                         break
-                # Identify the article column in the result DataFrame
                 res_art_col = None
                 try:
                     res_art_col = find_col(result, ORDER_SCHEMA["artikel"], required=False)
                 except Exception:
-                    # fallback: attempt to find a sensible article column manually
                     for c in ["Artikel", "artikel", "Artikelnummer", "artikelnummer", "_artikel"]:
                         if c in result.columns:
                             res_art_col = c
                             break
-                # Zone column in the result DataFrame
                 zone_col = "Zon (beräknad)"
-                # Create a copy to avoid mutating original near
                 near_with_zone = near.copy()
                 if near_art_col and res_art_col and zone_col in result.columns:
-                    # Build a mapping from article -> zone based on the majority zone in result
                     zone_map: Dict[str, str] = {}
-                    # Pre-normalise article column in result for performance
                     res_art_series = result[res_art_col].astype(str).str.strip()
-                    # For each unique article in near-miss list, determine which zone it ended up in
                     for art in near_with_zone[near_art_col].astype(str).str.strip().unique():
-                        # mask rows for this article
                         mask = res_art_series == art
                         if not mask.any():
                             continue
-                        # Determine the most frequent zone for this article
                         zones = result.loc[mask, zone_col].astype(str)
                         if not zones.empty:
                             zone_counts = zones.value_counts()
-                            # idxmax returns the first occurrence of the maximum count
                             chosen_zone = zone_counts.idxmax()
                             zone_map[art] = chosen_zone
-                    # Assign the chosen zone to each near-miss row
                     near_with_zone["Slutade som Zon"] = near_with_zone[near_art_col].astype(str).str.strip().map(lambda x: zone_map.get(x, ""))
                 else:
-                    # Fallback: if we cannot determine zones, create an empty column
                     near_with_zone["Slutade som Zon"] = ""
-                # Zones to report statistics for
-                zones_to_report = ["R", "A", "E", "S", "Q", "O", "F"]
-                # Compute and log counts per zone
+                zones_to_report = ["R", "A", "E", "S", "Q", "O", "F", "D"]
                 for z in zones_to_report:
                     try:
                         cnt = 0
                         if near_art_col:
-                            # Count unique articles whose near-miss ended as this zone
                             cnt = int(near_with_zone.loc[near_with_zone["Slutade som Zon"] == z, near_art_col].astype(str).str.strip().nunique())
                         self._log(f"  Near-miss som slutade som {z}: {cnt:,}")
                     except Exception:
-                        # If any error occurs for this zone, log zero
                         self._log(f"  Near-miss som slutade som {z}: 0")
-                # Log the list of articles with near-miss, one per row
                 try:
                     if near_art_col:
                         arts = near_with_zone[near_art_col].astype(str).str.strip().unique().tolist()
@@ -2510,20 +2344,16 @@ class App(ttk.Frame):
                         self._log("  Inga near-miss artiklar hittades.")
                 except Exception:
                     self._log("  Inga near-miss artiklar hittades.")
-                # Store the updated near-miss dataframe with zone information for later use (e.g., opening from the GUI)
                 self.last_nearmiss_instead_df = near_with_zone.copy()
             else:
-                # No near-miss rows present
                 self._log("  Inga near-miss artiklar hittades.")
                 self.last_nearmiss_instead_df = pd.DataFrame()
         except Exception:
-            # Swallow any exception in near-miss stats to avoid breaking the UI
             try:
                 self._log("  Inga near-miss artiklar hittades.")
             except Exception:
                 pass
 
-# --- main -----------------------------------------------------------------
 
 def main() -> None:
     root_class = TkinterDnD.Tk if TkinterDnD else tk.Tk
