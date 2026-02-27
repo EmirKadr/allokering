@@ -1490,7 +1490,7 @@ def calculate_refill(allocated_df: pd.DataFrame,
             d = d[~d["_source_id"].astype(str).isin(used_help_ids)].copy()
         return d.sort_values("_received")
 
-    hp_like = result[result.get("Källtyp", "").isin(["HUVUDPLOCK", "SKRYMMANDE", "HIB"])].copy()
+    hp_like = result[result.get("Källtyp", "").isin(["HUVUDPLOCK", "SKRYMMANDE", "HIB", "EHANDEL"])].copy()
     rows_hp: List[dict] = []
     if not hp_like.empty:
         hp_like["_zon"] = hp_like["Källtyp"].astype(str).map({"SKRYMMANDE": "S", "HIB": "F"}).fillna("A")
