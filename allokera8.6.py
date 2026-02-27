@@ -2104,7 +2104,7 @@ class App(ttk.Frame):
           * "A" → ("HUVUDPLOCK",   "A")
           * "Q" → ("EHANDEL",      "Q")
           * "O" → ("SKRYMMANDE",   "O")
-          * "F" → ("BRAND",        "F")
+          * "F" → ("HIB",          "F")
 
         Rader vars Källtyp redan är "HELPALL" eller "AUTOSTORE" lämnas
         oförändrade. Om ingen "Zon"‑kolumn hittas returneras oförändrat DataFrame.
@@ -2132,7 +2132,7 @@ class App(ttk.Frame):
             "A": ("HUVUDPLOCK",   "A"),
             "Q": ("EHANDEL",      "Q"),
             "O": ("SKRYMMANDE",   "O"),
-            "F": ("BRAND",        "F"),
+            "F": ("HIB",          "F"),
             "D": ("DISPLAY",      "D"),
         }
         zones = res.loc[mask_to_change, zon_col].astype(str).str.strip().str.upper()
