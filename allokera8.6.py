@@ -1680,8 +1680,10 @@ class App(ttk.Frame):
         self.open_palletspaces_btn.grid(row=0, column=2, padx=4)
         self.open_prognos_btn = ttk.Button(open_frame, text="Öppna prognos", command=self.open_prognos_in_excel, state="disabled")
         self.open_prognos_btn.grid(row=0, column=3, padx=4)
+        self.open_refill_btn = ttk.Button(open_frame, text="Öppna refill", command=self.open_refill_in_excel, state="disabled")
+        self.open_refill_btn.grid(row=0, column=4, padx=4)
         self.reset_cache_btn = ttk.Button(open_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
-        self.reset_cache_btn.grid(row=0, column=4, padx=4)
+        self.reset_cache_btn.grid(row=0, column=5, padx=4)
 
         ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
         self.log = tk.Text(self, height=14, width=110, state="disabled")
@@ -2099,7 +2101,7 @@ class App(ttk.Frame):
             except Exception:
                 pass
 
-            for btn in (self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn, self.open_prognos_btn):
+            for btn in (self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn, self.open_prognos_btn, self.open_refill_btn):
                 try:
                     btn.configure(state="disabled")
                 except Exception:
@@ -2384,6 +2386,11 @@ class App(ttk.Frame):
                 self.open_palletspaces_btn.configure(state="normal" if has_pallet else "disabled")
             except Exception:
                 self.open_palletspaces_btn.configure(state="disabled")
+            try:
+                has_refill = isinstance(self._last_refill_hp_df, pd.DataFrame) or isinstance(self._last_refill_autostore_df, pd.DataFrame)
+                self.open_refill_btn.configure(state="normal" if has_refill else "disabled")
+            except Exception:
+                self.open_refill_btn.configure(state="disabled")
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Fel under allokering:\n{e}")
             return
