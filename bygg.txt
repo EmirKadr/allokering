@@ -1,0 +1,1 @@
+pyinstaller --onefile --windowed --clean allokera9.5.py
