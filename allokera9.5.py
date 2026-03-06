@@ -418,14 +418,14 @@ def compute_hib_koppling(
         if store_df.empty or hib_df.empty:
             # inga HIB att koppla eller ingen butik => hoppa över
             continue
-        # Välj den butiksorder som har äldst orderdatum och där alla statusar är < 32
+        # Välj den butiksorder som har äldst orderdatum och där alla statusar är < 34
         base_candidate = None
         base_date = None
         for _, row in store_df.iterrows():
             ordnum = row["Ordernr"]
-            # Kontrollera att alla rader för denna order har status < 32
+            # Kontrollera att alla rader för denna order har status < 34
             maxstatus = order_status_max.get(ordnum, 9999)
-            if maxstatus >= 32:
+            if maxstatus >= 34:
                 continue
             # Orderdatum
             odate = str(row["Orderdatum"]).strip()
@@ -456,13 +456,13 @@ def compute_hib_koppling(
         base_ordnum = base_candidate["Ordernr"]
         base_ship = str(base_candidate["Sändningsnr"]).strip()
         base_odate = str(base_candidate["Orderdatum"]).strip()
-        # Undersök HIB‑ordrar som är tillåtna (alla status < 32)
+        # Undersök HIB‑ordrar som är tillåtna (alla status < 34)
         hib_orders: list[dict] = []
         for _, hib_row in hib_df.iterrows():
             h_ord = hib_row["Ordernr"]
             # Kontrollera status
             maxstatus = order_status_max.get(h_ord, 9999)
-            if maxstatus >= 32:
+            if maxstatus >= 34:
                 continue  # denna hib får inte ändras
             hib_orders.append({"row": hib_row, "ordernr": h_ord})
         if not hib_orders:
