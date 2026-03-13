@@ -1,60 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-allokera10.9.py
----------------
-Denna version (10.9) bygger vidare på tidigare versioner och lägger till
-ytterligare förbättrad HIB‑koppling och cache‑hantering.
-
-**Nyheter i version 10.9**
-
-* **Förbättrad matchning av HIB‑ordrar**: Programmet matchar nu varje
-  HIB‑orders sändningsnummer **och kundnamn** mot butikens ordrar. Om en
-  butiksorder har samma sändningsnummer **och tillhör samma butik** (identiskt
-  kundnamn) väljs den som referens (den tidigaste om flera finns). Om ingen
-  sådan order finns matchas endast på sändningsnummer. I sista hand används
-  den äldsta giltiga butiksordern som fallback.
-
-  Denna version korrigerar även ett problem där HIB‑ordrar felaktigt
-  föreslogs kopplas om till en annan butik när butikens order med rätt
-  sändningsnummer hade status ≥ 34 och därför inte räknades som giltig. Nu
-  används **alla butiksordrar** (oavsett status) för att hitta matchning på
-  sändningsnummer och kundnamn. Endast om ingen sådan matchning hittas
-  används fallback‑butiken.
-
-* **Statushantering för butiksorder**: Butiksorder som saknar status i
-  orderdetaljerna behandlas som giltiga (status 0) istället för att uteslutas.
-
-* **Rensning av dispatchpallar vid cache‑reset**: När man väljer “Rensa
-  cache” i GUI:et rensas nu även den valda dispatchpallsfilen och alla
-  temporära dispatchresultat. Detta förhindrar att en gammal dispatchfil
-  ligger kvar i minnet efter att man bytt dataset.
-
-* **Övriga förbättringar från version 10.7** behålls, såsom robust
-  kolumnmatchning, förbättrat GUI för filuppladdning och mer intuitiv
-  statusvisning. Multi‑reglerna (fel zon, saknad multi) gäller bara när det
-  finns mer än en HIB‑order per kundnummer. Med endast en HIB‑order sätts
-  inte multi. Instruktionerna för ändringsordning skrivs ut i loggen och
-  exportfilen. Kolumnmatchningen i orderöversikten är robust mot olika
-  ordning och namn. Indata‑filvalet använder tydliga statusrutor med text
-  ("Uppladdad" med grön bakgrund respektive "Ej fil" med grå bakgrund) och en
-  röd borttagningsknapp. Drag‑och‑släpp‑zonen kan även klickas för att välja
-  flera filer samtidigt. Fixar från 10.6 för korrekt initiering av
-  statusikoner gäller fortsatt.
-"""
+# allokera11_pyqt6.py - PyQt6-version av allokera11.py
+# Samma affarslogik, nytt GUI med PyQt6.
 
 from __future__ import annotations
 
 import re
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from typing import Deque, Dict, List, Tuple, Optional
+from typing import Deque, Dict, List, Tuple, Optional, Any
 
-try:
-    from tkinterdnd2 import DND_FILES, TkinterDnD
-except ImportError:
-    DND_FILES = None
-    TkinterDnD = None
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QLabel, QPushButton, QLineEdit, QTextEdit,
+    QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox,
+    QGroupBox, QFrame, QSizePolicy, QAbstractItemView, QHeaderView,
+    QTabWidget, QScrollArea
+)
+from PyQt6.QtCore import Qt, QMimeData, QUrl
+from PyQt6.QtGui import QColor, QFont, QDragEnterEvent, QDropEvent
 
 from collections import defaultdict, deque
 import pandas as pd
@@ -2052,462 +2014,454 @@ def calculate_refill(allocated_df: pd.DataFrame,
     return refill_hp_df, refill_autostore_df
 
 
-class App(ttk.Frame):
-    def __init__(self, master):
-        super().__init__(master)
-        self.master = master
-        self.pack(fill="both", expand=True)
-        # Set up a default style for the application
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except Exception:
-            # Om temat inte finns installerat, använd standardtemat
-            pass
-        style.configure("Accent.TButton", padding=10, foreground="white", background="#2D7FF9")
-        style.configure("Green.TButton", padding=10, foreground="white", background="#28a745")
+APP_TITLE = "Buffertpallar → Order-allokering (GUI) — 11 PyQt6"
 
-        # Dictionaries used to track status icons and associated StringVars for indatafiler.
-        # Dessa måste initieras innan widgets skapas eftersom _create_widgets refererar
-        # till dem när den sätter upp filvalsraderna.
-        self.file_status_widgets: dict[str, tuple[tk.Label, tk.Button]] = {}
-        self.file_vars: dict[str, tk.StringVar] = {}
 
-        # Build the GUI widgets
-        self._create_widgets()
-        # Initialize optional campaign DataFrames
-        self._campaign_norm: Optional[pd.DataFrame] = None
-        self._campaign_raw: Optional[pd.DataFrame] = None
-        # Uppdatera statusikonerna initialt så att rätt symboler visas
-        try:
-            self.update_file_status_icons()
-        except Exception:
-            pass
+class DropZoneLabel(QLabel):
+    """A QLabel that accepts drag-and-drop of files and emits a list of paths."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setText("Drag och slapp alla filer har (eller klicka)")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Sunken)
+        self.setMinimumHeight(50)
+        self._callback = None
+
+    def set_drop_callback(self, callback):
+        self._callback = callback
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        if paths and self._callback:
+            self._callback(paths)
+        event.acceptProposedAction()
+
+
+class App(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(APP_TITLE)
+        self.resize(1200, 820)
+
+        # Data caches
+        self.last_result_df = None
+        self.last_nearmiss_instead_df = None
+        self._orders_raw = None
+        self._buffer_raw = None
+        self._result_df = None
+        self._not_putaway_raw = None
+        self._not_putaway_norm = None
+        self._saldo_norm = None
+        self._saldo_raw = None
+        self._item_raw = None
+        self._item_norm = None
+        self._sales_metrics_df = None
+        self._last_refill_hp_df = None
+        self._last_refill_autostore_df = None
+        self._pallet_spaces_df = None
+        self._prognos_df = None
+        self._campaign_norm = None
+        self._campaign_raw = None
+        self.last_koppla_df = None
+        self.last_koppla_missed_df = None
+        self.last_koppla_path = None
+        self.last_overview_check_df = None
+        self.last_hib_status_check_df = None
+        self.last_overview_check_path = None
+        self.last_dispatch_check_df = None
+        self.last_dispatch_check_path = None
+
+        # File path storage (replaces tk.StringVar)
+        self._file_paths: Dict[str, str] = {
+            "orders": "", "buffer": "", "automation": "",
+            "item": "", "overview": "", "dispatch": ""
+        }
+
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setSpacing(6)
+
+        # --- Indatafiler group ---
+        indata_group = QGroupBox("Indatafiler")
+        indata_layout = QGridLayout(indata_group)
+        indata_layout.setColumnStretch(1, 1)
+
+        file_rows = [
+            ("orders",     "Bestallningslinjer (CSV):"),
+            ("buffer",     "Buffertpallar (CSV):"),
+            ("automation", "Saldo inkl. automation (CSV):"),
+            ("item",       "Item option (CSV):"),
+            ("overview",   "Orderöversikt (CSV):"),
+            ("dispatch",   "Dispatchpallar (CSV):"),
+        ]
+
+        self._status_labels: Dict[str, QLabel] = {}
+        self._remove_btns: Dict[str, QPushButton] = {}
+
+        for row_idx, (key, label_text) in enumerate(file_rows):
+            lbl = QLabel(label_text)
+            indata_layout.addWidget(lbl, row_idx, 0)
+
+            status_lbl = QLabel("Ej fil")
+            status_lbl.setFixedWidth(90)
+            status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            status_lbl.setStyleSheet(
+                "background-color: #6c757d; color: white; font-weight: bold; border-radius: 3px; padding: 2px 4px;"
+            )
+            indata_layout.addWidget(status_lbl, row_idx, 1, Qt.AlignmentFlag.AlignLeft)
+            self._status_labels[key] = status_lbl
+
+            rm_btn = QPushButton("✗")
+            rm_btn.setFixedWidth(28)
+            rm_btn.setStyleSheet(
+                "background-color: #dc3545; color: white; font-weight: bold; border-radius: 3px;"
+            )
+            rm_btn.setEnabled(False)
+            rm_btn.clicked.connect(lambda checked, k=key: self.clear_file(k))
+            indata_layout.addWidget(rm_btn, row_idx, 2)
+            self._remove_btns[key] = rm_btn
+
+        # Drop zone
+        self.drop_zone = DropZoneLabel()
+        self.drop_zone.set_drop_callback(self._handle_drop_paths)
+        self.drop_zone.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.drop_zone.mousePressEvent = lambda e: self.open_files_dialog()
+        indata_layout.addWidget(self.drop_zone, len(file_rows), 0, 1, 3)
+
+        main_layout.addWidget(indata_group)
+
+        # --- Prognos / Kampanj group ---
+        prog_group = QGroupBox("Prognos / Kampanj")
+        prog_layout = QGridLayout(prog_group)
+        prog_layout.setColumnStretch(1, 1)
+
+        prog_layout.addWidget(QLabel("Prognos (XLSX):"), 0, 0)
+        self.prognos_entry = QLineEdit()
+        self.prognos_entry.setReadOnly(True)
+        prog_layout.addWidget(self.prognos_entry, 0, 1)
+        prog_browse_btn = QPushButton("Bladda...")
+        prog_browse_btn.clicked.connect(self.pick_prognos)
+        prog_layout.addWidget(prog_browse_btn, 0, 2)
+
+        prog_layout.addWidget(QLabel("Kampanjvolymer (XLSX):"), 1, 0)
+        self.campaign_entry = QLineEdit()
+        self.campaign_entry.setReadOnly(True)
+        prog_layout.addWidget(self.campaign_entry, 1, 1)
+        camp_browse_btn = QPushButton("Bladda...")
+        camp_browse_btn.clicked.connect(self.pick_campaign)
+        prog_layout.addWidget(camp_browse_btn, 1, 2)
+
+        main_layout.addWidget(prog_group)
+
+        # --- Run buttons ---
+        run_widget = QWidget()
+        run_layout = QHBoxLayout(run_widget)
+        run_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.run_btn = QPushButton("Kor allokering")
+        self.run_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.run_btn.clicked.connect(self.run_allocation)
+        run_layout.addWidget(self.run_btn)
+
+        self.koppla_btn = QPushButton("Kor HIB-koppling")
+        self.koppla_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.koppla_btn.clicked.connect(self.run_koppla)
+        run_layout.addWidget(self.koppla_btn)
+
+        self.overview_check_btn = QPushButton("Kontrollera orderoversikt")
+        self.overview_check_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.overview_check_btn.clicked.connect(self.run_overview_check)
+        run_layout.addWidget(self.overview_check_btn)
+
+        self.dispatch_check_btn = QPushButton("Kontrollera dispatchpallar")
+        self.dispatch_check_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.dispatch_check_btn.clicked.connect(self.run_dispatch_check)
+        run_layout.addWidget(self.dispatch_check_btn)
+
+        run_layout.addStretch()
+        main_layout.addWidget(run_widget)
+
+        # --- Open result buttons ---
+        open_widget = QWidget()
+        open_layout = QHBoxLayout(open_widget)
+        open_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.open_result_btn = QPushButton("Oppna allokerade pallar")
+        self.open_result_btn.setEnabled(False)
+        self.open_result_btn.clicked.connect(self.open_result_in_excel)
+        open_layout.addWidget(self.open_result_btn)
+
+        self.open_nearmiss_btn = QPushButton("Oppna near-miss")
+        self.open_nearmiss_btn.setEnabled(False)
+        self.open_nearmiss_btn.clicked.connect(self.open_nearmiss_in_excel)
+        open_layout.addWidget(self.open_nearmiss_btn)
+
+        self.open_palletspaces_btn = QPushButton("Oppna pallplatser")
+        self.open_palletspaces_btn.setEnabled(False)
+        self.open_palletspaces_btn.clicked.connect(self.open_pallet_spaces_in_excel)
+        open_layout.addWidget(self.open_palletspaces_btn)
+
+        self.open_prognos_btn = QPushButton("Oppna prognos")
+        self.open_prognos_btn.setEnabled(False)
+        self.open_prognos_btn.clicked.connect(self.open_prognos_in_excel)
+        open_layout.addWidget(self.open_prognos_btn)
+
+        self.open_refill_btn = QPushButton("Oppna refill")
+        self.open_refill_btn.setEnabled(False)
+        self.open_refill_btn.clicked.connect(self.open_refill_in_excel)
+        open_layout.addWidget(self.open_refill_btn)
+
+        self.open_koppla_btn = QPushButton("Oppna HIB-koppling")
+        self.open_koppla_btn.setEnabled(False)
+        self.open_koppla_btn.clicked.connect(self.open_koppla_in_excel)
+        open_layout.addWidget(self.open_koppla_btn)
+
+        self.open_overview_check_btn = QPushButton("Oppna orderkontroll")
+        self.open_overview_check_btn.setEnabled(False)
+        self.open_overview_check_btn.clicked.connect(self.open_overview_check_in_excel)
+        open_layout.addWidget(self.open_overview_check_btn)
+
+        self.open_dispatch_check_btn = QPushButton("Oppna dispatchkontroll")
+        self.open_dispatch_check_btn.setEnabled(False)
+        self.open_dispatch_check_btn.clicked.connect(self.open_dispatch_check_in_excel)
+        open_layout.addWidget(self.open_dispatch_check_btn)
+
+        self.reset_cache_btn = QPushButton("Rensa cache")
+        self.reset_cache_btn.setStyleSheet("background-color: #28a745; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.reset_cache_btn.clicked.connect(self.reset_cache)
+        open_layout.addWidget(self.reset_cache_btn)
+
+        open_layout.addStretch()
+        main_layout.addWidget(open_widget)
+
+        # --- Log ---
+        main_layout.addWidget(QLabel("Logg / Summering:"))
+        self.log_edit = QTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setMinimumHeight(160)
+        self.log_edit.setFont(QFont("Courier New", 9))
+        main_layout.addWidget(self.log_edit, stretch=2)
+
+        # --- Summary table ---
+        main_layout.addWidget(QLabel("Summering per Kalltyp"))
+        self.summary_table = QTableWidget(0, 3)
+        self.summary_table.setHorizontalHeaderLabels(["Kalltyp", "antal rader", "antal kolli"])
+        self.summary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.summary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.summary_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.summary_table.setMaximumHeight(140)
+        main_layout.addWidget(self.summary_table)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _get_path(self, key: str) -> str:
+        return self._file_paths.get(key, "")
+
+    def _set_path(self, key: str, path: str) -> None:
+        self._file_paths[key] = path
+        self._update_file_status(key)
+
+    def _update_file_status(self, key: str) -> None:
+        lbl = self._status_labels.get(key)
+        btn = self._remove_btns.get(key)
+        if lbl is None:
+            return
+        path = self._get_path(key)
+        if path:
+            lbl.setText("Uppladdad")
+            lbl.setStyleSheet(
+                "background-color: #28a745; color: white; font-weight: bold; border-radius: 3px; padding: 2px 4px;"
+            )
+            if btn:
+                btn.setEnabled(True)
+        else:
+            lbl.setText("Ej fil")
+            lbl.setStyleSheet(
+                "background-color: #6c757d; color: white; font-weight: bold; border-radius: 3px; padding: 2px 4px;"
+            )
+            if btn:
+                btn.setEnabled(False)
+
+    def update_file_status_icons(self) -> None:
+        for key in self._file_paths:
+            self._update_file_status(key)
 
     def _log(self, msg: str, level: str = "info") -> None:
-        logprintln(self.log, msg)
+        self.log_edit.append(msg)
+        QApplication.processEvents()
 
-    def _create_widgets(self) -> None:
-        self.columnconfigure(0, weight=1)
-        indata_frame = ttk.LabelFrame(self, text="Indatafiler")
-        indata_frame.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
-        indata_frame.columnconfigure(1, weight=1)
-        # Row for Beställningslinjer (CSV)
-        ttk.Label(indata_frame, text="Beställningslinjer (CSV):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        self.orders_var = tk.StringVar()
-        # Use tk.Label for status so we can control background and font for better visibility
-        status_orders = tk.Label(
-            indata_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
+    def _err(self, msg: str) -> None:
+        QMessageBox.critical(self, APP_TITLE, msg)
+
+    def _info(self, msg: str) -> None:
+        QMessageBox.information(self, APP_TITLE, msg)
+
+    # ------------------------------------------------------------------
+    # File management
+    # ------------------------------------------------------------------
+    def clear_file(self, file_type: str) -> None:
+        self._set_path(file_type, "")
+        if file_type == "prognos":
+            self._prognos_df = None
+        if file_type == "campaign":
+            self._campaign_raw = None
+            self._campaign_norm = None
+
+    def open_files_dialog(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Valj filer", "",
+            "CSV och Excel (*.csv *.xlsx);;Alla filer (*.*)"
         )
-        status_orders.grid(row=0, column=1, sticky="w", padx=4)
-        remove_orders = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("orders"),
-                                   fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                   relief="raised", width=2)
-        remove_orders.grid(row=0, column=2, padx=4)
-        self.file_status_widgets["orders"] = (status_orders, remove_orders)
-        self.file_vars["orders"] = self.orders_var
-        # Row for Buffertpallar (CSV)
-        ttk.Label(indata_frame, text="Buffertpallar (CSV):").grid(row=1, column=0, sticky="w", padx=4, pady=4)
-        self.buffer_var = tk.StringVar()
-        status_buffer = tk.Label(
-            indata_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_buffer.grid(row=1, column=1, sticky="w", padx=4)
-        remove_buffer = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("buffer"),
-                                  fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                  relief="raised", width=2)
-        remove_buffer.grid(row=1, column=2, padx=4)
-        self.file_status_widgets["buffer"] = (status_buffer, remove_buffer)
-        self.file_vars["buffer"] = self.buffer_var
-        # Row for Saldo inkl. automation (CSV)
-        ttk.Label(indata_frame, text="Saldo inkl. automation (CSV):").grid(row=2, column=0, sticky="w", padx=4, pady=4)
-        self.automation_var = tk.StringVar()
-        status_automation = tk.Label(
-            indata_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_automation.grid(row=2, column=1, sticky="w", padx=4)
-        remove_automation = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("automation"),
-                                      fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                      relief="raised", width=2)
-        remove_automation.grid(row=2, column=2, padx=4)
-        self.file_status_widgets["automation"] = (status_automation, remove_automation)
-        self.file_vars["automation"] = self.automation_var
-        # Row for Item option (CSV)
-        ttk.Label(indata_frame, text="Item option (CSV):").grid(row=3, column=0, sticky="w", padx=4, pady=4)
-        self.item_var = tk.StringVar()
-        status_item = tk.Label(
-            indata_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_item.grid(row=3, column=1, sticky="w", padx=4)
-        remove_item = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("item"),
-                                fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                relief="raised", width=2)
-        remove_item.grid(row=3, column=2, padx=4)
-        self.file_status_widgets["item"] = (status_item, remove_item)
-        self.file_vars["item"] = self.item_var
-
-        # Row for Orderöversikt (CSV)
-        ttk.Label(indata_frame, text="Orderöversikt (CSV):").grid(row=4, column=0, sticky="w", padx=4, pady=4)
-        self.overview_var = tk.StringVar()
-        status_overview = tk.Label(
-            indata_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_overview.grid(row=4, column=1, sticky="w", padx=4)
-        remove_overview = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("overview"),
-                                    fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                    relief="raised", width=2)
-        remove_overview.grid(row=4, column=2, padx=4)
-        self.file_status_widgets["overview"] = (status_overview, remove_overview)
-        self.file_vars["overview"] = self.overview_var
-
-        # Row for Dispatchpallar (CSV)
-        ttk.Label(indata_frame, text="Dispatchpallar (CSV):").grid(row=5, column=0, sticky="w", padx=4, pady=4)
-        self.dispatch_var = tk.StringVar()
-        status_dispatch = tk.Label(
-            indata_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_dispatch.grid(row=5, column=1, sticky="w", padx=4)
-        remove_dispatch = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("dispatch"),
-                                   fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                   relief="raised", width=2)
-        remove_dispatch.grid(row=5, column=2, padx=4)
-        self.file_status_widgets["dispatch"] = (status_dispatch, remove_dispatch)
-        self.file_vars["dispatch"] = self.dispatch_var
-
-        prog_frame = ttk.LabelFrame(self, text="Prognos / Kampanj")
-        prog_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
-        prog_frame.columnconfigure(1, weight=1)
-        ttk.Label(prog_frame, text="Prognos (XLSX):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        self.prognos_var = tk.StringVar()
-        status_prognos = tk.Label(
-            prog_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_prognos.grid(row=0, column=1, sticky="w", padx=4)
-        remove_prognos = tk.Button(prog_frame, text="✗", command=lambda: self.clear_file("prognos"),
-                                   fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                   relief="raised", width=2)
-        remove_prognos.grid(row=0, column=2, padx=4)
-        self.file_status_widgets["prognos"] = (status_prognos, remove_prognos)
-        self.file_vars["prognos"] = self.prognos_var
-        ttk.Label(prog_frame, text="Kampanjvolymer (XLSX):").grid(row=1, column=0, sticky="w", padx=4, pady=4)
-        self.campaign_var = tk.StringVar()
-        status_campaign = tk.Label(
-            prog_frame,
-            text="Ej fil",
-            fg="white",
-            bg="#6c757d",
-            width=10,
-            anchor="w",
-            font=("Arial", 11, "bold"),
-        )
-        status_campaign.grid(row=1, column=1, sticky="w", padx=4)
-        remove_campaign = tk.Button(prog_frame, text="✗", command=lambda: self.clear_file("campaign"),
-                                    fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
-                                    relief="raised", width=2)
-        remove_campaign.grid(row=1, column=2, padx=4)
-        self.file_status_widgets["campaign"] = (status_campaign, remove_campaign)
-        self.file_vars["campaign"] = self.campaign_var
-
-        # Klick på valfri statusruta öppnar gemensam filväljare (multi-select).
-        for status_lbl, _ in self.file_status_widgets.values():
-            status_lbl.bind("<Button-1>", self.open_files_dialog)
-
-        # Placera run-knappar i ett eget ram för att kunna ha flera knappar bredvid varandra
-        run_frame = ttk.Frame(self)
-        run_frame.grid(row=2, column=0, columnspan=3, pady=10)
-        self.run_btn = ttk.Button(run_frame, text="Kör allokering", command=self.run_allocation, style="Accent.TButton")
-        self.run_btn.pack(side="left", padx=4)
-        # Knapp för HIB‑koppling
-        self.koppla_btn = ttk.Button(run_frame, text="Kör HIB‑koppling", command=self.run_koppla, style="Accent.TButton")
-        self.koppla_btn.pack(side="left", padx=4)
-        # Knapp för kontroll av orderöversikt (sändningsnr vs kunder/transportörer)
-        self.overview_check_btn = ttk.Button(run_frame, text="Kontrollera orderöversikt", command=self.run_overview_check, style="Accent.TButton")
-        self.overview_check_btn.pack(side="left", padx=4)
-        # Knapp för kontroll av dispatchpallar (ordernr och sändningsnr)
-        self.dispatch_check_btn = ttk.Button(run_frame, text="Kontrollera dispatchpallar", command=self.run_dispatch_check, style="Accent.TButton")
-        self.dispatch_check_btn.pack(side="left", padx=4)
-
-        open_frame = ttk.Frame(self)
-        open_frame.grid(row=3, column=0, columnspan=3, pady=10)
-        self.open_result_btn = ttk.Button(open_frame, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
-        self.open_result_btn.grid(row=0, column=0, padx=4)
-        self.open_nearmiss_btn = ttk.Button(open_frame, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
-        self.open_nearmiss_btn.grid(row=0, column=1, padx=4)
-        self.open_palletspaces_btn = ttk.Button(open_frame, text="Öppna pallplatser", command=self.open_pallet_spaces_in_excel, state="disabled")
-        self.open_palletspaces_btn.grid(row=0, column=2, padx=4)
-        self.open_prognos_btn = ttk.Button(open_frame, text="Öppna prognos", command=self.open_prognos_in_excel, state="disabled")
-        self.open_prognos_btn.grid(row=0, column=3, padx=4)
-        self.open_refill_btn = ttk.Button(open_frame, text="Öppna refill", command=self.open_refill_in_excel, state="disabled")
-        self.open_refill_btn.grid(row=0, column=4, padx=4)
-        # Flytta knappen för att öppna HIB‑kopplingen till vänster om Rensa cache
-        self.open_koppla_btn = ttk.Button(open_frame, text="Öppna HIB‑koppling", command=self.open_koppla_in_excel, state="disabled")
-        self.open_koppla_btn.grid(row=0, column=5, padx=4)
-        # Nya knappar för att öppna resultatet av order- och dispatchkontroller
-        self.open_overview_check_btn = ttk.Button(open_frame, text="Öppna orderkontroll", command=self.open_overview_check_in_excel, state="disabled")
-        self.open_overview_check_btn.grid(row=0, column=6, padx=4)
-        self.open_dispatch_check_btn = ttk.Button(open_frame, text="Öppna dispatchkontroll", command=self.open_dispatch_check_in_excel, state="disabled")
-        self.open_dispatch_check_btn.grid(row=0, column=7, padx=4)
-        self.reset_cache_btn = ttk.Button(open_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
-        # Flytta rensa cache till kolumn 8 när nya knappar lagts till
-        self.reset_cache_btn.grid(row=0, column=8, padx=4)
-
-        ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
-        self.log = tk.Text(self, height=14, width=110, state="disabled")
-        self.log.grid(row=5, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
-        self.rowconfigure(5, weight=1)
-
-        ttk.Label(self, text="Summering per Källtyp").grid(row=6, column=0, sticky="w", padx=8)
-        self.summary_table = ttk.Treeview(self, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
-        self.summary_table.heading("ktyp", text="Källtyp")
-        self.summary_table.heading("antal_rader", text="antal rader")
-        self.summary_table.heading("antal_kolli", text="antal kolli")
-        self.summary_table.column("ktyp", anchor="w", width=160)
-        self.summary_table.column("antal_rader", anchor="e", width=140)
-        self.summary_table.column("antal_kolli", anchor="e", width=140)
-        self.summary_table.grid(row=7, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
-
-        self.last_result_df: pd.DataFrame | None = None
-        self.last_nearmiss_instead_df: pd.DataFrame | None = None
-        self._orders_raw: pd.DataFrame | None = None
-        self._buffer_raw: pd.DataFrame | None = None
-        self._result_df: pd.DataFrame | None = None
-
-        self._not_putaway_raw: pd.DataFrame | None = None
-        self._not_putaway_norm: pd.DataFrame | None = None
-        self._saldo_norm: pd.DataFrame | None = None
-
-        self._saldo_raw: pd.DataFrame | None = None
-
-        self._item_raw: pd.DataFrame | None = None
-        self._item_norm: pd.DataFrame | None = None
-
-        self._sales_metrics_df: pd.DataFrame | None = None
-
-        self._last_refill_hp_df: pd.DataFrame | None = None
-        self._last_refill_autostore_df: pd.DataFrame | None = None
-
-        self._pallet_spaces_df: pd.DataFrame | None = None
-
-        self._prognos_df: pd.DataFrame | None = None
-
-        # För HIB‑kopplingens resultat
-        self.last_koppla_df: pd.DataFrame | None = None
-        # För missade avgångar i HIB‑kopplingen
-        self.last_koppla_missed_df: pd.DataFrame | None = None
-        self.last_koppla_path: str | None = None
-
-        # För orderöversikt- och dispatchkontroll
-        self.last_overview_check_df: pd.DataFrame | None = None
-        self.last_hib_status_check_df: pd.DataFrame | None = None
-        self.last_overview_check_path: str | None = None
-        self.last_dispatch_check_df: pd.DataFrame | None = None
-        self.last_dispatch_check_path: str | None = None
-
-
-
-        # Hela fönstret är droppbart när TkinterDnD finns tillgängligt.
-        self._bind_global_drop_targets()
-
-
-    def pick_orders(self) -> None:
-        path = filedialog.askopenfilename(title="Välj beställningsrader (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
-        if path:
-            self.orders_var.set(path)
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-
-    def pick_automation(self) -> None:
-        path = filedialog.askopenfilename(title="Välj Saldo inkl. automation (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
-        if path:
-            self.automation_var.set(path)
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-
-    def pick_buffer(self) -> None:
-        path = filedialog.askopenfilename(title="Välj buffertpallar (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
-        if path:
-            self.buffer_var.set(path)
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-
-    def pick_item(self) -> None:
-        """
-        Öppna dialog för att välja item-fil (CSV) med staplingsbar-uppgift.
-        """
-        path = filedialog.askopenfilename(title="Välj item-fil (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
-        if path:
-            self.item_var.set(path)
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-
-    def pick_overview(self) -> None:
-        """
-        Öppna dialog för att välja orderöversikt (CSV).  Denna fil innehåller
-        övergripande information om ordrar inklusive ordertyp, kundnummer,
-        orderdatum, sändningsnummer, zoner och multi.  Endast en fil behöver
-        väljas och sparas i overview_var.
-        """
-        path = filedialog.askopenfilename(title="Välj orderöversikt (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
-        if path:
-            self.overview_var.set(path)
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-
-    def pick_not_putaway(self) -> None:
-        """
-        Stub för filval av 'Ej inlagrade artiklar'. Denna funktion gör inget i denna version.
-        """
-        return
-
-    def _on_global_drop(self, event) -> None:
-        """Gemensam drop-handler för hela fönstret."""
-        self._handle_drop_all(event)
-        try:
-            self.update_file_status_icons()
-        except Exception:
-            pass
-
-    def _bind_global_drop_targets(self) -> None:
-        """Gör hela appfönstret droppbart när TkinterDnD finns tillgängligt."""
-        if not (TkinterDnD and DND_FILES):
+        if not paths:
             return
-        seen: set[str] = set()
+        for p in paths:
+            file_type = self._detect_file_type(p)
+            self._assign_file(p, file_type)
+        self.update_file_status_icons()
 
-        def _register(widget) -> None:
+    def _assign_file(self, p: str, file_type) -> None:
+        if file_type == "orders":
+            self._set_path("orders", p)
+        elif file_type == "buffer":
+            self._set_path("buffer", p)
+        elif file_type == "automation":
+            self._set_path("automation", p)
+        elif file_type == "item":
+            self._set_path("item", p)
+        elif file_type == "prognos":
+            self.prognos_entry.setText(p)
             try:
-                wid = str(widget)
-                if wid in seen:
-                    return
-                seen.add(wid)
-                widget.drop_target_register(DND_FILES)
-                widget.dnd_bind("<<Drop>>", self._on_global_drop)
+                self._load_prognos(p)
             except Exception:
                 pass
+        elif file_type == "campaign":
+            self.campaign_entry.setText(p)
             try:
-                for child in widget.winfo_children():
-                    _register(child)
+                self._load_campaign(p)
             except Exception:
                 pass
+        elif file_type == "overview":
+            self._set_path("overview", p)
+        elif file_type == "dispatch":
+            self._set_path("dispatch", p)
+        else:
+            self._log(f"Okand filtyp: {p}")
 
-        _register(self.master)
+    def _handle_drop_paths(self, paths: List[str]) -> None:
+        for p in paths:
+            file_type = self._detect_file_type(p)
+            self._assign_file(p, file_type)
+        self.update_file_status_icons()
 
-    def _parse_dnd_paths(self, event_data: str) -> list[str]:
-        """Tolka en DnD-sträng (kan innehålla en eller flera filvägar inom klamrar) till en lista med paths."""
-        raw = str(event_data).strip()
-        paths: list[str] = []
-        i = 0
-        while raw:
-            raw = raw.strip()
-            if not raw:
-                break
-            if raw.startswith("{"):
-                end = raw.find("}")
-                if end == -1:
-                    break
-                path = raw[1:end]
-                paths.append(path)
-                raw = raw[end+1:]
-            else:
-                if ' ' in raw:
-                    part, raw = raw.split(' ', 1)
-                else:
-                    part, raw = raw, ''
-                if part:
-                    paths.append(part)
-        return paths
+    def pick_prognos(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Valj prognos (XLSX)", "", "Excel (*.xlsx);;Alla filer (*.*)"
+        )
+        if path:
+            self.prognos_entry.setText(path)
+            self._load_prognos(path)
+        else:
+            self._prognos_df = None
+            self.open_prognos_btn.setEnabled(False)
 
-    def _detect_file_type(self, path: str) -> str | None:
-        """Försök avgöra vilken sorts fil det är (orders, buffer, automation, item, prognos, campaign).
-        Returnerar en sträng med typen eller None om okänd.
-        """
-        import os
-        import pandas as _pd
-        ext = os.path.splitext(path)[1].lower().lstrip('.')
+    def _load_prognos(self, path: str) -> None:
+        try:
+            df = read_prognos_xlsx(path)
+            self._prognos_df = df
+            try:
+                n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
+                self._log(f"Prognos inlast: {len(df)} rader, {n_art} artiklar.")
+            except Exception:
+                self._log(f"Prognos inlast: {len(df)} rader.")
+            self.open_prognos_btn.setEnabled(True)
+        except Exception as e:
+            self._prognos_df = None
+            self.open_prognos_btn.setEnabled(False)
+            self._err(f"Kunde inte lasa prognosfilen:\n{e}")
+
+    def pick_campaign(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Valj kampanjvolymer (XLSX)", "", "Excel (*.xlsx);;Alla filer (*.*)"
+        )
+        if path:
+            self.campaign_entry.setText(path)
+            self._load_campaign(path)
+        else:
+            self._campaign_norm = None
+
+    def _load_campaign(self, path: str) -> None:
+        try:
+            df = read_campaign_xlsx(path)
+            self._campaign_norm = df
+            try:
+                n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
+                self._log(f"Kampanjvolymer inlasta: {len(df)} rader, {n_art} artiklar.")
+            except Exception:
+                self._log(f"Kampanjvolymer inlasta: {len(df)} rader.")
+            if (self._prognos_df is not None and not self._prognos_df.empty) or (
+                isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
+            ):
+                self.open_prognos_btn.setEnabled(True)
+        except Exception as e:
+            self._campaign_norm = None
+            self._err(f"Kunde inte lasa kampanjfilen:\n{e}")
+
+    # ------------------------------------------------------------------
+    # File type detection (identical logic to original)
+    # ------------------------------------------------------------------
+    def _detect_file_type(self, path: str):
+        import os as _os
+        ext = _os.path.splitext(path)[1].lower().lstrip(".")
         if ext in ("xlsx", "xlsm", "xls"):
             try:
                 df_c = read_campaign_xlsx(path)
-                if isinstance(df_c, _pd.DataFrame) and not df_c.empty and list(df_c.columns) == ["Artikelnummer", "Antal styck"]:
+                if isinstance(df_c, pd.DataFrame) and not df_c.empty and list(df_c.columns) == ["Artikelnummer", "Antal styck"]:
                     return "campaign"
             except Exception:
                 pass
             try:
                 df_p = read_prognos_xlsx(path)
-                if isinstance(df_p, _pd.DataFrame) and not df_p.empty and len(df_p.columns) >= 3 and any(str(c).strip().lower() in ("antal styck", "quantity", "qty") for c in df_p.columns):
+                if isinstance(df_p, pd.DataFrame) and not df_p.empty and len(df_p.columns) >= 3 and any(
+                    str(c).strip().lower() in ("antal styck", "quantity", "qty") for c in df_p.columns
+                ):
                     return "prognos"
             except Exception:
                 pass
             return None
         try:
-            df = _pd.read_csv(path, dtype=str, nrows=50, sep=None, engine="python", encoding="utf-8-sig")
+            df = pd.read_csv(path, dtype=str, nrows=50, sep=None, engine="python", encoding="utf-8-sig")
             if df.shape[1] == 1:
-                df = _pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
+                df = pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
         except Exception:
             try:
-                df = _pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
+                df = pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
             except Exception:
                 return None
         cols = [str(c).strip().lower() for c in df.columns]
         has_art = any(c in ("artikel", "artikelnummer", "artnr", "art.nr", "sku", "article") for c in cols)
-        has_qty = any(c in ("beställt", "antal", "qty", "quantity", "bestalld", "order qty", "antal styck") for c in cols)
+        has_qty = any(c in ("beställt", "beställt", "antal", "qty", "quantity", "bestalld", "order qty", "antal styck") for c in cols)
         has_ord = any(c in ("ordernr", "order nr", "order number", "kund", "kundnr", "order id") for c in cols)
         has_rad = any(c in ("radnr", "rad nr", "line id", "rad", "struktur", "radsnr") for c in cols)
         if has_art and has_qty and (has_ord or has_rad):
             return "orders"
         has_lagerplats = any("lagerplats" in c or "plats" == c or "location" == c or "bin" == c for c in cols)
-        has_pallid = any(c in ("pallid", "pall id", "id", "sscc", "etikett", "batch") for c in cols)
-        has_status = any(c == "status" for c in cols)
         if has_art and has_qty and has_lagerplats:
             return "buffer"
         has_robot = any(c == "robot" for c in cols)
@@ -2515,181 +2469,44 @@ class App(ttk.Frame):
         if has_robot or has_saldo:
             return "automation"
         has_pack = any("pack klass" in c or "staplingsbar" in c for c in cols)
-        # Om filen innehåller pack‑relaterade kolumner ("pack klass" eller "staplingsbar"),
-        # kontrollera först om den också motsvarar en dispatchfil. Dispatchfiler har
-        # plockpallskolumn samt både ordernummer och sändningsinformation. Utan denna
-        # kontroll klassificerades dispatchpallar felaktigt som item.
         if has_pack:
-            # dispatch‑indikatorer
             has_plockpall = any("plockpall" in c for c in cols)
             has_dispatch_order = any(c in ("ordernr", "order nr", "order number", "ordernummer") for c in cols)
             has_dispatch_ship = any(
-                ("sändnings" in c) or ("sandnings" in c) or ("sändningsnr" in c) or ("sandningsnr" in c) or ("sändningsnr." in c) or ("sandningsnr." in c)
+                ("sändnings" in c) or ("sandnings" in c) or ("sändningsnr" in c) or ("sandningsnr" in c)
                 for c in cols
             )
-            # om dispatchindikatorer hittas, återgå "dispatch" istället för "item"
             if has_plockpall and has_dispatch_order and has_dispatch_ship:
                 return "dispatch"
             return "item"
-        # Ny detektering för orderöversikt (overview)
         has_ordernr = any(c in ("ordernr", "order nr", "order number") for c in cols)
         has_orderdatum = any("orderdatum" in c for c in cols)
         has_sandning = any("sändningsnr" in c or "sandningsnr" in c or "sändningsnr." in c or "sandnr" in c for c in cols)
         has_ordertyp = any("ordertyp" in c for c in cols)
-        has_multi = any("multi" == c for c in cols)
-        # kräver flera av dessa kolumner för att identifiera en orderöversikt
         if has_ordernr and has_orderdatum and has_sandning and has_ordertyp:
             return "overview"
-        # Ny detektering för dispatchpallar (dispatch)
         has_plockpall = any("plockpall" in c for c in cols)
         has_dispatch_order = any(c in ("ordernr", "order nr", "order number", "ordernummer") for c in cols)
         has_dispatch_ship = any(
-            ("sändnings" in c) or ("sandnings" in c) or ("sändningsnr" in c) or ("sandningsnr" in c) or ("sändningsnr." in c) or ("sandningsnr." in c)
+            ("sändnings" in c) or ("sandnings" in c) or ("sändningsnr" in c) or ("sandningsnr" in c)
             for c in cols
         )
         if has_plockpall and has_dispatch_order and has_dispatch_ship:
             return "dispatch"
         return None
 
-    def _handle_drop_all(self, event) -> None:
-        """Hantera drop av en eller flera filer i den gemensamma drop-zonen."""
-        paths = self._parse_dnd_paths(event.data)
-        for p in paths:
-            p = p.strip()
-            if not p:
-                continue
-            file_type = self._detect_file_type(p)
-            if file_type == "orders":
-                self.orders_var.set(p)
-            elif file_type == "buffer":
-                self.buffer_var.set(p)
-            elif file_type == "automation":
-                self.automation_var.set(p)
-            elif file_type == "item":
-                self.item_var.set(p)
-            elif file_type == "prognos":
-                self.prognos_var.set(p)
-                try:
-                    self._load_prognos(p)
-                except Exception:
-                    pass
-            elif file_type == "campaign":
-                self.campaign_var.set(p)
-                try:
-                    self._load_campaign(p)
-                except Exception:
-                    pass
-            elif file_type == "overview":
-                self.overview_var.set(p)
-            elif file_type == "dispatch":
-                self.dispatch_var.set(p)
-            else:
-                self._log(f"Okänd filtyp: {p}")
-
-    def pick_sales(self) -> None:
-        """
-        Stub för filval av plocklogg. Denna funktion gör inget i denna version.
-        """
-        return
-
-    def update_file_status_icons(self) -> None:
-        """
-        Uppdatera ikonerna för filinmatningsraderna. Grön bock för uppladdad fil,
-        grått streck för ingen fil och inaktivera röd kryss vid tomt fält.
-        """
-        try:
-            for ft, (lbl, btn) in self.file_status_widgets.items():
-                var = self.file_vars.get(ft)
-                path = var.get().strip() if var else ""
-                if path:
-                    # fil har valts: visa "Uppladdad" med grön bakgrund och vit text
-                    lbl.config(text="Uppladdad", fg="white", bg="#28a745")
-                    btn.config(state="normal")
-                else:
-                    # ingen fil: visa "Ej fil" med grå bakgrund
-                    lbl.config(text="Ej fil", fg="white", bg="#6c757d")
-                    btn.config(state="disabled")
-        except Exception:
-            pass
-
-    def clear_file(self, file_type: str) -> None:
-        """
-        Töm filvalet för angiven filtyp och uppdatera ikonerna.
-        """
-        try:
-            var = self.file_vars.get(file_type)
-            if var:
-                var.set("")
-            # Rensa även eventuellt laddad prognos eller kampanjdata
-            if file_type == "prognos":
-                self._prognos_df = None
-            if file_type == "campaign":
-                self._campaign_raw = None
-                self._campaign_norm = None
-            if file_type in ("prognos", "campaign"):
-                has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
-                has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
-                self.open_prognos_btn.configure(state="normal" if (has_prognos or has_campaign) else "disabled")
-        except Exception:
-            pass
-        self.update_file_status_icons()
-
-    def open_files_dialog(self, event=None) -> None:
-        """
-        Öppna en fil-dialog för att välja en eller flera filer. Filtyperna
-        identifieras automatiskt och tilldelas rätt fält.
-        """
-        paths = filedialog.askopenfilenames(title="Välj filer", filetypes=[
-            ("CSV och Excel", "*.csv *.xlsx *.xlsm *.xls"),
-            ("Alla filer", "*.*")
-        ])
-        if not paths:
-            return
-        for p in paths:
-            p = str(p)
-            file_type = self._detect_file_type(p)
-            if file_type == "orders":
-                self.orders_var.set(p)
-            elif file_type == "buffer":
-                self.buffer_var.set(p)
-            elif file_type == "automation":
-                self.automation_var.set(p)
-            elif file_type == "item":
-                self.item_var.set(p)
-            elif file_type == "prognos":
-                self.prognos_var.set(p)
-                try:
-                    self._load_prognos(p)
-                except Exception:
-                    pass
-            elif file_type == "campaign":
-                self.campaign_var.set(p)
-                try:
-                    self._load_campaign(p)
-                except Exception:
-                    pass
-            elif file_type == "overview":
-                self.overview_var.set(p)
-            elif file_type == "dispatch":
-                self.dispatch_var.set(p)
-            else:
-                try:
-                    self._log(f"Okänd filtyp: {p}")
-                except Exception:
-                    pass
-        # Uppdatera ikoner efter alla filer har satts
-        self.update_file_status_icons()
-
-
+    # ------------------------------------------------------------------
+    # Open-in-Excel helpers
+    # ------------------------------------------------------------------
     def open_result_in_excel(self) -> None:
         if isinstance(self.last_result_df, pd.DataFrame) and not self.last_result_df.empty:
             try:
                 path = _open_df_in_excel({"Allokerade order": self.last_result_df.copy()}, label="allocated_orders")
-                self._log(f"Öppnade resultat i Excel (temporär fil): {path}")
+                self._log(f"Oppnade resultat i Excel (temporar fil): {path}")
             except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna resultat i Excel:\n{e}")
+                self._err(f"Kunde inte oppna resultat i Excel:\n{e}")
         else:
-            messagebox.showinfo(APP_TITLE, "Det finns inget resultat att öppna ännu. Kör allokeringen först.")
+            self._info("Det finns inget resultat att oppna annu. Kor allokeringen forst.")
 
     def open_nearmiss_in_excel(self) -> None:
         if isinstance(self.last_nearmiss_instead_df, pd.DataFrame) and not self.last_nearmiss_instead_df.empty:
@@ -2701,103 +2518,42 @@ class App(ttk.Frame):
                 sheet_name = f"Near-miss {pct_str} (unika artiklar)"
                 label = f"near_miss_{int(NEAR_MISS_PCT * 100)}pct"
                 path = _open_df_in_excel({sheet_name: nm_df}, label=label)
-                self._log(f"Öppnade near-miss (INSTEAD R or A) i Excel (temporär fil): {path}")
+                self._log(f"Oppnade near-miss i Excel: {path}")
             except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna near-miss i Excel:\n{e}")
+                self._err(f"Kunde inte oppna near-miss i Excel:\n{e}")
         else:
-            messagebox.showinfo(APP_TITLE, "Det finns ingen near-miss INSTEAD R/A att öppna ännu.")
+            self._info("Det finns ingen near-miss INSTEAD R/A att oppna annu.")
 
     def open_pallet_spaces_in_excel(self) -> None:
-        """
-        Öppna den beräknade pallplatsrapporten per kund i en temporär Excel-fil.
-        Rapporten innehåller antal bottenpallar, toppallar, totalt pallar och pallplatser per kund.
-        """
         if isinstance(self._pallet_spaces_df, pd.DataFrame) and not self._pallet_spaces_df.empty:
             try:
-                ps_df = self._pallet_spaces_df.copy()
-                path = _open_df_in_excel({"Pallplatser": ps_df}, label="pallplatser")
-                self._log(f"Öppnade pallplatser i Excel (temporär fil): {path}")
+                path = _open_df_in_excel({"Pallplatser": self._pallet_spaces_df.copy()}, label="pallplatser")
+                self._log(f"Oppnade pallplatser i Excel: {path}")
             except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna pallplatser i Excel:\n{e}")
+                self._err(f"Kunde inte oppna pallplatser i Excel:\n{e}")
         else:
-            messagebox.showinfo(APP_TITLE, "Det finns ingen pallplatsrapport att öppna ännu. Kör allokeringen först.")
+            self._info("Det finns ingen pallplatsrapport att oppna annu. Kor allokeringen forst.")
 
-    def pick_prognos(self) -> None:
-        """Visa en filväljare för att välja en prognosfil (XLSX)."""
-        path = filedialog.askopenfilename(title="Välj prognos (XLSX)", filetypes=[("Excel", "*.xlsx"), ("Alla filer","*.*")])
-        if path:
-            self.prognos_var.set(path)
-            self._load_prognos(path)
-            # Uppdatera statusikoner även om prognosfilen laddas in via egen knapp
+    def open_refill_in_excel(self) -> None:
+        if isinstance(self._last_refill_hp_df, pd.DataFrame) or isinstance(self._last_refill_autostore_df, pd.DataFrame):
             try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
+                hp = self._last_refill_hp_df.copy() if isinstance(self._last_refill_hp_df, pd.DataFrame) else pd.DataFrame()
+                asr = self._last_refill_autostore_df.copy() if isinstance(self._last_refill_autostore_df, pd.DataFrame) else pd.DataFrame()
+                if isinstance(self._sales_metrics_df, pd.DataFrame) and not self._sales_metrics_df.empty:
+                    hp = annotate_refill(hp, self._sales_metrics_df)
+                    asr = annotate_refill(asr, self._sales_metrics_df)
+                path = _open_df_in_excel({"Refill HP": hp, "Refill AUTOSTORE": asr}, label="refill")
+                self._log(f"Oppnade refill i Excel: {path}")
+            except Exception as e:
+                self._err(f"Kunde inte oppna refill i Excel:\n{e}")
         else:
-            self._prognos_df = None
-            self.open_prognos_btn.configure(state="disabled")
-
-    def _load_prognos(self, path: str) -> None:
-        """Läs in prognosfilen och aktivera knappen för öppning."""
-        try:
-            df = read_prognos_xlsx(path)
-            self._prognos_df = df
-            try:
-                n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
-                self._log(f"Prognos inläst: {len(df)} rader, {n_art} artiklar.")
-            except Exception:
-                self._log(f"Prognos inläst: {len(df)} rader.")
-            self.open_prognos_btn.configure(state="normal")
-        except Exception as e:
-            self._prognos_df = None
-            self.open_prognos_btn.configure(state="disabled")
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa prognosfilen:\n{e}")
-
-    def pick_campaign(self) -> None:
-        """Visa en filväljare för att välja en kampanjvolymfil (XLSX)."""
-        path = filedialog.askopenfilename(title="Välj kampanjvolymer (XLSX)", filetypes=[("Excel", "*.xlsx"), ("Alla filer", "*.*")])
-        if path:
-            self.campaign_var.set(path)
-            self._load_campaign(path)
-            # Uppdatera statusikoner även när kampanjfilen laddas in via egen knapp
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-        else:
-            self._campaign_norm = None
-
-    def _load_campaign(self, path: str) -> None:
-        """Läs in kampanjvolymer och lagra den normaliserade datan."""
-        try:
-            df = read_campaign_xlsx(path)
-            self._campaign_norm = df
-            try:
-                n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
-                self._log(f"Kampanjvolymer inlästa: {len(df)} rader, {n_art} artiklar.")
-            except Exception:
-                self._log(f"Kampanjvolymer inlästa: {len(df)} rader.")
-            try:
-                if (self._prognos_df is not None and isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty) or (isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty):
-                    self.open_prognos_btn.configure(state="normal")
-            except Exception:
-                pass
-        except Exception as e:
-            self._campaign_norm = None
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa kampanjfilen:\n{e}")
+            self._info("Det finns ingen refillrapport att oppna annu. Kor allokeringen forst.")
 
     def open_prognos_in_excel(self) -> None:
-        """
-        Skapa och öppna en prognosrapport i en temporär Excel‑fil.
-
-        Rapporten jämför prognosbehovet med saldo i autoplock, ej inlagrade artiklar samt buffertpallar
-        (FIFO‑logik) och följer exakt samma uträkningar som i originalprojektet. Om prognosen inte
-        har lästs in ännu visas ett meddelande istället.
-        """
         has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
         has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
         if not has_prognos and not has_campaign:
-            messagebox.showinfo(APP_TITLE, "Välj och läs in antingen prognosfilen eller kampanjvolymerna först.")
+            self._info("Valj och las in antingen prognosfilen eller kampanjvolymerna forst.")
             return
         try:
             if has_prognos:
@@ -2841,19 +2597,15 @@ class App(ttk.Frame):
                             combined_df = pd.concat([
                                 combined_df,
                                 pd.DataFrame({
-                                    "Artikelnummer": [art],
-                                    "Beskrivning": [None],
-                                    "Antal styck": [int(vol)],
-                                    "Antal rader": [0],
-                                    "Antal butiker": [0],
+                                    "Artikelnummer": [art], "Beskrivning": [None],
+                                    "Antal styck": [int(vol)], "Antal rader": [0], "Antal butiker": [0],
                                 })
                             ], ignore_index=True)
             report_df, meta = build_prognos_vs_autoplock_report(
                 prognos_df=combined_df,
                 saldo_norm_df=(self._saldo_raw if isinstance(self._saldo_raw, pd.DataFrame) else None),
                 buffer_df=(self._buffer_raw if isinstance(self._buffer_raw, pd.DataFrame) else None),
-                exclude_source_ids=None,
-                allocated_df=None,
+                exclude_source_ids=None, allocated_df=None,
             )
             path = open_prognos_vs_autoplock_excel(report_df, meta)
             msg = f"Prognosrapport skapad ({len(report_df)} rader)."
@@ -2863,15 +2615,81 @@ class App(ttk.Frame):
                     msg += f" PARTIELL: saknar {miss}."
             self._log(msg)
         except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna prognosrapporten:\n{e}")
+            self._err(f"Kunde inte skapa/oppna prognosrapporten:\n{e}")
 
+    def open_koppla_in_excel(self) -> None:
+        has_changes = isinstance(self.last_koppla_df, pd.DataFrame) and not self.last_koppla_df.empty
+        has_missed = isinstance(self.last_koppla_missed_df, pd.DataFrame) and not self.last_koppla_missed_df.empty
+        if has_changes or has_missed:
+            try:
+                instr_lines = [
+                    "Andras i foljande ordning",
+                    "1. Ordernummer",
+                    "2. Sandningsnummer",
+                    "3. Zon F pa orderlinjerna",
+                    "4. Samma multi pa alla Hibar till samma butik",
+                    "5. Generera",
+                    "6. Frislapp",
+                ]
+                instructions_df = pd.DataFrame({"Instruktioner": instr_lines})
+                sheets: dict = {}
+                if has_changes:
+                    sheets["Andringar"] = self.last_koppla_df.copy()
+                if has_missed:
+                    sheets["Missade avgangar"] = self.last_koppla_missed_df.copy()
+                sheets["Instruktion"] = instructions_df
+                path = _open_df_in_excel(sheets, label="hib_koppling")
+                self.last_koppla_path = path
+                self._log(f"Oppnade HIB-koppling i Excel: {path}")
+            except Exception as e:
+                self._err(f"Kunde inte oppna HIB-koppling i Excel:\n{e}")
+        else:
+            self._info("Det finns inget HIB-kopplingsresultat att oppna. Kor HIB-kopplingen forst.")
+
+    def open_overview_check_in_excel(self) -> None:
+        has_sandning = isinstance(self.last_overview_check_df, pd.DataFrame) and not self.last_overview_check_df.empty
+        has_hib = isinstance(getattr(self, "last_hib_status_check_df", None), pd.DataFrame) and not self.last_hib_status_check_df.empty
+        if has_sandning or has_hib:
+            try:
+                sheets: dict = {}
+                combined_parts: List[pd.DataFrame] = []
+                if has_sandning:
+                    s_df = self.last_overview_check_df.copy()
+                    if "Avvikelsetyp" not in s_df.columns:
+                        s_df.insert(0, "Avvikelsetyp", "Sandningsnr med flera kunder/transportorer")
+                    sheets["Sandningskontroll"] = s_df.copy()
+                    combined_parts.append(s_df)
+                if has_hib:
+                    h_df = self.last_hib_status_check_df.copy()
+                    if "Avvikelsetyp" not in h_df.columns:
+                        h_df.insert(0, "Avvikelsetyp", "HIB over status 31 utan butikssandning")
+                    sheets["HIB utan butikssandning"] = h_df.copy()
+                    combined_parts.append(h_df)
+                if combined_parts:
+                    sheets = {"Orderkontroll": pd.concat(combined_parts, ignore_index=True, sort=False), **sheets}
+                path = _open_df_in_excel(sheets, label="orderkontroll")
+                self.last_overview_check_path = path
+                self._log(f"Oppnade orderkontroll i Excel: {path}")
+            except Exception as e:
+                self._err(f"Kunde inte oppna orderkontroll i Excel:\n{e}")
+        else:
+            self._info("Det finns inget orderkontroll-resultat att oppna. Kor kontrollen forst.")
+
+    def open_dispatch_check_in_excel(self) -> None:
+        if isinstance(self.last_dispatch_check_df, pd.DataFrame) and not self.last_dispatch_check_df.empty:
+            try:
+                path = _open_df_in_excel({"Dispatchkontroll": self.last_dispatch_check_df.copy()}, label="dispatchkontroll")
+                self.last_dispatch_check_path = path
+                self._log(f"Oppnade dispatchkontroll i Excel: {path}")
+            except Exception as e:
+                self._err(f"Kunde inte oppna dispatchkontroll i Excel:\n{e}")
+        else:
+            self._info("Det finns inget dispatchkontroll-resultat att oppna. Kor kontrollen forst.")
+
+    # ------------------------------------------------------------------
+    # Reset cache
+    # ------------------------------------------------------------------
     def reset_cache(self) -> None:
-        """
-        Rensa alla cacher och temporära variabler i applikationen. Detta nollställer
-        internt lagrade DataFrames (resultat, near-miss, saldo, item, sales m.m.),
-        tömmer loggrutan, återställer summeringstabellen till noll och inaktiverar
-        öppna-knapparna. Pathvariabler för filval påverkas inte.
-        """
         try:
             self.last_result_df = None
             self.last_nearmiss_instead_df = None
@@ -2891,805 +2709,49 @@ class App(ttk.Frame):
             self._prognos_df = None
             self._campaign_raw = None
             self._campaign_norm = None
-
-            # Rensa HIB‑kopplingsresultat
             self.last_koppla_df = None
             self.last_koppla_missed_df = None
             self.last_koppla_path = None
+            self.last_overview_check_df = None
+            self.last_hib_status_check_df = None
+            self.last_overview_check_path = None
+            self.last_dispatch_check_df = None
+            self.last_dispatch_check_path = None
 
-            self.log.configure(state="normal")
-            self.log.delete("1.0", tk.END)
-            self.log.configure(state="disabled")
+            self.log_edit.clear()
+            self.summary_table.setRowCount(0)
 
+            for btn in (
+                self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn,
+                self.open_prognos_btn, self.open_refill_btn, self.open_koppla_btn,
+                self.open_overview_check_btn, self.open_dispatch_check_btn
+            ):
+                btn.setEnabled(False)
+
+            for key in list(self._file_paths.keys()):
+                self._set_path(key, "")
+            self.prognos_entry.clear()
+            self.campaign_entry.clear()
+
+            self._log("Cache och temporara data har rensats.")
+        except Exception:
             try:
-                for child in self.summary_table.get_children(""):
-                    self.summary_table.delete(child)
+                self._log("Kunde inte genomfora fullstandig cache-rensning (internt fel).")
             except Exception:
                 pass
 
-            # Stäng av alla öppna-knappar inklusive HIB-kopplingsknappen
-            for btn in (self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn, self.open_prognos_btn, self.open_refill_btn, self.open_koppla_btn):
-                try:
-                    btn.configure(state="disabled")
-                except Exception:
-                    pass
-
-            try:
-                # Rensa alla filval (inklusive orderöversikt) så att texten försvinner från GUI
-                self.orders_var.set("")
-                self.buffer_var.set("")
-                self.automation_var.set("")
-                self.item_var.set("")
-                self.prognos_var.set("")
-                self.campaign_var.set("")
-                # Orderöversikten (overview) ska också nollställas vid cache-rensning
-                if hasattr(self, "overview_var"):
-                    self.overview_var.set("")
-                # Rensa även dispatchpallar vid cache-rensning
-                if hasattr(self, "dispatch_var"):
-                    self.dispatch_var.set("")
-                # Nollställ eventuella resultat från dispatch-kontrollen
-                self.last_dispatch_check_df = None
-                self.last_dispatch_check_path = None
-                # Inaktivera dispatchkontroll-knappen
-                try:
-                    self.open_dispatch_check_btn.configure(state="disabled")
-                except Exception:
-                    pass
-            except Exception:
-                pass
-
-            # Uppdatera statusikoner efter att alla filval har nollställts
-            try:
-                self.update_file_status_icons()
-            except Exception:
-                pass
-
-            self._log("Cache och temporära data har rensats.")
-        except Exception:
-            try:
-                self._log("Kunde inte genomföra fullständig cache-rensning (internt fel).")
-            except Exception:
-                pass
-
-    def open_refill_in_excel(self) -> None:
-        """Öppnar den senast auto-beräknade refill-rapporten; annoterar med sales vid öppning om tillgängligt."""
-        if isinstance(self._last_refill_hp_df, pd.DataFrame) or isinstance(self._last_refill_autostore_df, pd.DataFrame):
-            try:
-                hp = self._last_refill_hp_df.copy() if isinstance(self._last_refill_hp_df, pd.DataFrame) else pd.DataFrame()
-                asr = self._last_refill_autostore_df.copy() if isinstance(self._last_refill_autostore_df, pd.DataFrame) else pd.DataFrame()
-                if isinstance(self._sales_metrics_df, pd.DataFrame) and not self._sales_metrics_df.empty:
-                    hp = annotate_refill(hp, self._sales_metrics_df)
-                    asr = annotate_refill(asr, self._sales_metrics_df)
-                path = _open_df_in_excel({"Refill HP": hp, "Refill AUTOSTORE": asr}, label="refill")
-                self._log(f"Öppnade påfyllningspallar (cache) i Excel (temporär fil): {path}")
-            except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna påfyllningspallar i Excel:\n{e}")
-        else:
-            messagebox.showinfo(APP_TITLE, "Det finns ingen påfyllningspallsrapport att öppna ännu. Kör allokeringen först.")
-
-    def open_sales_in_excel(self) -> None:
-        if isinstance(self._sales_metrics_df, pd.DataFrame) and not self._sales_metrics_df.empty:
-            try:
-                path = open_sales_insights(self._sales_metrics_df)
-                self._log(f"Öppnade försäljningsinsikter i Excel (temporär fil): {path}")
-            except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna försäljningsinsikter:\n{e}")
-        else:
-            messagebox.showinfo(APP_TITLE, "Det finns inga försäljningsinsikter att öppna ännu. Läs in en plocklogg först.")
-
-
-    def run_koppla(self) -> None:
-        """
-        Utför HIB‑koppling.  Läs in beställningslinjer och orderöversikt,
-        filtrera enligt de regler som angetts och bygg en resultatlista
-        över HIB‑ordrar som behöver uppdateras.  Efter körning lagras
-        resultatet i `self.last_koppla_df` och knappen för att öppna
-        resultatet aktiveras om det finns något att visa.
-        """
-        details_path = self.orders_var.get().strip()
-        overview_path = self.overview_var.get().strip()
-        if not details_path or not overview_path:
-            messagebox.showerror(APP_TITLE, "Välj både beställningslinjer och orderöversikt.")
-            return
-        try:
-            # Läs in beställningslinjer
-            details_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa beställningslinjer:\n{e}")
-            return
-        try:
-            # Läs in orderöversikt
-            overview_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
-            return
-        # Beräkna ändringar och missade avgångar
-        try:
-            changes_df = compute_hib_koppling(details_df, overview_df)
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Fel vid beräkning av HIB‑kopplingen:\n{e}")
-            return
-        try:
-            missed_df = compute_missed_departures(details_df, overview_df)
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Fel vid beräkning av missade avgångar:\n{e}")
-            missed_df = pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
-        # Spara resultat
-        self.last_koppla_df = changes_df.copy() if isinstance(changes_df, pd.DataFrame) else pd.DataFrame()
-        self.last_koppla_missed_df = missed_df.copy() if isinstance(missed_df, pd.DataFrame) else pd.DataFrame()
-        # Om varken ändringar eller missade avgångar finns, meddela användaren och stäng av öppna‑knappen
-        if (changes_df is None or changes_df.empty) and (missed_df is None or missed_df.empty):
-            self.open_koppla_btn.config(state="disabled")
-            messagebox.showinfo(APP_TITLE, "Inga HIB‑ordrar behöver ändras eller har missat sin avgång.")
-            return
-        # Det finns något att visa – aktivera öppna‑knappen
-        self.open_koppla_btn.config(state="normal")
-        # Logga resultatet i loggfönstret
-        try:
-            if changes_df is not None and not changes_df.empty:
-                self._log("HIB‑koppling ändringar:")
-                for _, r in changes_df.iterrows():
-                    try:
-                        ordnr = str(r.get("ordernummer", "")).strip()
-                        kundnamn = str(r.get("kundnamn", "")).strip()
-                        fields: list[str] = []
-                        if str(r.get("sändningsnummer", "")).strip():
-                            fields.append(f"Sändningsnr → {str(r['sändningsnummer']).strip()}")
-                        if str(r.get("Orderdatum", "")).strip():
-                            fields.append(f"Orderdatum → {str(r['Orderdatum']).strip()}")
-                        if str(r.get("Zon", "")).strip():
-                            fields.append(f"Zon → {str(r['Zon']).strip()}")
-                        if str(r.get("Multi", "")).strip():
-                            fields.append(f"Multi → {str(r['Multi']).strip()}")
-                        if fields:
-                            name_part = f" ({kundnamn})" if kundnamn else ""
-                            self._log(f"Order {ordnr}{name_part}: {', '.join(fields)}")
-                    except Exception:
-                        pass
-            if missed_df is not None and not missed_df.empty:
-                self._log("Missade avgångar:")
-                for _, r in missed_df.iterrows():
-                    try:
-                        ordnr = str(r.get("ordernummer", "")).strip()
-                        kundnamn = str(r.get("kundnamn", "")).strip()
-                        name_part = f" ({kundnamn})" if kundnamn else ""
-                        self._log(f"Order {ordnr}{name_part}: MISSAT SIN AVGÅNG")
-                    except Exception:
-                        pass
-            self._log("HIB‑kopplingen är beräknad och redo att öppnas i Excel.")
-            instr_lines = [
-                "\nInstruktion:",
-                "Ändras i följande ordning",
-                "1. Ordernummer",
-                "2. Sändningsnummer",
-                "3. Zon F på orderlinjerna",
-                "4. Samma multi på alla Hibar till samma butik",
-                "5. Generera",
-                "6. Frisläpp",
-            ]
-            for line in instr_lines:
-                try:
-                    self._log(line)
-                except Exception:
-                    pass
-        except Exception:
-            # Om loggning misslyckas fortsätter vi utan att avbryta
-            self._log("HIB‑kopplingen är beräknad och redo att öppnas i Excel.")
-
-
-    def open_koppla_in_excel(self) -> None:
-        """
-        Öppna det senast beräknade HIB‑kopplingsresultatet i en temporär
-        Excel‑fil tillsammans med instruktioner.  Om ingen körning har gjorts
-        ännu eller om resultatet saknas visas ett informationsmeddelande.
-        """
-        # Endast öppna i Excel om det finns ändringar eller missade avgångar
-        has_changes = isinstance(self.last_koppla_df, pd.DataFrame) and not self.last_koppla_df.empty
-        has_missed = isinstance(getattr(self, "last_koppla_missed_df", None), pd.DataFrame) and not getattr(self, "last_koppla_missed_df").empty
-        if has_changes or has_missed:
-            try:
-                instr_lines = [
-                    "Ändras i följande ordning",
-                    "1. Ordernummer",
-                    "2. Sändningsnummer",
-                    "3. Zon F på orderlinjerna",
-                    "4. Samma multi på alla Hibar till samma butik",
-                    "5. Generera",
-                    "6. Frisläpp",
-                ]
-                instructions_df = pd.DataFrame({"Instruktioner": instr_lines})
-                sheets: dict[str, pd.DataFrame] = {}
-                if has_changes:
-                    sheets["Ändringar"] = self.last_koppla_df.copy()
-                if has_missed:
-                    sheets["Missade avgångar"] = self.last_koppla_missed_df.copy()
-                sheets["Instruktion"] = instructions_df
-                path = _open_df_in_excel(sheets, label="hib_koppling")
-                self.last_koppla_path = path
-                self._log(f"Öppnade HIB‑koppling i Excel (temporär fil): {path}")
-            except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna HIB‑koppling i Excel:\n{e}")
-        else:
-            messagebox.showinfo(APP_TITLE, "Det finns inget HIB‑kopplingsresultat att öppna. Kör HIB‑kopplingen först.")
-
-    def run_overview_check(self) -> None:
-        """
-        Gå igenom orderöversikten och hitta sändningsnummer som förekommer hos flera kunder
-        eller med olika transportörer. Resultatet loggas och kan öppnas i Excel.
-        """
-        path = self.overview_var.get().strip()
-        if not path:
-            messagebox.showerror(APP_TITLE, "Välj orderöversikten först.")
-            return
-        try:
-            df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-            if df.shape[1] == 1:
-                # Försök tab-separerad om endast en kolumn hittades
-                df = pd.read_csv(path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
-            return
-        # Normalisera kolumnnamn
-        df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
-        # Identifiera relevant kolumner
-        ship_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if "sändning" in cl or "sandning" in cl or "sändningsnr" in cl or "sandningsnr" in cl or "sändningsnummer" in cl:
-                ship_col = c
-                break
-        if not ship_col:
-            messagebox.showerror(APP_TITLE, "Kunde inte identifiera sändningsnummer-kolumnen i orderöversikten.")
-            return
-        cust_col = None
-        # Försök hitta kundnummerkolumn
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if "kundnr" in cl or "kundnr." in cl or "kundnummer" in cl:
-                cust_col = c
-                break
-        if not cust_col:
-            # Om kundnummer saknas, använd kundnamn
-            for c in df.columns:
-                if "kund" in c.lower():
-                    cust_col = c
-                    break
-        if not cust_col:
-            messagebox.showerror(APP_TITLE, "Kunde inte identifiera kund-kolumnen i orderöversikten.")
-            return
-        trans_col = None
-        for c in df.columns:
-            cl = c.lower()
-            if "transportör" in cl or "transportor" in cl:
-                trans_col = c
-                break
-        if not trans_col:
-            for c in df.columns:
-                cl = c.lower().replace(" ", "")
-                if "transportörsnr" in cl or "transportorsnr" in cl:
-                    trans_col = c
-                    break
-        # Fyll i tom transportörskolumn om den saknas
-        if not trans_col:
-            trans_col = "__transport_dummy__"
-            df[trans_col] = ""
-        # Rensa strängar
-        df[ship_col] = df[ship_col].astype(str).str.strip()
-        df[cust_col] = df[cust_col].astype(str).str.strip()
-        df[trans_col] = df[trans_col].astype(str).str.strip()
-
-        # ----- Ny funktionalitet: hitta ordernummer och kundnamn -----
-        # Vi vill kunna visa vilka ordernummer (och deras kundnamn) som ingår i varje sändning.
-        # Försök hitta ordernummer-kolumnen i orderöversikten.
-        order_col = None
-        order_keywords = ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order id"]
-        for c in df.columns:
-            for kw in order_keywords:
-                if kw.replace(" ", "") == c.lower().replace(" ", ""):
-                    order_col = c
-                    break
-            if order_col:
-                break
-        if not order_col:
-            # Om vi inte hittade en exakt matchning, ta första kolumn som innehåller "order"
-            for c in df.columns:
-                if "order" in c.lower():
-                    order_col = c
-                    break
-        # Bygg en mappning från ordernummer till kundnamn. Prioritera beställningsfilen om sådan finns.
-        order_to_customer: Dict[str, str] = {}
-        try:
-            details_path = getattr(self, "orders_var", tk.StringVar()).get().strip()
-            if details_path:
-                try:
-                    ddf = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-                    if ddf.shape[1] == 1:
-                        ddf = pd.read_csv(details_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
-                    ddf.columns = [str(c).replace("\ufeff", "").strip() for c in ddf.columns]
-                    if "Order nr" in ddf.columns and "Kund.1" in ddf.columns:
-                        try:
-                            order_to_customer = (
-                                ddf.groupby("Order nr")["Kund.1"].first()
-                                .fillna("")
-                                .astype(str)
-                                .str.strip()
-                                .to_dict()
-                            )
-                        except Exception:
-                            order_to_customer = {}
-                except Exception:
-                    order_to_customer = {}
-        except Exception:
-            order_to_customer = {}
-        # Om vi fortfarande saknar mappning, använd orderöversikten som fallback
-        if not order_to_customer and order_col:
-            try:
-                order_to_customer = (
-                    df.groupby(order_col)[cust_col]
-                    .first()
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .to_dict()
-                )
-            except Exception:
-                order_to_customer = {}
-
-        # Identifiera ordertyp- och statuskolumn för extra HIB-kontroll.
-        ordertype_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if cl in {"ordertyp", "ordertype"} or ("order" in cl and "typ" in cl):
-                ordertype_col = c
-                break
-        status_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if cl in {"status", "orderstatus", "radstatus", "state"}:
-                status_col = c
-                break
-        if not status_col:
-            for c in df.columns:
-                if "status" in c.lower():
-                    status_col = c
-                    break
-
-        def _to_status_num(value: object) -> Optional[int]:
-            try:
-                raw = str(value).strip().replace(",", ".")
-                if not raw:
-                    return None
-                return int(float(raw))
-            except Exception:
-                return None
-
-        # Filtrera bort tomma sändningsnummer
-        df = df[df[ship_col].astype(str).str.len() > 0].copy()
-        if df.empty:
-            self.open_overview_check_btn.config(state="disabled")
-            self.last_overview_check_df = pd.DataFrame()
-            messagebox.showinfo(APP_TITLE, "Orderöversikten innehåller inga sändningsnummer att analysera.")
-            return
-
-        # Del 1: befintlig avvikelsekontroll (flera kunder/transportörer per sändning).
-        shipment_diff_rows: List[Dict[str, object]] = []
-        try:
-            grouped = df.groupby(ship_col)
-        except Exception:
-            messagebox.showerror(APP_TITLE, "Kunde inte gruppera orderöversikten på sändningsnummer.")
-            return
-        for ship, group in grouped:
-            try:
-                customers = sorted(set(group[cust_col].dropna().astype(str).str.strip()))
-                carriers = sorted(set(group[trans_col].dropna().astype(str).str.strip()))
-                # Ta bort tomma strängar
-                customers = [c for c in customers if c]
-                carriers = [t for t in carriers if t]
-                # Sammanställ ordernummer (med kundnamn) för denna sändning
-                orders_list: List[str] = []
-                if order_col:
-                    try:
-                        order_vals = sorted(set(group[order_col].dropna().astype(str).str.strip()))
-                    except Exception:
-                        order_vals = []
-                    for o in order_vals:
-                        try:
-                            nm = order_to_customer.get(o, "")
-                        except Exception:
-                            nm = ""
-                        if nm:
-                            orders_list.append(f"{o} ({nm})")
-                        else:
-                            orders_list.append(o)
-                orders_str = ", ".join(orders_list)
-                if len(customers) > 1 or len(carriers) > 1:
-                    res_row = {
-                        "Avvikelsetyp": "Sändningsnr med flera kunder/transportörer",
-                        "Sändningsnr": ship,
-                        "Unika kunder": len(customers),
-                        "Kunder": ", ".join(customers),
-                        "Unika transportörer": len(carriers),
-                        "Transportörer": ", ".join(carriers),
-                        "Antal orderrader": int(len(group)),
-                    }
-                    if orders_str:
-                        res_row["Ordernr (kundnamn)"] = orders_str
-                    shipment_diff_rows.append(res_row)
-            except Exception:
-                continue
-        result_df = pd.DataFrame(shipment_diff_rows) if shipment_diff_rows else pd.DataFrame()
-        self.last_overview_check_df = result_df.copy() if not result_df.empty else pd.DataFrame()
-
-        # Del 2: HIB-order med status > 31 som saknar matchande butikssändning.
-        hib_rows: List[Dict[str, object]] = []
-        missing_hib_cols: List[str] = []
-        if not order_col:
-            missing_hib_cols.append("ordernummer")
-        if not ordertype_col:
-            missing_hib_cols.append("ordertyp")
-        if not status_col:
-            missing_hib_cols.append("status")
-        if not missing_hib_cols:
-            try:
-                hib_df = df[[order_col, ship_col, cust_col, ordertype_col, status_col]].copy()
-                hib_df[order_col] = hib_df[order_col].astype(str).str.strip()
-                hib_df[ship_col] = hib_df[ship_col].astype(str).str.strip()
-                hib_df[cust_col] = hib_df[cust_col].astype(str).str.strip()
-                hib_df["_ordertype_norm"] = hib_df[ordertype_col].astype(str).str.strip().str.upper()
-                hib_df["_status_num"] = hib_df[status_col].apply(_to_status_num)
-
-                store_mask = hib_df["_ordertype_norm"].eq("N") | hib_df["_ordertype_norm"].str.contains("BUTIK", na=False)
-                store_ships = set(hib_df.loc[store_mask, ship_col].dropna().astype(str).str.strip().tolist())
-                store_ships.discard("")
-
-                hib_only_df = hib_df[hib_df["_ordertype_norm"].str.contains("HIB", na=False)].copy()
-                for ordnr, group in hib_only_df.groupby(order_col):
-                    ordnr_str = str(ordnr).strip()
-                    if not ordnr_str:
-                        continue
-                    status_values = [s for s in group["_status_num"].tolist() if s is not None]
-                    if not status_values:
-                        continue
-                    max_status = max(status_values)
-                    if max_status <= 31:
-                        continue
-                    hib_ships = sorted(set(group[ship_col].dropna().astype(str).str.strip()))
-                    hib_ships = [s for s in hib_ships if s]
-                    if not hib_ships:
-                        continue
-                    # Avvikelse bara om ingen av HIB-orderns sändningar finns hos butik.
-                    if any(ship_val in store_ships for ship_val in hib_ships):
-                        continue
-
-                    kundnamn = ""
-                    try:
-                        kundnamn = order_to_customer.get(ordnr_str, "")
-                    except Exception:
-                        kundnamn = ""
-                    if not kundnamn:
-                        try:
-                            kunder = [k for k in group[cust_col].dropna().astype(str).str.strip().tolist() if k]
-                            if kunder:
-                                kundnamn = kunder[0]
-                        except Exception:
-                            kundnamn = ""
-
-                    row: Dict[str, object] = {
-                        "Ordernr": ordnr_str,
-                        "Sändningsnr": ", ".join(hib_ships),
-                        "Ordertyp": "HIB",
-                        "Status": int(max_status),
-                        "Anmärkning": "HIB-order med status > 31 saknar matchande butikssändning",
-                    }
-                    if kundnamn:
-                        row["Kundnamn"] = kundnamn
-                    hib_rows.append(row)
-            except Exception:
-                pass
-        hib_check_df = pd.DataFrame(hib_rows) if hib_rows else pd.DataFrame()
-        self.last_hib_status_check_df = hib_check_df.copy() if not hib_check_df.empty else pd.DataFrame()
-
-        # Aktivera knappen om någon kontroll gav resultat
-        has_any = not result_df.empty or not hib_check_df.empty
-        self.open_overview_check_btn.config(state="normal" if has_any else "disabled")
-        if not has_any:
-            msg = "Inga avvikelser hittades i orderöversikten."
-            if missing_hib_cols:
-                msg += "\nHIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ")."
-            messagebox.showinfo(APP_TITLE, msg)
-            return
-
-        # Logga
-        try:
-            if not result_df.empty:
-                self._log("Orderöversikt: sändningsnummer med flera kunder eller transportörer:")
-                for _, row in result_df.iterrows():
-                    try:
-                        if int(row.get("Unika kunder", 0)) > 1:
-                            self._log(f"  Sändningsnr {row['Sändningsnr']} har flera kunder: {row['Kunder']}")
-                        if int(row.get("Unika transportörer", 0)) > 1:
-                            self._log(f"  Sändningsnr {row['Sändningsnr']} har flera transportörer: {row['Transportörer']}")
-                    except Exception:
-                        pass
-            if not hib_check_df.empty:
-                self._log(f"HIB-ordrar med status > 31 utan matchande butikssändning ({len(hib_check_df)} st):")
-                for _, row in hib_check_df.iterrows():
-                    try:
-                        name_part = f" ({row['Kundnamn']})" if str(row.get("Kundnamn", "")).strip() else ""
-                        self._log(f"  Order {row['Ordernr']}{name_part}: sändning {row['Sändningsnr']} (status {row['Status']})")
-                    except Exception:
-                        pass
-            if missing_hib_cols:
-                self._log("HIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ").")
-            self._log("Orderkontrollen är beräknad och redo att öppnas i Excel.")
-        except Exception:
-            pass
-
-    def open_overview_check_in_excel(self) -> None:
-        """
-        Öppna resultatet av den senaste orderöversiktkontrollen i Excel.
-        Innehåller ett blad för sändningsnummer med flera kunder/transportörer
-        och ett blad för HIB-ordrar med status > 31 utan matchande butikssändning.
-        """
-        has_sändning = isinstance(self.last_overview_check_df, pd.DataFrame) and not self.last_overview_check_df.empty
-        has_hib = isinstance(getattr(self, "last_hib_status_check_df", None), pd.DataFrame) and not self.last_hib_status_check_df.empty
-        if has_sändning or has_hib:
-            try:
-                sheets: dict[str, pd.DataFrame] = {}
-                combined_parts: List[pd.DataFrame] = []
-                if has_sändning:
-                    s_df = self.last_overview_check_df.copy()
-                    if "Avvikelsetyp" not in s_df.columns:
-                        s_df.insert(0, "Avvikelsetyp", "Sändningsnr med flera kunder/transportörer")
-                    sheets["Sändningskontroll"] = s_df.copy()
-                    combined_parts.append(s_df)
-                if has_hib:
-                    h_df = self.last_hib_status_check_df.copy()
-                    if "Avvikelsetyp" not in h_df.columns:
-                        h_df.insert(0, "Avvikelsetyp", "HIB över status 31 utan butikssändning")
-                    sheets["HIB utan butikssändning"] = h_df.copy()
-                    combined_parts.append(h_df)
-                if combined_parts:
-                    sheets = {
-                        "Orderkontroll": pd.concat(combined_parts, ignore_index=True, sort=False),
-                        **sheets,
-                    }
-                path = _open_df_in_excel(sheets, label="orderkontroll")
-                self.last_overview_check_path = path
-                self._log(f"Öppnade orderkontroll i Excel (temporär fil): {path}")
-            except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna orderkontroll i Excel:\n{e}")
-        else:
-            messagebox.showinfo(APP_TITLE, "Det finns inget orderkontroll-resultat att öppna. Kör kontrollen först.")
-
-    def run_dispatch_check(self) -> None:
-        """
-        Kontrollera att ordernummer och sändningsnummer i dispatchpallarna stämmer
-        överens med orderöversikten.  Identifierar och loggar avvikelser.
-        """
-        overview_path = self.overview_var.get().strip()
-        dispatch_path = getattr(self, "dispatch_var", tk.StringVar()).get().strip()
-        if not overview_path or not dispatch_path:
-            messagebox.showerror(APP_TITLE, "Välj både orderöversikt och dispatchpallar först.")
-            return
-        # Läs in orderöversikt
-        try:
-            ov_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-            if ov_df.shape[1] == 1:
-                ov_df = pd.read_csv(overview_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
-            return
-        # Läs in dispatch
-        try:
-            dp_df = pd.read_csv(dispatch_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-            if dp_df.shape[1] == 1:
-                dp_df = pd.read_csv(dispatch_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa dispatchpallarna:\n{e}")
-            return
-        # Normalisera kolumnnamn
-        ov_df.columns = [str(c).replace("\ufeff", "").strip() for c in ov_df.columns]
-        dp_df.columns = [str(c).replace("\ufeff", "").strip() for c in dp_df.columns]
-        # Hjälpfunktion för att hitta kolumn baserat på nyckelord
-        def _find_col(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
-            # exakt match
-            for kw in keywords:
-                kw_norm = kw.lower().replace(" ", "")
-                for col in df.columns:
-                    if col.lower().replace(" ", "") == kw_norm:
-                        return col
-            # delmatch
-            for kw in keywords:
-                kw_lower = kw.lower()
-                for col in df.columns:
-                    if kw_lower in col.lower():
-                        return col
-            return None
-        order_keywords = ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order id"]
-        ship_keywords = ["sändningsnr", "sändnings nr", "sändningsnummer", "sandningsnr", "sandnings nr", "sandningsnummer", "shipment"]
-        plock_keywords = ["plockpallsnr", "plockpallsnr.", "plockpall", "plockpallnr", "plockpallsnummer", "plockpall nr"]
-        ov_order_col = _find_col(ov_df, order_keywords)
-        ov_ship_col = _find_col(ov_df, ship_keywords)
-        if not ov_order_col or not ov_ship_col:
-            messagebox.showerror(APP_TITLE, "Kunde inte identifiera order- eller sändningskolumnen i orderöversikten.")
-            return
-        dp_order_col = _find_col(dp_df, order_keywords)
-        dp_ship_col = _find_col(dp_df, ship_keywords)
-        plock_col = _find_col(dp_df, plock_keywords)
-        if not dp_order_col or not dp_ship_col or not plock_col:
-            messagebox.showerror(APP_TITLE, "Kunde inte identifiera order-, sändnings- eller plockpallskolumnen i dispatchfilen.")
-            return
-        # Rensa strängar
-        ov_df[ov_order_col] = ov_df[ov_order_col].astype(str).str.strip()
-        ov_df[ov_ship_col] = ov_df[ov_ship_col].astype(str).str.strip()
-        dp_df[dp_order_col] = dp_df[dp_order_col].astype(str).str.strip()
-        dp_df[dp_ship_col] = dp_df[dp_ship_col].astype(str).str.strip()
-        dp_df[plock_col] = dp_df[plock_col].astype(str).str.strip()
-
-        # ----- Ny funktionalitet: hämta kundnamn per order -----
-        # Försök bygga en mappning från ordernummer till kundnamn. Detta gör att
-        # dispatchkontrollen kan visa vilken butik varje order tillhör, på samma sätt
-        # som HIB‑kopplingen visar kundnamn. Prioritera beställningsfilen om den är
-        # inläst, annars använd orderöversikten som fallback.
-        order_to_customer: Dict[str, str] = {}
-        try:
-            # Försök läsa beställningsrader om en sådan fil är angiven
-            details_path = getattr(self, "orders_var", tk.StringVar()).get().strip()
-            if details_path:
-                try:
-                    det_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-                    if det_df.shape[1] == 1:
-                        det_df = pd.read_csv(details_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
-                    det_df.columns = [str(c).replace("\ufeff", "").strip() for c in det_df.columns]
-                    # Standardkolumn för kundnamn i beställningsrader är "Kund.1" enligt HIB‑logiken
-                    if "Order nr" in det_df.columns and "Kund.1" in det_df.columns:
-                        try:
-                            order_to_customer = (
-                                det_df.groupby("Order nr")["Kund.1"].first()
-                                .fillna("")
-                                .astype(str)
-                                .str.strip()
-                                .to_dict()
-                            )
-                        except Exception:
-                            order_to_customer = {}
-                except Exception:
-                    # Ignorera fel från läsning av beställningsfilen
-                    order_to_customer = {}
-        except Exception:
-            order_to_customer = {}
-        # Om vi fortfarande saknar kundnamn, försök hämta det från orderöversikten
-        if not order_to_customer:
-            try:
-                # Försök hitta en kolumn i ov_df som innehåller kundnamn
-                cust_candidate = None
-                for col in ov_df.columns:
-                    # Uteslut order‑ och sändningskolumnerna
-                    if col in (ov_order_col, ov_ship_col):
-                        continue
-                    cn = col.lower().replace(" ", "")
-                    # Ignorera kolumner som bara innehåller nummer (ex kund nr), leta efter namn
-                    if "kund" in cn and not cn.endswith("nr"):
-                        cust_candidate = col
-                        break
-                if cust_candidate:
-                    try:
-                        order_to_customer = (
-                            ov_df.groupby(ov_order_col)[cust_candidate]
-                            .first()
-                            .fillna("")
-                            .astype(str)
-                            .str.strip()
-                            .to_dict()
-                        )
-                    except Exception:
-                        order_to_customer = {}
-            except Exception:
-                order_to_customer = {}
-        # Skapa mapping order → sändningsnummer från orderöversikten
-        order_to_ship: Dict[str, str] = {}
-        try:
-            for ordnum, sub in ov_df.groupby(ov_order_col):
-                ships = [s for s in sub[ov_ship_col] if isinstance(s, str) and s.strip()]
-                if ships:
-                    order_to_ship[str(ordnum)] = ships[0].strip()
-        except Exception:
-            pass
-        # Jämför dispatch mot orderöversikten
-        diff_rows: List[Dict[str, object]] = []
-        for _, row in dp_df.iterrows():
-            try:
-                ordnr = str(row[dp_order_col]).strip()
-                dp_ship = str(row[dp_ship_col]).strip()
-                expected = order_to_ship.get(ordnr)
-                # Om det finns ett förväntat sändningsnummer och det skiljer sig från dispatchens
-                if expected and expected != dp_ship:
-                    diff_row: Dict[str, object] = {
-                        "Ordernr": ordnr,
-                        "Översikt sändningsnr": expected,
-                        "Dispatch sändningsnr": dp_ship,
-                        "Plockpallsnr": str(row[plock_col]).strip(),
-                    }
-                    # Lägg till kundnamn om tillgängligt
-                    try:
-                        kundnamn_val = order_to_customer.get(ordnr, "")
-                    except Exception:
-                        kundnamn_val = ""
-                    diff_row["kundnamn"] = kundnamn_val
-                    diff_rows.append(diff_row)
-            except Exception:
-                continue
-        if not diff_rows:
-            self.open_dispatch_check_btn.config(state="disabled")
-            self.last_dispatch_check_df = pd.DataFrame()
-            messagebox.showinfo(APP_TITLE, "Alla sändningsnummer stämmer överens mellan orderöversikten och dispatchpallar.")
-            return
-        diff_df = pd.DataFrame(diff_rows)
-        self.last_dispatch_check_df = diff_df.copy()
-        # Aktivera öppna-knappen
-        self.open_dispatch_check_btn.config(state="normal")
-        # Logga
-        try:
-            self._log("Dispatchkontrollen har hittat avvikelser mellan orderöversikten och dispatchpallar:")
-            for _, row in diff_df.iterrows():
-                try:
-                    # Ta med kundnamn i loggen om det finns
-                    name_part = ""
-                    try:
-                        nm = str(row.get("kundnamn", "")).strip()
-                        if nm:
-                            name_part = f" ({nm})"
-                    except Exception:
-                        name_part = ""
-                    self._log(
-                        f"Order {row['Ordernr']}{name_part} har sändningsnr {row['Översikt sändningsnr']} i översikten men {row['Dispatch sändningsnr']} i dispatch (plockpall {row['Plockpallsnr']})"
-                    )
-                except Exception:
-                    pass
-            self._log("Dispatchkontrollen är beräknad och redo att öppnas i Excel.")
-        except Exception:
-            pass
-
-    def open_dispatch_check_in_excel(self) -> None:
-        """
-        Öppna resultatet av den senaste dispatchkontrollen i Excel.
-        """
-        if isinstance(self.last_dispatch_check_df, pd.DataFrame) and not self.last_dispatch_check_df.empty:
-            try:
-                path = _open_df_in_excel({"Dispatchkontroll": self.last_dispatch_check_df.copy()}, label="dispatchkontroll")
-                self.last_dispatch_check_path = path
-                self._log(f"Öppnade dispatchkontroll i Excel (temporär fil): {path}")
-            except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Kunde inte öppna dispatchkontroll i Excel:\n{e}")
-        else:
-            messagebox.showinfo(APP_TITLE, "Det finns inget dispatchkontroll-resultat att öppna. Kör kontrollen först.")
-
-
-    def _on_sales_file_selected(self) -> None:
-        """
-        Stub för hantering av plocklogg. Funktionen för att läsa in plockloggar och beräkna försäljningsinsikter är borttagen i denna version.
-
-        Denna metod finns kvar för kompatibilitet men gör inget längre.
-        """
-        return
-
-
+    # ------------------------------------------------------------------
+    # Summary table update
+    # ------------------------------------------------------------------
     def update_summary_table(self, result_df: pd.DataFrame) -> None:
-        """
-        Uppdatera sammanställningstabellen med alla förekommande Källtyp‑värden.
-
-        HELPALL visas som antal pallar, AUTOSTORE som antal rader, och övriga typer som
-        antal rader samt motsvarande pallantal (20 rader per pall).
-        """
-        for child in self.summary_table.get_children(""):
-            self.summary_table.delete(child)
+        self.summary_table.setRowCount(0)
         try:
             qty_col = find_col(result_df, ORDER_SCHEMA["qty"], required=False, default=None)
         except Exception:
             qty_col = None
-        ktyp_series = result_df.get("Källtyp", pd.Series([], dtype=object)).astype(str)
+        ktyp_series = result_df.get("Kalltyp", pd.Series([], dtype=object)).astype(str)
+        if "Källtyp" in result_df.columns:
+            ktyp_series = result_df["Källtyp"].astype(str)
         unique_types = [k for k in sorted(set(ktyp_series.dropna())) if k]
         ordered = []
         for prv in ("HELPALL", "AUTOSTORE"):
@@ -3711,33 +2773,19 @@ class App(ttk.Frame):
             elif ktyp == "AUTOSTORE":
                 row_text = f"{row_count} rader"
             else:
-                # För övriga Källtyper visas endast antal rader (ingen pallar‑beräkning i parentes)
                 row_text = f"{row_count} rader"
             kolli_text = f"{int(round(kolli))}"
-            self.summary_table.insert("", "end", iid=ktyp, values=(ktyp, row_text, kolli_text))
+            r = self.summary_table.rowCount()
+            self.summary_table.insertRow(r)
+            self.summary_table.setItem(r, 0, QTableWidgetItem(ktyp))
+            self.summary_table.setItem(r, 1, QTableWidgetItem(row_text))
+            self.summary_table.setItem(r, 2, QTableWidgetItem(kolli_text))
 
-
+    # ------------------------------------------------------------------
+    # Static reclassify (identical logic)
+    # ------------------------------------------------------------------
     @staticmethod
-    def _reclassify_skrymmande(result_df: pd.DataFrame, saldo_norm: pd.DataFrame | None) -> pd.DataFrame:
-        """
-        Omklassificera rader utifrån orderfilens zonkod.
-
-        Efter att HELPALL‑ och AUTOSTORE‑allokeringar är bestämda (dvs. Källtyp
-        "HELPALL" respektive "AUTOSTORE"), sätts Källtyp och "Zon (beräknad)"
-        för övriga rader baserat på den befintliga "Zon"‑kolumnen i
-        beställningsfilen. Följande mappning används (zon → (källtyp, zon)):
-
-          * "S" → ("SKRYMMANDE",   "S")
-          * "E" → ("EHANDEL",      "E")
-          * "A" → ("HUVUDPLOCK",   "A")
-          * "Q" → ("EHANDEL",      "Q")
-          * "O" → ("SKRYMMANDE",   "O")
-          * "F" → ("HIB",          "F")
-
-        Rader vars Källtyp redan är "HELPALL" eller "AUTOSTORE" lämnas
-        oförändrade. Om ingen "Zon"‑kolumn hittas returneras oförändrat DataFrame.
-        Den medskickade saldofil används inte i denna metod.
-        """
+    def _reclassify_skrymmande(result_df: pd.DataFrame, saldo_norm) -> pd.DataFrame:
         if result_df is None or result_df.empty:
             return result_df
         res = result_df.copy()
@@ -3748,43 +2796,45 @@ class App(ttk.Frame):
                 break
         if not zon_col:
             return res
-        if "Zon (beräknad)" not in res.columns:
+        if "Zon (beraknad)" not in res.columns and "Zon (beräknad)" not in res.columns:
             res["Zon (beräknad)"] = ""
+        zon_beraknad = "Zon (beräknad)" if "Zon (beräknad)" in res.columns else "Zon (beraknad)"
         ktyp_series = res.get("Källtyp", pd.Series("", index=res.index)).astype(str)
         mask_to_change = ~(ktyp_series.isin(["HELPALL", "AUTOSTORE"]))
         if not mask_to_change.any():
             return res
         mapping: Dict[str, Tuple[str, str]] = {
-            "S": ("SKRYMMANDE",   "S"),
-            "E": ("EHANDEL",      "E"),
-            "A": ("HUVUDPLOCK",   "A"),
-            "Q": ("EHANDEL",      "Q"),
-            "O": ("SKRYMMANDE",   "O"),
-            "F": ("HIB",          "F"),
-            "D": ("DISPLAY",      "D"),
+            "S": ("SKRYMMANDE", "S"),
+            "E": ("EHANDEL", "E"),
+            "A": ("HUVUDPLOCK", "A"),
+            "Q": ("EHANDEL", "Q"),
+            "O": ("SKRYMMANDE", "O"),
+            "F": ("HIB", "F"),
+            "D": ("DISPLAY", "D"),
         }
         zones = res.loc[mask_to_change, zon_col].astype(str).str.strip().str.upper()
         for zone_code, (ktyp_val, zon_val) in mapping.items():
             idx = res.loc[mask_to_change].index[zones == zone_code]
             if len(idx) > 0:
                 res.loc[idx, "Källtyp"] = ktyp_val
-                res.loc[idx, "Zon (beräknad)"] = zon_val
+                res.loc[idx, zon_beraknad] = zon_val
         return res
 
-
+    # ------------------------------------------------------------------
+    # Run allocation
+    # ------------------------------------------------------------------
     def run_allocation(self) -> None:
-        orders_path = self.orders_var.get().strip()
-        buffer_path = self.buffer_var.get().strip()
-        automation_path = self.automation_var.get().strip()
-        item_path = self.item_var.get().strip()
-        not_putaway_path = ""
+        orders_path = self._get_path("orders")
+        buffer_path = self._get_path("buffer")
+        automation_path = self._get_path("automation")
+        item_path = self._get_path("item")
 
         if not orders_path or not buffer_path:
-            messagebox.showerror(APP_TITLE, "Välj både beställningsfil och buffertfil.")
+            self._err("Valj bade bestellningsfil och buffertfil.")
             return
 
         try:
-            self._log("Läser in filer...")
+            self._log("Laser in filer...")
             orders_raw = pd.read_csv(orders_path, dtype=str, sep=None, engine="python")
             buffer_raw = pd.read_csv(buffer_path, dtype=str, sep=None, engine="python")
 
@@ -3809,19 +2859,19 @@ class App(ttk.Frame):
                     try:
                         item_raw = pd.read_csv(item_path, dtype=str, sep="\t", quoting=3, engine="python")
                     except Exception as ie:
-                        raise RuntimeError(f"Kunde inte läsa item-fil: {ie}")
+                        raise RuntimeError(f"Kunde inte lasa item-fil: {ie}")
                 self._item_raw = item_raw.copy()
                 self._item_norm = normalize_items(item_raw)
 
             orders_raw = _clean_columns(orders_raw)
             buffer_raw = _clean_columns(buffer_raw)
         except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Kunde inte läsa CSV-filerna:\n{e}")
+            self._err(f"Kunde inte lasa CSV-filerna:\n{e}")
             return
 
         try:
             self._log("\n--------------")
-            self._log(f"Kör allokering (Helpall → AutoStore → Huvudplock, FIFO) + {int(NEAR_MISS_PCT * 100)}%-near-miss loggning + Status {sorted(ALLOC_BUFFER_STATUSES)}-filter...")
+            self._log(f"Kor allokering (Helpall -> AutoStore -> Huvudplock, FIFO) + {int(NEAR_MISS_PCT * 100)}%-near-miss loggning + Status {sorted(ALLOC_BUFFER_STATUSES)}-filter...")
             result, near = allocate(orders_raw, buffer_raw, log=self._log)
 
             result = self._reclassify_skrymmande(result, self._saldo_norm)
@@ -3834,10 +2884,9 @@ class App(ttk.Frame):
                         art_col_res = None
                     if art_col_res:
                         temp_merge = result.merge(self._item_norm, how="left", left_on=art_col_res, right_on="Artikel", suffixes=("", "_item"))
-                        if "Artikel_item" in temp_merge.columns:
-                            temp_merge.drop(columns=["Artikel_item"], inplace=True, errors=False)
-                        if "Artikel_y" in temp_merge.columns:
-                            temp_merge.drop(columns=["Artikel_y"], inplace=True, errors=False)
+                        for drop_col in ["Artikel_item", "Artikel_y"]:
+                            if drop_col in temp_merge.columns:
+                                temp_merge.drop(columns=[drop_col], inplace=True, errors="ignore")
                         if "Ej Staplingsbar_y" in temp_merge.columns or "Ej Staplingsbar_x" in temp_merge.columns:
                             if "Ej Staplingsbar_y" in temp_merge.columns:
                                 temp_merge["Ej Staplingsbar"] = temp_merge["Ej Staplingsbar_y"].fillna("")
@@ -3849,19 +2898,15 @@ class App(ttk.Frame):
                         if "Ej Staplingsbar" not in temp_merge.columns:
                             temp_merge["Ej Staplingsbar"] = ""
                         cols = [c for c in temp_merge.columns if c != "Ej Staplingsbar"] + ["Ej Staplingsbar"]
-                        temp_merge = temp_merge[cols]
-                        result = temp_merge
-                if isinstance(result, pd.DataFrame) and ("Ej Staplingsbar" not in result.columns):
+                        result = temp_merge[cols]
+                if isinstance(result, pd.DataFrame) and "Ej Staplingsbar" not in result.columns:
                     result["Ej Staplingsbar"] = ""
                     cols = [c for c in result.columns if c != "Ej Staplingsbar"] + ["Ej Staplingsbar"]
                     result = result[cols]
             except Exception as e:
-                try:
-                    self._log(f"Kunde inte slå ihop item-fil: {e}")
-                except Exception:
-                    pass
-            self._log("Skapar resultat i minnet...")
+                self._log(f"Kunde inte sla ihop item-fil: {e}")
 
+            self._log("Skapar resultat i minnet...")
             self.last_result_df = result.copy()
             self.last_nearmiss_instead_df = near.copy()
             self._orders_raw = orders_raw.copy()
@@ -3876,7 +2921,7 @@ class App(ttk.Frame):
             try:
                 self.update_summary_table(result)
             except Exception as _e_upd:
-                self._log(f"Summering per Källtyp kunde inte uppdateras: {_e_upd}")
+                self._log(f"Summering per Kalltyp kunde inte uppdateras: {_e_upd}")
 
             try:
                 hp_df, as_df = calculate_refill(
@@ -3892,23 +2937,15 @@ class App(ttk.Frame):
                 self._last_refill_autostore_df = None
                 self._log(f"Auto-refill misslyckades: {e}")
 
-            self.open_result_btn.configure(state="normal" if not result.empty else "disabled")
-            try:
-                self.open_nearmiss_btn.configure(state="normal" if isinstance(near, pd.DataFrame) and not near.empty else "disabled")
-            except Exception:
-                self.open_nearmiss_btn.configure(state="disabled")
-            try:
-                has_pallet = isinstance(self._pallet_spaces_df, pd.DataFrame) and not self._pallet_spaces_df.empty
-                self.open_palletspaces_btn.configure(state="normal" if has_pallet else "disabled")
-            except Exception:
-                self.open_palletspaces_btn.configure(state="disabled")
-            try:
-                has_refill = isinstance(self._last_refill_hp_df, pd.DataFrame) or isinstance(self._last_refill_autostore_df, pd.DataFrame)
-                self.open_refill_btn.configure(state="normal" if has_refill else "disabled")
-            except Exception:
-                self.open_refill_btn.configure(state="disabled")
+            self.open_result_btn.setEnabled(not result.empty)
+            self.open_nearmiss_btn.setEnabled(isinstance(near, pd.DataFrame) and not near.empty)
+            has_pallet = isinstance(self._pallet_spaces_df, pd.DataFrame) and not self._pallet_spaces_df.empty
+            self.open_palletspaces_btn.setEnabled(has_pallet)
+            has_refill = isinstance(self._last_refill_hp_df, pd.DataFrame) or isinstance(self._last_refill_autostore_df, pd.DataFrame)
+            self.open_refill_btn.setEnabled(has_refill)
+
         except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Fel under allokering:\n{e}")
+            self._err(f"Fel under allokering:\n{e}")
             return
 
         try:
@@ -3965,16 +3002,13 @@ class App(ttk.Frame):
                         self._log(f"  Near-miss som slutade som {z}: 0")
                 try:
                     if near_art_col:
-                        arts = near_with_zone[near_art_col].astype(str).str.strip().unique().tolist()
-                        arts_sorted = sorted(arts)
-                        if arts_sorted:
+                        arts = sorted(near_with_zone[near_art_col].astype(str).str.strip().unique().tolist())
+                        if arts:
                             self._log("  Artiklar med near-miss:")
-                            for art in arts_sorted:
+                            for art in arts:
                                 self._log(f"    {art}")
                         else:
                             self._log("  Inga near-miss artiklar hittades.")
-                    else:
-                        self._log("  Inga near-miss artiklar hittades.")
                 except Exception:
                     self._log("  Inga near-miss artiklar hittades.")
                 self.last_nearmiss_instead_df = near_with_zone.copy()
@@ -3982,19 +3016,529 @@ class App(ttk.Frame):
                 self._log("  Inga near-miss artiklar hittades.")
                 self.last_nearmiss_instead_df = pd.DataFrame()
         except Exception:
+            self._log("  Inga near-miss artiklar hittades.")
+
+    # ------------------------------------------------------------------
+    # Run HIB-koppling
+    # ------------------------------------------------------------------
+    def run_koppla(self) -> None:
+        details_path = self._get_path("orders")
+        overview_path = self._get_path("overview")
+        if not details_path or not overview_path:
+            self._err("Valj bade bestellningslinjer och orderoversikt.")
+            return
+        try:
+            details_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+        except Exception as e:
+            self._err(f"Kunde inte lasa bestellningslinjer:\n{e}")
+            return
+        try:
+            overview_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+        except Exception as e:
+            self._err(f"Kunde inte lasa orderoversikten:\n{e}")
+            return
+        try:
+            changes_df = compute_hib_koppling(details_df, overview_df)
+        except Exception as e:
+            self._err(f"Fel vid berakning av HIB-kopplingen:\n{e}")
+            return
+        try:
+            missed_df = compute_missed_departures(details_df, overview_df)
+        except Exception as e:
+            self._err(f"Fel vid berakning av missade avgangar:\n{e}")
+            missed_df = pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
+
+        self.last_koppla_df = changes_df.copy() if isinstance(changes_df, pd.DataFrame) else pd.DataFrame()
+        self.last_koppla_missed_df = missed_df.copy() if isinstance(missed_df, pd.DataFrame) else pd.DataFrame()
+
+        if (changes_df is None or changes_df.empty) and (missed_df is None or missed_df.empty):
+            self.open_koppla_btn.setEnabled(False)
+            self._info("Inga HIB-ordrar behover andras eller har missat sin avgång.")
+            return
+
+        self.open_koppla_btn.setEnabled(True)
+
+        try:
+            if changes_df is not None and not changes_df.empty:
+                self._log("HIB-koppling andringar:")
+                for _, r in changes_df.iterrows():
+                    try:
+                        ordnr = str(r.get("ordernummer", "")).strip()
+                        kundnamn = str(r.get("kundnamn", "")).strip()
+                        fields: list = []
+                        if str(r.get("sändningsnummer", "")).strip():
+                            fields.append(f"Sandningsnr -> {str(r['sändningsnummer']).strip()}")
+                        if str(r.get("Orderdatum", "")).strip():
+                            fields.append(f"Orderdatum -> {str(r['Orderdatum']).strip()}")
+                        if str(r.get("Zon", "")).strip():
+                            fields.append(f"Zon -> {str(r['Zon']).strip()}")
+                        if str(r.get("Multi", "")).strip():
+                            fields.append(f"Multi -> {str(r['Multi']).strip()}")
+                        if fields:
+                            name_part = f" ({kundnamn})" if kundnamn else ""
+                            self._log(f"Order {ordnr}{name_part}: {', '.join(fields)}")
+                    except Exception:
+                        pass
+            if missed_df is not None and not missed_df.empty:
+                self._log("Missade avgangar:")
+                for _, r in missed_df.iterrows():
+                    try:
+                        ordnr = str(r.get("ordernummer", "")).strip()
+                        kundnamn = str(r.get("kundnamn", "")).strip()
+                        name_part = f" ({kundnamn})" if kundnamn else ""
+                        self._log(f"Order {ordnr}{name_part}: MISSAT SIN AVGÅNG")
+                    except Exception:
+                        pass
+            self._log("HIB-kopplingen ar beraknad och redo att oppnas i Excel.")
+            for line in [
+                "\nInstruktion:", "Andras i foljande ordning",
+                "1. Ordernummer", "2. Sandningsnummer",
+                "3. Zon F pa orderlinjerna", "4. Samma multi pa alla Hibar till samma butik",
+                "5. Generera", "6. Frislapp",
+            ]:
+                self._log(line)
+        except Exception:
+            self._log("HIB-kopplingen ar beraknad och redo att oppnas i Excel.")
+
+    # ------------------------------------------------------------------
+    # Run overview check (identical logic, adapted I/O)
+    # ------------------------------------------------------------------
+    def run_overview_check(self) -> None:
+        path = self._get_path("overview")
+        if not path:
+            self._err("Valj orderoversikten forst.")
+            return
+        try:
+            df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+            if df.shape[1] == 1:
+                df = pd.read_csv(path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+        except Exception as e:
+            self._err(f"Kunde inte lasa orderoversikten:\n{e}")
+            return
+
+        df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+
+        ship_col = None
+        for c in df.columns:
+            cl = c.lower().replace(" ", "")
+            if "sändning" in cl or "sandning" in cl or "sändningsnr" in cl or "sandningsnr" in cl or "sändningsnummer" in cl:
+                ship_col = c
+                break
+        if not ship_col:
+            self._err("Kunde inte identifiera sandningsnummer-kolumnen i orderoversikten.")
+            return
+
+        cust_col = None
+        for c in df.columns:
+            cl = c.lower().replace(" ", "")
+            if "kundnr" in cl or "kundnummer" in cl:
+                cust_col = c
+                break
+        if not cust_col:
+            for c in df.columns:
+                if "kund" in c.lower():
+                    cust_col = c
+                    break
+        if not cust_col:
+            self._err("Kunde inte identifiera kund-kolumnen i orderoversikten.")
+            return
+
+        trans_col = None
+        for c in df.columns:
+            cl = c.lower()
+            if "transportör" in cl or "transportor" in cl:
+                trans_col = c
+                break
+        if not trans_col:
+            trans_col = "__transport_dummy__"
+            df[trans_col] = ""
+
+        df[ship_col] = df[ship_col].astype(str).str.strip()
+        df[cust_col] = df[cust_col].astype(str).str.strip()
+        df[trans_col] = df[trans_col].astype(str).str.strip()
+
+        order_col = None
+        order_keywords = ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order id"]
+        for c in df.columns:
+            for kw in order_keywords:
+                if kw.replace(" ", "") == c.lower().replace(" ", ""):
+                    order_col = c
+                    break
+            if order_col:
+                break
+        if not order_col:
+            for c in df.columns:
+                if "order" in c.lower():
+                    order_col = c
+                    break
+
+        order_to_customer: Dict[str, str] = {}
+        try:
+            details_path = self._get_path("orders")
+            if details_path:
+                try:
+                    ddf = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+                    if ddf.shape[1] == 1:
+                        ddf = pd.read_csv(details_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+                    ddf.columns = [str(c).replace("\ufeff", "").strip() for c in ddf.columns]
+                    if "Order nr" in ddf.columns and "Kund.1" in ddf.columns:
+                        order_to_customer = (
+                            ddf.groupby("Order nr")["Kund.1"].first()
+                            .fillna("").astype(str).str.strip().to_dict()
+                        )
+                except Exception:
+                    order_to_customer = {}
+        except Exception:
+            order_to_customer = {}
+
+        if not order_to_customer and order_col:
             try:
-                self._log("  Inga near-miss artiklar hittades.")
+                order_to_customer = (
+                    df.groupby(order_col)[cust_col].first()
+                    .fillna("").astype(str).str.strip().to_dict()
+                )
+            except Exception:
+                order_to_customer = {}
+
+        ordertype_col = None
+        for c in df.columns:
+            cl = c.lower().replace(" ", "")
+            if cl in {"ordertyp", "ordertype"} or ("order" in cl and "typ" in cl):
+                ordertype_col = c
+                break
+
+        status_col = None
+        for c in df.columns:
+            cl = c.lower().replace(" ", "")
+            if cl in {"status", "orderstatus", "radstatus", "state"}:
+                status_col = c
+                break
+        if not status_col:
+            for c in df.columns:
+                if "status" in c.lower():
+                    status_col = c
+                    break
+
+        def _to_status_num(value):
+            try:
+                raw = str(value).strip().replace(",", ".")
+                if not raw:
+                    return None
+                return int(float(raw))
+            except Exception:
+                return None
+
+        df = df[df[ship_col].astype(str).str.len() > 0].copy()
+        if df.empty:
+            self.open_overview_check_btn.setEnabled(False)
+            self.last_overview_check_df = pd.DataFrame()
+            self._info("Orderoversikten innehaller inga sandningsnummer att analysera.")
+            return
+
+        shipment_diff_rows: List[Dict] = []
+        try:
+            grouped = df.groupby(ship_col)
+        except Exception:
+            self._err("Kunde inte gruppera orderoversikten pa sandningsnummer.")
+            return
+
+        for ship, group in grouped:
+            try:
+                customers = sorted(set(group[cust_col].dropna().astype(str).str.strip()))
+                carriers = sorted(set(group[trans_col].dropna().astype(str).str.strip()))
+                customers = [c for c in customers if c]
+                carriers = [t for t in carriers if t]
+                orders_list: List[str] = []
+                if order_col:
+                    try:
+                        order_vals = sorted(set(group[order_col].dropna().astype(str).str.strip()))
+                    except Exception:
+                        order_vals = []
+                    for o in order_vals:
+                        nm = order_to_customer.get(o, "")
+                        orders_list.append(f"{o} ({nm})" if nm else o)
+                orders_str = ", ".join(orders_list)
+                if len(customers) > 1 or len(carriers) > 1:
+                    res_row = {
+                        "Avvikelsetyp": "Sandningsnr med flera kunder/transportorer",
+                        "Sandningsnr": ship,
+                        "Unika kunder": len(customers),
+                        "Kunder": ", ".join(customers),
+                        "Unika transportorer": len(carriers),
+                        "Transportorer": ", ".join(carriers),
+                        "Antal orderrader": int(len(group)),
+                    }
+                    if orders_str:
+                        res_row["Ordernr (kundnamn)"] = orders_str
+                    shipment_diff_rows.append(res_row)
+            except Exception:
+                continue
+
+        result_df = pd.DataFrame(shipment_diff_rows) if shipment_diff_rows else pd.DataFrame()
+        self.last_overview_check_df = result_df.copy() if not result_df.empty else pd.DataFrame()
+
+        hib_rows: List[Dict] = []
+        missing_hib_cols: List[str] = []
+        if not order_col:
+            missing_hib_cols.append("ordernummer")
+        if not ordertype_col:
+            missing_hib_cols.append("ordertyp")
+        if not status_col:
+            missing_hib_cols.append("status")
+
+        if not missing_hib_cols:
+            try:
+                hib_df = df[[order_col, ship_col, cust_col, ordertype_col, status_col]].copy()
+                hib_df[order_col] = hib_df[order_col].astype(str).str.strip()
+                hib_df[ship_col] = hib_df[ship_col].astype(str).str.strip()
+                hib_df[cust_col] = hib_df[cust_col].astype(str).str.strip()
+                hib_df["_ordertype_norm"] = hib_df[ordertype_col].astype(str).str.strip().str.upper()
+                hib_df["_status_num"] = hib_df[status_col].apply(_to_status_num)
+
+                store_mask = hib_df["_ordertype_norm"].eq("N") | hib_df["_ordertype_norm"].str.contains("BUTIK", na=False)
+                store_ships = set(hib_df.loc[store_mask, ship_col].dropna().astype(str).str.strip().tolist())
+                store_ships.discard("")
+
+                hib_only_df = hib_df[hib_df["_ordertype_norm"].str.contains("HIB", na=False)].copy()
+                for ordnr, group in hib_only_df.groupby(order_col):
+                    ordnr_str = str(ordnr).strip()
+                    if not ordnr_str:
+                        continue
+                    status_values = [s for s in group["_status_num"].tolist() if s is not None]
+                    if not status_values:
+                        continue
+                    max_status = max(status_values)
+                    if max_status <= 31:
+                        continue
+                    hib_ships = sorted(set(group[ship_col].dropna().astype(str).str.strip()))
+                    hib_ships = [s for s in hib_ships if s]
+                    if not hib_ships:
+                        continue
+                    if any(ship_val in store_ships for ship_val in hib_ships):
+                        continue
+                    kundnamn = order_to_customer.get(ordnr_str, "")
+                    if not kundnamn:
+                        try:
+                            kunder = [k for k in group[cust_col].dropna().astype(str).str.strip().tolist() if k]
+                            if kunder:
+                                kundnamn = kunder[0]
+                        except Exception:
+                            kundnamn = ""
+                    row: Dict = {
+                        "Ordernr": ordnr_str,
+                        "Sandningsnr": ", ".join(hib_ships),
+                        "Ordertyp": "HIB",
+                        "Status": int(max_status),
+                        "Anmarkning": "HIB-order med status > 31 saknar matchande butikssandning",
+                    }
+                    if kundnamn:
+                        row["Kundnamn"] = kundnamn
+                    hib_rows.append(row)
             except Exception:
                 pass
 
+        hib_check_df = pd.DataFrame(hib_rows) if hib_rows else pd.DataFrame()
+        self.last_hib_status_check_df = hib_check_df.copy() if not hib_check_df.empty else pd.DataFrame()
 
+        has_any = not result_df.empty or not hib_check_df.empty
+        self.open_overview_check_btn.setEnabled(has_any)
+        if not has_any:
+            msg = "Inga avvikelser hittades i orderoversikten."
+            if missing_hib_cols:
+                msg += "\nHIB-kontrollen kunde inte koras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ")."
+            self._info(msg)
+            return
+
+        try:
+            if not result_df.empty:
+                self._log("Orderoversikt: sandningsnummer med flera kunder eller transportorer:")
+                for _, row in result_df.iterrows():
+                    try:
+                        if int(row.get("Unika kunder", 0)) > 1:
+                            self._log(f"  Sandningsnr {row.get('Sandningsnr', '')} har flera kunder: {row.get('Kunder', '')}")
+                        if int(row.get("Unika transportorer", 0)) > 1:
+                            self._log(f"  Sandningsnr {row.get('Sandningsnr', '')} har flera transportorer: {row.get('Transportorer', '')}")
+                    except Exception:
+                        pass
+            if not hib_check_df.empty:
+                self._log(f"HIB-ordrar med status > 31 utan matchande butikssandning ({len(hib_check_df)} st):")
+                for _, row in hib_check_df.iterrows():
+                    try:
+                        name_part = f" ({row['Kundnamn']})" if str(row.get("Kundnamn", "")).strip() else ""
+                        self._log(f"  Order {row['Ordernr']}{name_part}: sandning {row['Sandningsnr']} (status {row['Status']})")
+                    except Exception:
+                        pass
+            if missing_hib_cols:
+                self._log("HIB-kontrollen kunde inte koras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ").")
+            self._log("Orderkontrollen ar beraknad och redo att oppnas i Excel.")
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Run dispatch check (identical logic, adapted I/O)
+    # ------------------------------------------------------------------
+    def run_dispatch_check(self) -> None:
+        overview_path = self._get_path("overview")
+        dispatch_path = self._get_path("dispatch")
+        if not overview_path or not dispatch_path:
+            self._err("Valj bade orderoversikt och dispatchpallar forst.")
+            return
+
+        try:
+            ov_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+            if ov_df.shape[1] == 1:
+                ov_df = pd.read_csv(overview_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+        except Exception as e:
+            self._err(f"Kunde inte lasa orderoversikten:\n{e}")
+            return
+
+        try:
+            dp_df = pd.read_csv(dispatch_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+            if dp_df.shape[1] == 1:
+                dp_df = pd.read_csv(dispatch_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+        except Exception as e:
+            self._err(f"Kunde inte lasa dispatchpallarna:\n{e}")
+            return
+
+        ov_df.columns = [str(c).replace("\ufeff", "").strip() for c in ov_df.columns]
+        dp_df.columns = [str(c).replace("\ufeff", "").strip() for c in dp_df.columns]
+
+        def _find_col(df_: pd.DataFrame, keywords_: List[str]):
+            for kw in keywords_:
+                kw_norm = kw.lower().replace(" ", "")
+                for col in df_.columns:
+                    if col.lower().replace(" ", "") == kw_norm:
+                        return col
+            for kw in keywords_:
+                kw_lower = kw.lower()
+                for col in df_.columns:
+                    if kw_lower in col.lower():
+                        return col
+            return None
+
+        order_keywords = ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order id"]
+        ship_keywords = ["sändningsnr", "sändnings nr", "sändningsnummer", "sandningsnr", "sandnings nr", "sandningsnummer", "shipment"]
+        plock_keywords = ["plockpallsnr", "plockpallsnr.", "plockpall", "plockpallnr", "plockpallsnummer", "plockpall nr"]
+
+        ov_order_col = _find_col(ov_df, order_keywords)
+        ov_ship_col = _find_col(ov_df, ship_keywords)
+        if not ov_order_col or not ov_ship_col:
+            self._err("Kunde inte identifiera order- eller sandningskolumnen i orderoversikten.")
+            return
+
+        dp_order_col = _find_col(dp_df, order_keywords)
+        dp_ship_col = _find_col(dp_df, ship_keywords)
+        plock_col = _find_col(dp_df, plock_keywords)
+        if not dp_order_col or not dp_ship_col or not plock_col:
+            self._err("Kunde inte identifiera order-, sandnings- eller plockpallskolumnen i dispatchfilen.")
+            return
+
+        ov_df[ov_order_col] = ov_df[ov_order_col].astype(str).str.strip()
+        ov_df[ov_ship_col] = ov_df[ov_ship_col].astype(str).str.strip()
+        dp_df[dp_order_col] = dp_df[dp_order_col].astype(str).str.strip()
+        dp_df[dp_ship_col] = dp_df[dp_ship_col].astype(str).str.strip()
+        dp_df[plock_col] = dp_df[plock_col].astype(str).str.strip()
+
+        order_to_customer: Dict[str, str] = {}
+        try:
+            details_path = self._get_path("orders")
+            if details_path:
+                try:
+                    det_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+                    if det_df.shape[1] == 1:
+                        det_df = pd.read_csv(details_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+                    det_df.columns = [str(c).replace("\ufeff", "").strip() for c in det_df.columns]
+                    if "Order nr" in det_df.columns and "Kund.1" in det_df.columns:
+                        order_to_customer = (
+                            det_df.groupby("Order nr")["Kund.1"].first()
+                            .fillna("").astype(str).str.strip().to_dict()
+                        )
+                except Exception:
+                    order_to_customer = {}
+        except Exception:
+            order_to_customer = {}
+
+        if not order_to_customer:
+            try:
+                cust_candidate = None
+                for col in ov_df.columns:
+                    if col in (ov_order_col, ov_ship_col):
+                        continue
+                    cn = col.lower().replace(" ", "")
+                    if "kund" in cn and not cn.endswith("nr"):
+                        cust_candidate = col
+                        break
+                if cust_candidate:
+                    order_to_customer = (
+                        ov_df.groupby(ov_order_col)[cust_candidate].first()
+                        .fillna("").astype(str).str.strip().to_dict()
+                    )
+            except Exception:
+                order_to_customer = {}
+
+        order_to_ship: Dict[str, str] = {}
+        try:
+            for ordnum, sub in ov_df.groupby(ov_order_col):
+                ships = [s for s in sub[ov_ship_col] if isinstance(s, str) and s.strip()]
+                if ships:
+                    order_to_ship[str(ordnum)] = ships[0].strip()
+        except Exception:
+            pass
+
+        diff_rows: List[Dict] = []
+        for _, row in dp_df.iterrows():
+            try:
+                ordnr = str(row[dp_order_col]).strip()
+                dp_ship = str(row[dp_ship_col]).strip()
+                expected = order_to_ship.get(ordnr)
+                if expected and expected != dp_ship:
+                    diff_row: Dict = {
+                        "Ordernr": ordnr,
+                        "Oversikt sandningsnr": expected,
+                        "Dispatch sandningsnr": dp_ship,
+                        "Plockpallsnr": str(row[plock_col]).strip(),
+                        "kundnamn": order_to_customer.get(ordnr, ""),
+                    }
+                    diff_rows.append(diff_row)
+            except Exception:
+                continue
+
+        if not diff_rows:
+            self.open_dispatch_check_btn.setEnabled(False)
+            self.last_dispatch_check_df = pd.DataFrame()
+            self._info("Alla sandningsnummer stammer overens mellan orderoversikten och dispatchpallar.")
+            return
+
+        diff_df = pd.DataFrame(diff_rows)
+        self.last_dispatch_check_df = diff_df.copy()
+        self.open_dispatch_check_btn.setEnabled(True)
+
+        try:
+            self._log("Dispatchkontrollen har hittat avvikelser mellan orderoversikten och dispatchpallar:")
+            for _, row in diff_df.iterrows():
+                try:
+                    nm = str(row.get("kundnamn", "")).strip()
+                    name_part = f" ({nm})" if nm else ""
+                    self._log(
+                        f"Order {row['Ordernr']}{name_part} har sandningsnr {row['Oversikt sandningsnr']} i oversikten men {row['Dispatch sandningsnr']} i dispatch (plockpall {row['Plockpallsnr']})"
+                    )
+                except Exception:
+                    pass
+            self._log("Dispatchkontrollen ar beraknad och redo att oppnas i Excel.")
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
+# main
+# ------------------------------------------------------------------
 def main() -> None:
-    root_class = TkinterDnD.Tk if TkinterDnD else tk.Tk
-    root = root_class()
-    root.title(APP_TITLE)
-    app = App(root)
-    root.geometry("1160x780")
-    root.mainloop()
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    window = App()
+    window.show()
+    sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
