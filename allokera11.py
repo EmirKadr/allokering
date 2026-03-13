@@ -2387,7 +2387,7 @@ class App(ttk.Frame):
         self.split2000_frame = ttk.LabelFrame(self, text="")
         self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
         ttk.Label(self.split2000_frame, text="Klistra in värden (en per rad):").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
-        self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=48, height=12)
+        self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=24, height=12)
         self.split_input_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         split_bottom = ttk.Frame(self.split2000_frame)
         split_bottom.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
