@@ -3393,10 +3393,24 @@ class App(ttk.Frame):
         if has_sändning or has_hib:
             try:
                 sheets: dict[str, pd.DataFrame] = {}
+                combined_parts: List[pd.DataFrame] = []
                 if has_sändning:
-                    sheets["Sändningskontroll"] = self.last_overview_check_df.copy()
+                    s_df = self.last_overview_check_df.copy()
+                    if "Avvikelsetyp" not in s_df.columns:
+                        s_df.insert(0, "Avvikelsetyp", "Sändningsnr med flera kunder/transportörer")
+                    sheets["Sändningskontroll"] = s_df.copy()
+                    combined_parts.append(s_df)
                 if has_hib:
-                    sheets["HIB utan butikssändning"] = self.last_hib_status_check_df.copy()
+                    h_df = self.last_hib_status_check_df.copy()
+                    if "Avvikelsetyp" not in h_df.columns:
+                        h_df.insert(0, "Avvikelsetyp", "HIB över status 31 utan butikssändning")
+                    sheets["HIB utan butikssändning"] = h_df.copy()
+                    combined_parts.append(h_df)
+                if combined_parts:
+                    sheets = {
+                        "Orderkontroll": pd.concat(combined_parts, ignore_index=True, sort=False),
+                        **sheets,
+                    }
                 path = _open_df_in_excel(sheets, label="orderkontroll")
                 self.last_overview_check_path = path
                 self._log(f"Öppnade orderkontroll i Excel (temporär fil): {path}")
