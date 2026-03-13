@@ -2087,6 +2087,7 @@ class App(ttk.Frame):
         self.file_vars: dict[str, tk.StringVar] = {}
         self._action_requirements: dict[ttk.Button, list[tuple[str, str]]] = {}
         self._action_missing_files: dict[ttk.Button, list[str]] = {}
+        self._open_button_hints: dict[ttk.Button, str] = {}
         self._hover_tooltip: Optional[tk.Toplevel] = None
         self._hover_tooltip_label: Optional[tk.Label] = None
 
@@ -2336,6 +2337,21 @@ class App(ttk.Frame):
         self.reset_cache_btn = ttk.Button(open_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
         # Flytta rensa cache till kolumn 8 när nya knappar lagts till
         self.reset_cache_btn.grid(row=0, column=8, padx=4)
+        self._open_button_hints = {
+            self.open_result_btn: "Tryck forst: Kor allokering",
+            self.open_nearmiss_btn: "Tryck forst: Kor allokering",
+            self.open_palletspaces_btn: "Tryck forst: Kor allokering",
+            self.open_refill_btn: "Tryck forst: Kor allokering",
+            self.open_koppla_btn: "Tryck forst: Kor HIB-koppling",
+            self.open_overview_check_btn: "Tryck forst: Kontrollera orderoversikt",
+            self.open_dispatch_check_btn: "Tryck forst: Kontrollera dispatchpallar",
+            self.open_prognos_btn: "Ladda upp Prognos eller Kampanjvolymer forst",
+        }
+        for open_btn in self._open_button_hints:
+            open_btn.bind("<Enter>", self._on_open_button_hover, add="+")
+            open_btn.bind("<Motion>", self._on_open_button_hover, add="+")
+            open_btn.bind("<Leave>", self._hide_hover_tooltip, add="+")
+            open_btn.bind("<ButtonPress-1>", self._hide_hover_tooltip, add="+")
 
         ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
         self.log = tk.Text(self, height=14, width=110, state="disabled")
@@ -2690,6 +2706,22 @@ class App(ttk.Frame):
             return
         tip_text = "Saknar filer: " + ", ".join(missing)
         self._show_hover_tooltip(tip_text, event.x_root + 12, event.y_root + 10)
+
+    def _on_open_button_hover(self, event) -> None:
+        """Visa tooltip med vad som maste goras for att kunna oppna Excel."""
+        btn = event.widget
+        hint = self._open_button_hints.get(btn, "")
+        if not hint:
+            self._hide_hover_tooltip()
+            return
+        try:
+            state = str(btn.cget("state")).strip().lower()
+        except Exception:
+            state = "normal"
+        if state != "disabled":
+            self._hide_hover_tooltip()
+            return
+        self._show_hover_tooltip(hint, event.x_root + 12, event.y_root + 10)
 
     def _show_hover_tooltip(self, text: str, x_root: int, y_root: int) -> None:
         """Rendera en enkel tooltip nära muspekaren."""
