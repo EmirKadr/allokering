@@ -2331,6 +2331,7 @@ class App(ttk.Frame):
 
         # För orderöversikt- och dispatchkontroll
         self.last_overview_check_df: pd.DataFrame | None = None
+        self.last_hib_status_check_df: pd.DataFrame | None = None
         self.last_overview_check_path: str | None = None
         self.last_dispatch_check_df: pd.DataFrame | None = None
         self.last_dispatch_check_path: str | None = None
@@ -3242,26 +3243,87 @@ class App(ttk.Frame):
                     res_rows.append(res_row)
             except Exception:
                 continue
-        if not res_rows:
-            self.open_overview_check_btn.config(state="disabled")
-            self.last_overview_check_df = pd.DataFrame()
-            messagebox.showinfo(APP_TITLE, "Inga skillnader hittades i orderöversikten.")
+        result_df = pd.DataFrame(res_rows) if res_rows else pd.DataFrame()
+        self.last_overview_check_df = result_df.copy() if not result_df.empty else pd.DataFrame()
+
+        # --- Ny kontroll: HIB-ordrar med status > 31 som saknar matchande butikssändning ---
+        hib_rows: List[Dict[str, object]] = []
+        try:
+            ordertyp_col = None
+            for c in df.columns:
+                if "ordertyp" in c.lower().replace(" ", ""):
+                    ordertyp_col = c
+                    break
+            status_col = None
+            for c in df.columns:
+                if c.lower().replace(" ", "") == "status":
+                    status_col = c
+                    break
+            if ordertyp_col and status_col:
+                df[ordertyp_col] = df[ordertyp_col].astype(str).str.strip()
+                df[status_col] = df[status_col].astype(str).str.strip()
+                hib_mask = df[ordertyp_col].str.upper().str.contains("HIB", na=False)
+                hib_df = df[hib_mask].copy()
+                butik_df = df[~hib_mask].copy()
+                butik_sandnings: set[str] = set(
+                    butik_df[ship_col].dropna().astype(str).str.strip()
+                ) - {"", "nan"}
+                for _, row in hib_df.iterrows():
+                    try:
+                        try:
+                            status_val = int(float(str(row[status_col]).strip()))
+                        except (ValueError, TypeError):
+                            continue
+                        if status_val <= 31:
+                            continue
+                        hib_sandning = str(row[ship_col]).strip()
+                        if not hib_sandning or hib_sandning == "nan":
+                            continue
+                        if hib_sandning not in butik_sandnings:
+                            ordnr = str(row[order_col]).strip() if order_col else ""
+                            kundnamn = str(row.get(cust_col, "")).strip()
+                            hib_rows.append({
+                                "Ordernr": ordnr,
+                                "Sändningsnr": hib_sandning,
+                                "Ordertyp": str(row[ordertyp_col]).strip(),
+                                "Status": status_val,
+                                "Kundnamn": kundnamn,
+                                "Anmärkning": "HIB-order med status > 31 saknar matchande butikssändning",
+                            })
+                    except Exception:
+                        continue
+        except Exception as e:
+            self._log(f"Fel vid HIB-statuskontroll: {e}")
+        hib_check_df = pd.DataFrame(hib_rows) if hib_rows else pd.DataFrame()
+        self.last_hib_status_check_df = hib_check_df.copy() if not hib_check_df.empty else pd.DataFrame()
+
+        # Aktivera knappen om någon kontroll gav resultat
+        has_any = not result_df.empty or not hib_check_df.empty
+        self.open_overview_check_btn.config(state="normal" if has_any else "disabled")
+        if not has_any:
+            messagebox.showinfo(APP_TITLE, "Inga avvikelser hittades i orderöversikten.")
             return
-        result_df = pd.DataFrame(res_rows)
-        self.last_overview_check_df = result_df.copy()
-        # Aktivera öppna-knappen
-        self.open_overview_check_btn.config(state="normal")
+
         # Logga
         try:
-            self._log("Orderöversikt kontrollerad. Följande sändningsnummer har flera kunder eller transportörer:")
-            for _, row in result_df.iterrows():
-                try:
-                    if int(row.get("Unika kunder", 0)) > 1:
-                        self._log(f"Sändningsnr {row['Sändningsnr']} har flera kunder: {row['Kunder']}")
-                    if int(row.get("Unika transportörer", 0)) > 1:
-                        self._log(f"Sändningsnr {row['Sändningsnr']} har flera transportörer: {row['Transportörer']}")
-                except Exception:
-                    pass
+            if not result_df.empty:
+                self._log("Orderöversikt: sändningsnummer med flera kunder eller transportörer:")
+                for _, row in result_df.iterrows():
+                    try:
+                        if int(row.get("Unika kunder", 0)) > 1:
+                            self._log(f"  Sändningsnr {row['Sändningsnr']} har flera kunder: {row['Kunder']}")
+                        if int(row.get("Unika transportörer", 0)) > 1:
+                            self._log(f"  Sändningsnr {row['Sändningsnr']} har flera transportörer: {row['Transportörer']}")
+                    except Exception:
+                        pass
+            if not hib_check_df.empty:
+                self._log(f"HIB-ordrar med status > 31 utan matchande butikssändning ({len(hib_check_df)} st):")
+                for _, row in hib_check_df.iterrows():
+                    try:
+                        name_part = f" ({row['Kundnamn']})" if str(row.get("Kundnamn", "")).strip() else ""
+                        self._log(f"  Order {row['Ordernr']}{name_part}: sändning {row['Sändningsnr']} (status {row['Status']})")
+                    except Exception:
+                        pass
             self._log("Orderkontrollen är beräknad och redo att öppnas i Excel.")
         except Exception:
             pass
@@ -3269,10 +3331,19 @@ class App(ttk.Frame):
     def open_overview_check_in_excel(self) -> None:
         """
         Öppna resultatet av den senaste orderöversiktkontrollen i Excel.
+        Innehåller ett blad för sändningsnummer med flera kunder/transportörer
+        och ett blad för HIB-ordrar med status > 31 utan matchande butikssändning.
         """
-        if isinstance(self.last_overview_check_df, pd.DataFrame) and not self.last_overview_check_df.empty:
+        has_sändning = isinstance(self.last_overview_check_df, pd.DataFrame) and not self.last_overview_check_df.empty
+        has_hib = isinstance(getattr(self, "last_hib_status_check_df", None), pd.DataFrame) and not self.last_hib_status_check_df.empty
+        if has_sändning or has_hib:
             try:
-                path = _open_df_in_excel({"Orderkontroll": self.last_overview_check_df.copy()}, label="orderkontroll")
+                sheets: dict[str, pd.DataFrame] = {}
+                if has_sändning:
+                    sheets["Sändningskontroll"] = self.last_overview_check_df.copy()
+                if has_hib:
+                    sheets["HIB utan butikssändning"] = self.last_hib_status_check_df.copy()
+                path = _open_df_in_excel(sheets, label="orderkontroll")
                 self.last_overview_check_path = path
                 self._log(f"Öppnade orderkontroll i Excel (temporär fil): {path}")
             except Exception as e:
