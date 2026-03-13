@@ -2136,7 +2136,7 @@ class App(ttk.Frame):
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
         self.columnconfigure(2, weight=0)
-        self.columnconfigure(3, weight=1)
+        self.columnconfigure(3, weight=0)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
         indata_frame.grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=8)
         # Keep label/status/remove tightly grouped on the left.
@@ -2383,18 +2383,16 @@ class App(ttk.Frame):
 
         # 2000-tal-verktyg på ytan där filter tidigare låg.
         self.split2000_frame = ttk.LabelFrame(self, text="")
-        self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
+        self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nw", padx=(8, 8), pady=8)
         ttk.Label(self.split2000_frame, text="Klistra in värden (en per rad):").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
         self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=24, height=12)
-        self.split_input_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        self.split_input_text.grid(row=1, column=0, sticky="nw", padx=6, pady=(0, 6))
         split_bottom = ttk.Frame(self.split2000_frame)
-        split_bottom.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
+        split_bottom.grid(row=2, column=0, sticky="w", padx=6, pady=(0, 6))
         ttk.Label(split_bottom, text="Antal per kolumn:").pack(side="left")
         self.split_chunk_var = tk.StringVar(value="2000")
         ttk.Entry(split_bottom, textvariable=self.split_chunk_var, width=8).pack(side="left", padx=(6, 10))
         ttk.Button(split_bottom, text="Öppna i Excel direkt", command=self.open_chunked_values_in_excel).pack(side="left")
-        self.split2000_frame.columnconfigure(0, weight=1)
-        self.split2000_frame.rowconfigure(1, weight=1)
 
         # Placera run-knappar i ett eget ram för att kunna ha flera knappar bredvid varandra
         run_frame = ttk.Frame(self)
