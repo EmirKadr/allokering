@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import re
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
 
 try:
@@ -2115,6 +2115,7 @@ class App(ttk.Frame):
 
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(3, weight=1)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
         indata_frame.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=8)
         # Keep label/status/remove tightly grouped on the left.
@@ -2284,9 +2285,9 @@ class App(ttk.Frame):
         for status_lbl, _ in self.file_status_widgets.values():
             status_lbl.bind("<Button-1>", self.open_files_dialog)
 
-        # Dynamiska värdefilter (Bolag/Ordertyp), placerade till höger om filraderna.
+        # Dynamiska värdefilter (Bolag/Ordertyp), nära indatafilerna till vänster.
         self.value_filter_frame = ttk.LabelFrame(self, text="Filtrering")
-        self.value_filter_frame.grid(row=0, column=3, rowspan=2, sticky="nw", padx=(8, 8), pady=8)
+        self.value_filter_frame.grid(row=2, column=0, columnspan=1, sticky="w", padx=8, pady=(0, 8))
         self.value_filter_frame.grid_remove()
         for idx, filter_key in enumerate(("bolag", "ordertyp")):
             group_frame = ttk.LabelFrame(self.value_filter_frame, text=self.filter_titles[filter_key])
@@ -2294,9 +2295,24 @@ class App(ttk.Frame):
             group_frame.grid_remove()
             self._filter_group_frames[filter_key] = group_frame
 
+        # 2000-tal-verktyg på ytan där filter tidigare låg.
+        self.split2000_frame = ttk.LabelFrame(self, text="2000-tal till Excel")
+        self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
+        ttk.Label(self.split2000_frame, text="Klistra in värden (en per rad):").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
+        self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=48, height=12)
+        self.split_input_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        split_bottom = ttk.Frame(self.split2000_frame)
+        split_bottom.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
+        ttk.Label(split_bottom, text="Antal per kolumn:").pack(side="left")
+        self.split_chunk_var = tk.StringVar(value="2000")
+        ttk.Entry(split_bottom, textvariable=self.split_chunk_var, width=8).pack(side="left", padx=(6, 10))
+        ttk.Button(split_bottom, text="Öppna i Excel direkt", command=self.open_chunked_values_in_excel).pack(side="left")
+        self.split2000_frame.columnconfigure(0, weight=1)
+        self.split2000_frame.rowconfigure(1, weight=1)
+
         # Placera run-knappar i ett eget ram för att kunna ha flera knappar bredvid varandra
         run_frame = ttk.Frame(self)
-        run_frame.grid(row=2, column=0, columnspan=3, pady=10)
+        run_frame.grid(row=3, column=0, columnspan=3, pady=10)
         self.run_btn = ttk.Button(run_frame, text="Kör allokering", command=self.run_allocation, style="Accent.TButton")
         self.run_btn.pack(side="left", padx=4)
         # Knapp för HIB‑koppling
@@ -2333,7 +2349,7 @@ class App(ttk.Frame):
         self._update_action_buttons_state()
 
         open_frame = ttk.Frame(self)
-        open_frame.grid(row=3, column=0, columnspan=3, pady=10)
+        open_frame.grid(row=4, column=0, columnspan=3, pady=10)
         self.open_result_btn = ttk.Button(open_frame, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
         self.open_result_btn.grid(row=0, column=0, padx=4)
         self.open_nearmiss_btn = ttk.Button(open_frame, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
@@ -2371,12 +2387,12 @@ class App(ttk.Frame):
             open_btn.bind("<Leave>", self._hide_hover_tooltip, add="+")
             open_btn.bind("<ButtonPress-1>", self._hide_hover_tooltip, add="+")
 
-        ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Logg / Summering:").grid(row=5, column=0, sticky="w", padx=8)
         self.log = tk.Text(self, height=14, width=110, state="disabled")
-        self.log.grid(row=5, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
-        self.rowconfigure(5, weight=1)
+        self.log.grid(row=6, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
+        self.rowconfigure(6, weight=1)
 
-        ttk.Label(self, text="Summering per Källtyp").grid(row=6, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Summering per Källtyp").grid(row=7, column=0, sticky="w", padx=8)
         self.summary_table = ttk.Treeview(self, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
         self.summary_table.heading("ktyp", text="Källtyp")
         self.summary_table.heading("antal_rader", text="antal rader")
@@ -2384,7 +2400,7 @@ class App(ttk.Frame):
         self.summary_table.column("ktyp", anchor="w", width=160)
         self.summary_table.column("antal_rader", anchor="e", width=140)
         self.summary_table.column("antal_kolli", anchor="e", width=140)
-        self.summary_table.grid(row=7, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
+        self.summary_table.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
 
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
@@ -3138,6 +3154,38 @@ class App(ttk.Frame):
                     pass
         # Uppdatera ikoner efter alla filer har satts
         self.update_file_status_icons()
+
+    def open_chunked_values_in_excel(self) -> None:
+        """
+        Dela inklistrade värden i kolumner (default 2000 rader per kolumn)
+        och öppna resultatet direkt i en temporär Excel-fil.
+        """
+        try:
+            lines = [r.strip() for r in self.split_input_text.get("1.0", tk.END).splitlines() if r.strip()]
+        except Exception:
+            lines = []
+        if not lines:
+            messagebox.showwarning(APP_TITLE, "Klistra in värden först (en per rad).")
+            return
+        try:
+            chunk_size = int(str(self.split_chunk_var.get()).strip())
+            if chunk_size <= 0:
+                raise ValueError
+        except Exception:
+            messagebox.showerror(APP_TITLE, "Antal per kolumn måste vara ett heltal > 0.")
+            return
+
+        chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+        out_cols: dict[str, pd.Series] = {}
+        for idx, chunk in enumerate(chunks, start=1):
+            out_cols[f"Kolumn {idx}"] = pd.Series([str(v) for v in chunk], dtype="string")
+        out_df = pd.DataFrame(out_cols).fillna("")
+        try:
+            path = _open_df_in_excel({"Delade värden": out_df}, label="2000tal_split")
+            self._log(f"2000-tal: öppnade temporär Excel-fil: {path}")
+            messagebox.showinfo(APP_TITLE, "Excel-filen öppnades direkt. Spara i Excel om du vill behålla den.")
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna Excel-filen:\n{e}")
 
 
     def open_result_in_excel(self) -> None:
