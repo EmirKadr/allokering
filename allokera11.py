@@ -2093,6 +2093,14 @@ class App(ttk.Frame):
         self._filter_group_frames: dict[str, ttk.LabelFrame] = {}
         self._filter_checkbuttons: dict[str, dict[str, ttk.Checkbutton]] = {"bolag": {}, "ordertyp": {}}
         self._filter_pairs: set[tuple[str, str]] = set()
+        self.ordersaldo_list1_values: list[str] = []
+        self.ordersaldo_list2_values: list[str] = []
+        self.ordersaldo_column_candidates: dict[str, list[str]] = {
+            "order": ["ordernr", "ordernummer", "order number", "order no", "orderid", "order"],
+            "article": ["artikel", "artikelnr", "artikelnummer", "artnr", "sku", "item", "productcode"],
+            "demand": ["beställt", "bestalld", "ordered", "orderqty", "qty", "quantity", "antal"],
+            "pick": ["plock", "plocksaldo", "saldo", "available", "stock", "qtyavailable", "saldo autoplock"],
+        }
         self._action_requirements: dict[ttk.Button, list[tuple[str, str]]] = {}
         self._action_missing_files: dict[ttk.Button, list[str]] = {}
         self._open_button_hints: dict[ttk.Button, str] = {}
@@ -2116,6 +2124,7 @@ class App(ttk.Frame):
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
         self.columnconfigure(3, weight=1)
+        self.columnconfigure(4, weight=1)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
         indata_frame.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=8)
         # Keep label/status/remove tightly grouped on the left.
@@ -2295,9 +2304,24 @@ class App(ttk.Frame):
             group_frame.grid_remove()
             self._filter_group_frames[filter_key] = group_frame
 
+        # OrderSaldo5-verktyg, kopplat till uppladdad beställningslinje-fil.
+        self.ordersaldo_frame = ttk.LabelFrame(self, text="")
+        self.ordersaldo_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 0), pady=8)
+        self.ordersaldo_list1_label = ttk.Label(self.ordersaldo_frame, text="Lista1 - Kompletta ordrar: 0")
+        self.ordersaldo_list1_label.grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
+        self.ordersaldo_list1_text = scrolledtext.ScrolledText(self.ordersaldo_frame, width=34, height=6)
+        self.ordersaldo_list1_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        self.ordersaldo_list2_label = ttk.Label(self.ordersaldo_frame, text="Lista2 - Artiklar att beställa: 0")
+        self.ordersaldo_list2_label.grid(row=2, column=0, sticky="w", padx=6, pady=(0, 2))
+        self.ordersaldo_list2_text = scrolledtext.ScrolledText(self.ordersaldo_frame, width=34, height=6)
+        self.ordersaldo_list2_text.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        self.ordersaldo_frame.columnconfigure(0, weight=1)
+        self.ordersaldo_frame.rowconfigure(1, weight=1)
+        self.ordersaldo_frame.rowconfigure(3, weight=1)
+
         # 2000-tal-verktyg på ytan där filter tidigare låg.
         self.split2000_frame = ttk.LabelFrame(self, text="")
-        self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
+        self.split2000_frame.grid(row=0, column=4, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
         ttk.Label(self.split2000_frame, text="Klistra in värden (en per rad):").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
         self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=48, height=12)
         self.split_input_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
@@ -2324,6 +2348,22 @@ class App(ttk.Frame):
         # Knapp för kontroll av dispatchpallar (ordernr och sändningsnr)
         self.dispatch_check_btn = ttk.Button(run_frame, text="Kontrollera dispatchpallar", command=self.run_dispatch_check, style="Accent.TButton")
         self.dispatch_check_btn.pack(side="left", padx=4)
+        self.ordersaldo_copy_list1_btn = ttk.Button(
+            run_frame,
+            text="Kompletta ordrar'",
+            command=self.copy_ordersaldo_list1,
+            style="Accent.TButton",
+            state="disabled",
+        )
+        self.ordersaldo_copy_list1_btn.pack(side="left", padx=4)
+        self.ordersaldo_copy_list2_btn = ttk.Button(
+            run_frame,
+            text="Påfyllningsbehov",
+            command=self.copy_ordersaldo_list2,
+            style="Accent.TButton",
+            state="disabled",
+        )
+        self.ordersaldo_copy_list2_btn.pack(side="left", padx=4)
         self._action_requirements = {
             self.run_btn: [
                 ("orders", "Bestallningslinjer (CSV)"),
@@ -2713,6 +2753,10 @@ class App(ttk.Frame):
             self._refresh_value_filter_options()
         except Exception:
             pass
+        try:
+            self._refresh_ordersaldo_from_orders()
+        except Exception:
+            pass
 
     def _normalize_filter_value(self, value: object) -> str:
         """Normalisera filtervärden till trimmat versalt textvärde eller NULL-token."""
@@ -2865,6 +2909,10 @@ class App(ttk.Frame):
         except Exception:
             pass
         try:
+            self._refresh_ordersaldo_from_orders()
+        except Exception:
+            pass
+        try:
             self._hide_hover_tooltip()
         except Exception:
             pass
@@ -2963,7 +3011,7 @@ class App(ttk.Frame):
         else:
             self._log("Aktiva filter: inga filterkolumner hittades i uppladdade filer.")
 
-    def _apply_value_filters(self, df: pd.DataFrame, source_name: str) -> pd.DataFrame:
+    def _apply_value_filters(self, df: pd.DataFrame, source_name: str, log_result: bool = True) -> pd.DataFrame:
         """
         Filtrera DataFrame med valda Bolag/Ordertyp-värden.
         AND-logik används när båda kolumnerna finns i samma DataFrame.
@@ -2989,11 +3037,165 @@ class App(ttk.Frame):
             out_df = out_df[normalized_series.isin(selected)].copy()
             applied_groups.append(f"{self.filter_titles[filter_key]} ({col})")
         after = len(out_df)
-        if applied_groups:
-            self._log(f"Filter {source_name}: {before} -> {after} rader ({', '.join(applied_groups)})")
-        else:
-            self._log(f"Filter {source_name}: {before} -> {after} rader (ingen matchande filterkolumn)")
+        if log_result:
+            if applied_groups:
+                self._log(f"Filter {source_name}: {before} -> {after} rader ({', '.join(applied_groups)})")
+            else:
+                self._log(f"Filter {source_name}: {before} -> {after} rader (ingen matchande filterkolumn)")
         return out_df
+
+    def _ordersaldo_norm(self, value: str) -> str:
+        """Normalisera kolumnnamn för robust matchning."""
+        txt = str(value).lower()
+        txt = txt.replace("å", "a").replace("ä", "a").replace("ö", "o")
+        txt = re.sub(r"[^a-z0-9]+", "", txt)
+        return txt
+
+    def _ordersaldo_find_col(self, df: pd.DataFrame, candidates: list[str], used_cols: set[str]) -> Optional[str]:
+        """Hitta kolumn via exakt/fuzzy match mot kandidater."""
+        cols = [str(c) for c in df.columns]
+        norm_cols = {col: self._ordersaldo_norm(col) for col in cols}
+        cand_norm = [self._ordersaldo_norm(c) for c in candidates]
+        for cand in cand_norm:
+            for col, norm_col in norm_cols.items():
+                if col in used_cols:
+                    continue
+                if norm_col == cand:
+                    return col
+        for cand in cand_norm:
+            for col, norm_col in norm_cols.items():
+                if col in used_cols:
+                    continue
+                if cand and cand in norm_col:
+                    return col
+        return None
+
+    def _set_ordersaldo_text(self, widget: scrolledtext.ScrolledText, lines: list[str]) -> None:
+        """Sätt innehåll i textyta med read-only-känsla."""
+        try:
+            widget.configure(state="normal")
+            widget.delete("1.0", tk.END)
+            if lines:
+                widget.insert("1.0", "\n".join(lines))
+            widget.configure(state="disabled")
+        except Exception:
+            pass
+
+    def _refresh_ordersaldo_from_orders(self) -> None:
+        """Beräkna Lista1/Lista2 från uppladdad beställningslinje-fil (med aktiva filter)."""
+        self.ordersaldo_list1_values = []
+        self.ordersaldo_list2_values = []
+
+        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        if not path:
+            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
+            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
+            self._set_ordersaldo_text(self.ordersaldo_list1_text, ["Ladda upp Beställningslinjer (CSV)."])
+            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
+            self.ordersaldo_copy_list1_btn.configure(state="disabled")
+            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            return
+
+        df = self._read_tabular_for_filter_scan(path)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
+            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
+            self._set_ordersaldo_text(self.ordersaldo_list1_text, ["Kunde inte läsa Beställningslinjer."])
+            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
+            self.ordersaldo_copy_list1_btn.configure(state="disabled")
+            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            return
+
+        try:
+            df = self._apply_value_filters(df, "OrderSaldo5 (beställningslinjer)", log_result=False)
+        except Exception:
+            pass
+
+        if df.empty:
+            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
+            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
+            self._set_ordersaldo_text(self.ordersaldo_list1_text, ["Inga rader kvar efter filter."])
+            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
+            self.ordersaldo_copy_list1_btn.configure(state="disabled")
+            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            return
+
+        used: set[str] = set()
+        order_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["order"], used)
+        if order_col:
+            used.add(order_col)
+        article_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["article"], used)
+        if article_col:
+            used.add(article_col)
+        demand_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["demand"], used)
+        if demand_col:
+            used.add(demand_col)
+        pick_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["pick"], used)
+
+        if not order_col or not article_col or not demand_col or not pick_col:
+            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
+            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
+            self._set_ordersaldo_text(
+                self.ordersaldo_list1_text,
+                ["Saknar kolumner: Order, Artikel, Beställt eller Plock/Saldo."],
+            )
+            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
+            self.ordersaldo_copy_list1_btn.configure(state="disabled")
+            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            return
+
+        calc_df = df.copy()
+        calc_df[order_col] = calc_df[order_col].astype(str).str.strip()
+        calc_df[article_col] = calc_df[article_col].astype(str).str.strip()
+        calc_df[demand_col] = calc_df[demand_col].map(to_num).astype(float)
+        calc_df[pick_col] = calc_df[pick_col].map(to_num).astype(float)
+
+        calc_df["_enough_row"] = calc_df[pick_col] >= calc_df[demand_col]
+        complete_mask = calc_df.groupby(order_col)["_enough_row"].all()
+        self.ordersaldo_list1_values = sorted(complete_mask[complete_mask].index.astype(str).tolist())
+
+        demand_by_art = calc_df.groupby(article_col)[demand_col].sum(min_count=1)
+        stock_by_art = calc_df.groupby(article_col)[pick_col].max()
+        holistic = pd.DataFrame({
+            "Total beställt": demand_by_art,
+            "Tillgängligt saldo (Plock)": stock_by_art,
+        }).fillna(0)
+        holistic["Underskott"] = (holistic["Total beställt"] - holistic["Tillgängligt saldo (Plock)"]).clip(lower=0)
+        holistic_short = holistic[holistic["Underskott"] > 0]
+        self.ordersaldo_list2_values = sorted(holistic_short.index.astype(str).tolist())
+
+        self.ordersaldo_list1_label.config(text=f"Lista1 - Kompletta ordrar: {len(self.ordersaldo_list1_values)}")
+        self.ordersaldo_list2_label.config(text=f"Lista2 - Artiklar att beställa: {len(self.ordersaldo_list2_values)}")
+        self._set_ordersaldo_text(self.ordersaldo_list1_text, self.ordersaldo_list1_values)
+        self._set_ordersaldo_text(self.ordersaldo_list2_text, self.ordersaldo_list2_values)
+        self.ordersaldo_copy_list1_btn.configure(state="normal" if self.ordersaldo_list1_values else "disabled")
+        self.ordersaldo_copy_list2_btn.configure(state="normal" if self.ordersaldo_list2_values else "disabled")
+
+    def copy_ordersaldo_list1(self) -> None:
+        """Kopiera ordernummer från Lista1."""
+        if not self.ordersaldo_list1_values:
+            messagebox.showinfo(APP_TITLE, "Lista1 är tom.")
+            return
+        try:
+            self.master.clipboard_clear()
+            self.master.clipboard_append("\n".join(self.ordersaldo_list1_values))
+            self.master.update()
+        except Exception:
+            pass
+        messagebox.showinfo(APP_TITLE, "Ordernummer från lista1 kopierade.")
+
+    def copy_ordersaldo_list2(self) -> None:
+        """Kopiera artikelnummer från Lista2."""
+        if not self.ordersaldo_list2_values:
+            messagebox.showinfo(APP_TITLE, "Lista2 är tom.")
+            return
+        try:
+            self.master.clipboard_clear()
+            self.master.clipboard_append("\n".join(self.ordersaldo_list2_values))
+            self.master.update()
+        except Exception:
+            pass
+        messagebox.showinfo(APP_TITLE, "Artikelnummer från lista2 kopierade.")
 
     def _update_action_buttons_state(self) -> None:
         """Aktivera/inaktivera blå actions beroende på vilka indatafiler som finns."""
