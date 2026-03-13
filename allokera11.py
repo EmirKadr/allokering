@@ -2371,17 +2371,15 @@ class App(ttk.Frame):
 
         self.wms_receive_var = tk.StringVar()
         self.wms_booking_var = tk.StringVar()
-        self.wms_buffert_var = tk.StringVar()
         self.wms_trans_var = tk.StringVar()
         self.wms_pick_var = tk.StringVar()
         self.wms_correct_var = tk.StringVar()
 
         _add_demo_file_row(3, "wms_receive", "Mottagningslogg (CSV):", self.wms_receive_var)
         _add_demo_file_row(4, "wms_booking", "Ej inlagrade (CSV):", self.wms_booking_var)
-        _add_demo_file_row(5, "wms_buffert", "Buffertlogg (CSV):", self.wms_buffert_var)
-        _add_demo_file_row(6, "wms_trans", "Translogg (CSV):", self.wms_trans_var)
-        _add_demo_file_row(7, "wms_pick", "Plocklogg (CSV):", self.wms_pick_var)
-        _add_demo_file_row(8, "wms_correct", "Saldojustering (CSV):", self.wms_correct_var)
+        _add_demo_file_row(5, "wms_trans", "Translogg (CSV):", self.wms_trans_var)
+        _add_demo_file_row(6, "wms_pick", "Plocklogg (CSV):", self.wms_pick_var)
+        _add_demo_file_row(7, "wms_correct", "Saldojustering (CSV):", self.wms_correct_var)
 
         # 2000-tal-verktyg på ytan där filter tidigare låg.
         self.split2000_frame = ttk.LabelFrame(self, text="")
@@ -2713,7 +2711,7 @@ class App(ttk.Frame):
         wms_name_hints = {
             "v_ask_receive_log": "wms_receive",
             "v_ask_booking_putaway": "wms_booking",
-            "v_ask_article_buffertpallet": "wms_buffert",
+            "v_ask_article_buffertpallet": "buffer",
             "v_ask_trans_log": "wms_trans",
             "v_ask_pick_log_full": "wms_pick",
             "v_ask_correct_log": "wms_correct",
@@ -2767,7 +2765,7 @@ class App(ttk.Frame):
         if has_inkop and (has_pallnr or has_pallid) and not has_mottaget and not has_plockat:
             return "wms_booking"
         if has_lagerplats and has_pallid and has_inkop:
-            return "wms_buffert"
+            return "buffer"
         if has_pallid and has_till and has_fran:
             return "wms_trans"
         if has_pallid and has_plockat and has_ord:
@@ -2854,8 +2852,6 @@ class App(ttk.Frame):
                 self.wms_receive_var.set(p)
             elif file_type == "wms_booking":
                 self.wms_booking_var.set(p)
-            elif file_type == "wms_buffert":
-                self.wms_buffert_var.set(p)
             elif file_type == "wms_trans":
                 self.wms_trans_var.set(p)
             elif file_type == "wms_pick":
@@ -3505,8 +3501,6 @@ class App(ttk.Frame):
                 self.wms_receive_var.set(p)
             elif file_type == "wms_booking":
                 self.wms_booking_var.set(p)
-            elif file_type == "wms_buffert":
-                self.wms_buffert_var.set(p)
             elif file_type == "wms_trans":
                 self.wms_trans_var.set(p)
             elif file_type == "wms_pick":
@@ -3572,7 +3566,7 @@ class App(ttk.Frame):
         wms_paths = {
             "wms_receive": str(self.wms_receive_var.get()).strip(),
             "wms_booking": str(self.wms_booking_var.get()).strip(),
-            "wms_buffert": str(self.wms_buffert_var.get()).strip(),
+            "wms_buffert": str(self.buffer_var.get()).strip(),
             "wms_trans": str(self.wms_trans_var.get()).strip(),
             "wms_pick": str(self.wms_pick_var.get()).strip(),
             "wms_correct": str(self.wms_correct_var.get()).strip(),
@@ -3915,8 +3909,6 @@ class App(ttk.Frame):
                     self.wms_receive_var.set("")
                 if hasattr(self, "wms_booking_var"):
                     self.wms_booking_var.set("")
-                if hasattr(self, "wms_buffert_var"):
-                    self.wms_buffert_var.set("")
                 if hasattr(self, "wms_trans_var"):
                     self.wms_trans_var.set("")
                 if hasattr(self, "wms_pick_var"):
