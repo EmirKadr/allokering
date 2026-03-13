@@ -2091,7 +2091,10 @@ class App(ttk.Frame):
         self.columnconfigure(0, weight=1)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
         indata_frame.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
-        indata_frame.columnconfigure(1, weight=1)
+        # Keep label/status/remove tightly grouped on the left and reserve free space to the right.
+        indata_frame.columnconfigure(0, minsize=280)
+        indata_frame.columnconfigure(1, minsize=120)
+        indata_frame.columnconfigure(3, weight=1)
         # Row for Beställningslinjer (CSV)
         ttk.Label(indata_frame, text="Beställningslinjer (CSV):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.orders_var = tk.StringVar()
@@ -2109,7 +2112,7 @@ class App(ttk.Frame):
         remove_orders = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("orders"),
                                    fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                    relief="raised", width=2)
-        remove_orders.grid(row=0, column=2, padx=4)
+        remove_orders.grid(row=0, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["orders"] = (status_orders, remove_orders)
         self.file_vars["orders"] = self.orders_var
         # Row for Buffertpallar (CSV)
@@ -2128,7 +2131,7 @@ class App(ttk.Frame):
         remove_buffer = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("buffer"),
                                   fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                   relief="raised", width=2)
-        remove_buffer.grid(row=1, column=2, padx=4)
+        remove_buffer.grid(row=1, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["buffer"] = (status_buffer, remove_buffer)
         self.file_vars["buffer"] = self.buffer_var
         # Row for Saldo inkl. automation (CSV)
@@ -2147,7 +2150,7 @@ class App(ttk.Frame):
         remove_automation = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("automation"),
                                       fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                       relief="raised", width=2)
-        remove_automation.grid(row=2, column=2, padx=4)
+        remove_automation.grid(row=2, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["automation"] = (status_automation, remove_automation)
         self.file_vars["automation"] = self.automation_var
         # Row for Item option (CSV)
@@ -2166,7 +2169,7 @@ class App(ttk.Frame):
         remove_item = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("item"),
                                 fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                 relief="raised", width=2)
-        remove_item.grid(row=3, column=2, padx=4)
+        remove_item.grid(row=3, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["item"] = (status_item, remove_item)
         self.file_vars["item"] = self.item_var
 
@@ -2186,7 +2189,7 @@ class App(ttk.Frame):
         remove_overview = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("overview"),
                                     fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                     relief="raised", width=2)
-        remove_overview.grid(row=4, column=2, padx=4)
+        remove_overview.grid(row=4, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["overview"] = (status_overview, remove_overview)
         self.file_vars["overview"] = self.overview_var
 
@@ -2206,13 +2209,16 @@ class App(ttk.Frame):
         remove_dispatch = tk.Button(indata_frame, text="✗", command=lambda: self.clear_file("dispatch"),
                                    fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                    relief="raised", width=2)
-        remove_dispatch.grid(row=5, column=2, padx=4)
+        remove_dispatch.grid(row=5, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["dispatch"] = (status_dispatch, remove_dispatch)
         self.file_vars["dispatch"] = self.dispatch_var
 
         prog_frame = ttk.LabelFrame(self, text="Prognos / Kampanj")
         prog_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
-        prog_frame.columnconfigure(1, weight=1)
+        # Match horizontal coordinates with indata_frame.
+        prog_frame.columnconfigure(0, minsize=280)
+        prog_frame.columnconfigure(1, minsize=120)
+        prog_frame.columnconfigure(3, weight=1)
         ttk.Label(prog_frame, text="Prognos (XLSX):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.prognos_var = tk.StringVar()
         status_prognos = tk.Label(
@@ -2228,7 +2234,7 @@ class App(ttk.Frame):
         remove_prognos = tk.Button(prog_frame, text="✗", command=lambda: self.clear_file("prognos"),
                                    fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                    relief="raised", width=2)
-        remove_prognos.grid(row=0, column=2, padx=4)
+        remove_prognos.grid(row=0, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["prognos"] = (status_prognos, remove_prognos)
         self.file_vars["prognos"] = self.prognos_var
         ttk.Label(prog_frame, text="Kampanjvolymer (XLSX):").grid(row=1, column=0, sticky="w", padx=4, pady=4)
@@ -2246,7 +2252,7 @@ class App(ttk.Frame):
         remove_campaign = tk.Button(prog_frame, text="✗", command=lambda: self.clear_file("campaign"),
                                     fg="white", bg="#dc3545", activebackground="#c82333", activeforeground="white",
                                     relief="raised", width=2)
-        remove_campaign.grid(row=1, column=2, padx=4)
+        remove_campaign.grid(row=1, column=2, sticky="w", padx=(4, 0))
         self.file_status_widgets["campaign"] = (status_campaign, remove_campaign)
         self.file_vars["campaign"] = self.campaign_var
 
