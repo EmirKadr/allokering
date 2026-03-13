@@ -2124,7 +2124,6 @@ class App(ttk.Frame):
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
         self.columnconfigure(3, weight=1)
-        self.columnconfigure(4, weight=1)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
         indata_frame.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=8)
         # Keep label/status/remove tightly grouped on the left.
@@ -2304,24 +2303,9 @@ class App(ttk.Frame):
             group_frame.grid_remove()
             self._filter_group_frames[filter_key] = group_frame
 
-        # OrderSaldo5-verktyg, kopplat till uppladdad beställningslinje-fil.
-        self.ordersaldo_frame = ttk.LabelFrame(self, text="")
-        self.ordersaldo_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 0), pady=8)
-        self.ordersaldo_list1_label = ttk.Label(self.ordersaldo_frame, text="Lista1 - Kompletta ordrar: 0")
-        self.ordersaldo_list1_label.grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.ordersaldo_list1_text = scrolledtext.ScrolledText(self.ordersaldo_frame, width=34, height=6)
-        self.ordersaldo_list1_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
-        self.ordersaldo_list2_label = ttk.Label(self.ordersaldo_frame, text="Lista2 - Artiklar att beställa: 0")
-        self.ordersaldo_list2_label.grid(row=2, column=0, sticky="w", padx=6, pady=(0, 2))
-        self.ordersaldo_list2_text = scrolledtext.ScrolledText(self.ordersaldo_frame, width=34, height=6)
-        self.ordersaldo_list2_text.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
-        self.ordersaldo_frame.columnconfigure(0, weight=1)
-        self.ordersaldo_frame.rowconfigure(1, weight=1)
-        self.ordersaldo_frame.rowconfigure(3, weight=1)
-
         # 2000-tal-verktyg på ytan där filter tidigare låg.
         self.split2000_frame = ttk.LabelFrame(self, text="")
-        self.split2000_frame.grid(row=0, column=4, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
+        self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
         ttk.Label(self.split2000_frame, text="Klistra in värden (en per rad):").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
         self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=48, height=12)
         self.split_input_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
@@ -3070,38 +3054,19 @@ class App(ttk.Frame):
                     return col
         return None
 
-    def _set_ordersaldo_text(self, widget: scrolledtext.ScrolledText, lines: list[str]) -> None:
-        """Sätt innehåll i textyta med read-only-känsla."""
-        try:
-            widget.configure(state="normal")
-            widget.delete("1.0", tk.END)
-            if lines:
-                widget.insert("1.0", "\n".join(lines))
-            widget.configure(state="disabled")
-        except Exception:
-            pass
-
     def _refresh_ordersaldo_from_orders(self) -> None:
-        """Beräkna Lista1/Lista2 från uppladdad beställningslinje-fil (med aktiva filter)."""
+        """Beräkna data för Kompletta ordrar/Påfyllningsbehov från beställningslinjer."""
         self.ordersaldo_list1_values = []
         self.ordersaldo_list2_values = []
 
         path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
         if not path:
-            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
-            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
-            self._set_ordersaldo_text(self.ordersaldo_list1_text, ["Ladda upp Beställningslinjer (CSV)."])
-            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
             self.ordersaldo_copy_list1_btn.configure(state="disabled")
             self.ordersaldo_copy_list2_btn.configure(state="disabled")
             return
 
         df = self._read_tabular_for_filter_scan(path)
         if not isinstance(df, pd.DataFrame) or df.empty:
-            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
-            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
-            self._set_ordersaldo_text(self.ordersaldo_list1_text, ["Kunde inte läsa Beställningslinjer."])
-            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
             self.ordersaldo_copy_list1_btn.configure(state="disabled")
             self.ordersaldo_copy_list2_btn.configure(state="disabled")
             return
@@ -3112,10 +3077,6 @@ class App(ttk.Frame):
             pass
 
         if df.empty:
-            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
-            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
-            self._set_ordersaldo_text(self.ordersaldo_list1_text, ["Inga rader kvar efter filter."])
-            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
             self.ordersaldo_copy_list1_btn.configure(state="disabled")
             self.ordersaldo_copy_list2_btn.configure(state="disabled")
             return
@@ -3133,13 +3094,6 @@ class App(ttk.Frame):
         pick_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["pick"], used)
 
         if not order_col or not article_col or not demand_col or not pick_col:
-            self.ordersaldo_list1_label.config(text="Lista1 - Kompletta ordrar: 0")
-            self.ordersaldo_list2_label.config(text="Lista2 - Artiklar att beställa: 0")
-            self._set_ordersaldo_text(
-                self.ordersaldo_list1_text,
-                ["Saknar kolumner: Order, Artikel, Beställt eller Plock/Saldo."],
-            )
-            self._set_ordersaldo_text(self.ordersaldo_list2_text, [])
             self.ordersaldo_copy_list1_btn.configure(state="disabled")
             self.ordersaldo_copy_list2_btn.configure(state="disabled")
             return
@@ -3164,10 +3118,6 @@ class App(ttk.Frame):
         holistic_short = holistic[holistic["Underskott"] > 0]
         self.ordersaldo_list2_values = sorted(holistic_short.index.astype(str).tolist())
 
-        self.ordersaldo_list1_label.config(text=f"Lista1 - Kompletta ordrar: {len(self.ordersaldo_list1_values)}")
-        self.ordersaldo_list2_label.config(text=f"Lista2 - Artiklar att beställa: {len(self.ordersaldo_list2_values)}")
-        self._set_ordersaldo_text(self.ordersaldo_list1_text, self.ordersaldo_list1_values)
-        self._set_ordersaldo_text(self.ordersaldo_list2_text, self.ordersaldo_list2_values)
         self.ordersaldo_copy_list1_btn.configure(state="normal" if self.ordersaldo_list1_values else "disabled")
         self.ordersaldo_copy_list2_btn.configure(state="normal" if self.ordersaldo_list2_values else "disabled")
 
