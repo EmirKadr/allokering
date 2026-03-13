@@ -416,16 +416,14 @@ def compute_hib_koppling(
                 break
 
     # Säkerställ att nödvändiga kolumner finns, annars returnera tomt df
-    required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Bolag", "Orderdatum", "Sändningsnr", "Zon", "Multi"}
+    required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Orderdatum", "Sändningsnr", "Zon", "Multi"}
     missing = [c for c in required_overview_cols if c not in overview.columns]
     if missing:
         return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
 
-    # Filtrera till rätt bolag och ordertyper
+    # Normalisera ordertyp men låt indata-filtret styra vilka rader som ingår.
     ov = overview.copy()
-    ov = ov[(ov["Bolag"].astype(str).str.strip() == "GG")]
     ov["Ordertyp"] = ov["Ordertyp"].astype(str).str.strip().str.upper()
-    ov = ov[ov["Ordertyp"].isin(["N", "HIB"])]
     if ov.empty:
         return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
 
@@ -703,14 +701,12 @@ def compute_missed_departures(details_df: pd.DataFrame, overview_df: pd.DataFram
                     if canonical in overview.columns:
                         break
         # Kontrollera att nödvändiga kolumner finns
-        required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Bolag", "Sändningsnr"}
+        required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Sändningsnr"}
         if any(c not in overview.columns for c in required_overview_cols):
             return pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
-        # Filtrera till bolag GG och ordertyper N/HIB
+        # Normalisera ordertyp men låt indata-filtret styra vilka rader som ingår.
         ov = overview.copy()
-        ov = ov[ov["Bolag"].astype(str).str.strip() == "GG"]
         ov["Ordertyp"] = ov["Ordertyp"].astype(str).str.strip().str.upper()
-        ov = ov[ov["Ordertyp"].isin(["N", "HIB"])]
         if ov.empty:
             return pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
         # Säkerställ att details har ordernr och status
@@ -2085,6 +2081,16 @@ class App(ttk.Frame):
         # till dem när den sätter upp filvalsraderna.
         self.file_status_widgets: dict[str, tuple[tk.Label, tk.Button]] = {}
         self.file_vars: dict[str, tk.StringVar] = {}
+        self.filter_options: dict[str, list[str]] = {"bolag": [], "ordertyp": []}
+        self.filter_vars: dict[str, dict[str, tk.BooleanVar]] = {"bolag": {}, "ordertyp": {}}
+        self.filter_column_candidates: dict[str, list[str]] = {
+            "bolag": ["Bolag", "Company", "Bolag nr", "Bol"],
+            "ordertyp": ["Ordertyp", "Order typ", "Order type", "Ordertype"],
+        }
+        self.filter_titles: dict[str, str] = {"bolag": "Bolag", "ordertyp": "Ordertyp"}
+        self.filter_null_token = "__NULL__"
+        self.filter_null_label = "(Tomt/Null)"
+        self._filter_group_frames: dict[str, ttk.LabelFrame] = {}
         self._action_requirements: dict[ttk.Button, list[tuple[str, str]]] = {}
         self._action_missing_files: dict[ttk.Button, list[str]] = {}
         self._open_button_hints: dict[ttk.Button, str] = {}
@@ -2276,9 +2282,19 @@ class App(ttk.Frame):
         for status_lbl, _ in self.file_status_widgets.values():
             status_lbl.bind("<Button-1>", self.open_files_dialog)
 
+        # Dynamiska värdefilter (Bolag/Ordertyp) som gäller alla blå körknappar.
+        self.value_filter_frame = ttk.LabelFrame(self, text="Filtrering (gäller blå knappar)")
+        self.value_filter_frame.grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=(0, 8))
+        self.value_filter_frame.grid_remove()
+        for idx, filter_key in enumerate(("bolag", "ordertyp")):
+            group_frame = ttk.LabelFrame(self.value_filter_frame, text=self.filter_titles[filter_key])
+            group_frame.grid(row=0, column=idx, sticky="nw", padx=(0, 12), pady=4)
+            group_frame.grid_remove()
+            self._filter_group_frames[filter_key] = group_frame
+
         # Placera run-knappar i ett eget ram för att kunna ha flera knappar bredvid varandra
         run_frame = ttk.Frame(self)
-        run_frame.grid(row=2, column=0, columnspan=3, pady=10)
+        run_frame.grid(row=3, column=0, columnspan=3, pady=10)
         self.run_btn = ttk.Button(run_frame, text="Kör allokering", command=self.run_allocation, style="Accent.TButton")
         self.run_btn.pack(side="left", padx=4)
         # Knapp för HIB‑koppling
@@ -2315,7 +2331,7 @@ class App(ttk.Frame):
         self._update_action_buttons_state()
 
         open_frame = ttk.Frame(self)
-        open_frame.grid(row=3, column=0, columnspan=3, pady=10)
+        open_frame.grid(row=4, column=0, columnspan=3, pady=10)
         self.open_result_btn = ttk.Button(open_frame, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
         self.open_result_btn.grid(row=0, column=0, padx=4)
         self.open_nearmiss_btn = ttk.Button(open_frame, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
@@ -2353,12 +2369,12 @@ class App(ttk.Frame):
             open_btn.bind("<Leave>", self._hide_hover_tooltip, add="+")
             open_btn.bind("<ButtonPress-1>", self._hide_hover_tooltip, add="+")
 
-        ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Logg / Summering:").grid(row=5, column=0, sticky="w", padx=8)
         self.log = tk.Text(self, height=14, width=110, state="disabled")
-        self.log.grid(row=5, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
-        self.rowconfigure(5, weight=1)
+        self.log.grid(row=6, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
+        self.rowconfigure(6, weight=1)
 
-        ttk.Label(self, text="Summering per Källtyp").grid(row=6, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Summering per Källtyp").grid(row=7, column=0, sticky="w", padx=8)
         self.summary_table = ttk.Treeview(self, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
         self.summary_table.heading("ktyp", text="Källtyp")
         self.summary_table.heading("antal_rader", text="antal rader")
@@ -2366,7 +2382,7 @@ class App(ttk.Frame):
         self.summary_table.column("ktyp", anchor="w", width=160)
         self.summary_table.column("antal_rader", anchor="e", width=140)
         self.summary_table.column("antal_kolli", anchor="e", width=140)
-        self.summary_table.grid(row=7, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
+        self.summary_table.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
 
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
@@ -2675,6 +2691,203 @@ class App(ttk.Frame):
             self._update_action_buttons_state()
         except Exception:
             pass
+        try:
+            self._refresh_value_filter_options()
+        except Exception:
+            pass
+
+    def _normalize_filter_value(self, value: object) -> str:
+        """Normalisera filtervärden till trimmat versalt textvärde eller NULL-token."""
+        try:
+            if pd.isna(value):
+                return self.filter_null_token
+        except Exception:
+            pass
+        raw = str(value).strip()
+        if not raw:
+            return self.filter_null_token
+        if raw.lower() in {"null", "none", "nan", "nat", "na"}:
+            return self.filter_null_token
+        return raw.upper()
+
+    def _display_filter_value(self, value: str) -> str:
+        """Visa intern NULL-token som läsbar etikett."""
+        return self.filter_null_label if value == self.filter_null_token else str(value)
+
+    def _find_filter_column(self, df: pd.DataFrame, filter_key: str) -> Optional[str]:
+        """Hitta kolumn för filtergruppen via robust kandidatmatchning."""
+        try:
+            return find_col(
+                df,
+                self.filter_column_candidates.get(filter_key, []),
+                required=False,
+                default=None,
+            )
+        except Exception:
+            return None
+
+    def _read_tabular_for_filter_scan(self, path: str) -> Optional[pd.DataFrame]:
+        """Läs en tabulär fil för att extrahera unika filtervärden."""
+        ext = os.path.splitext(str(path))[1].lower()
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+                if df.shape[1] == 1:
+                    try:
+                        df = pd.read_csv(path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+                    except Exception:
+                        pass
+                return _clean_columns(df)
+            if ext in {".xlsx", ".xlsm", ".xls"}:
+                try:
+                    df = pd.read_excel(path, dtype=str)
+                except Exception:
+                    return None
+                return _clean_columns(df)
+        except Exception:
+            return None
+        return None
+
+    def _refresh_value_filter_options(self) -> None:
+        """Bygg om Bolag/Ordertyp-filter utifrån uppladdade filer och behåll tidigare val."""
+        discovered: dict[str, set[str]] = {"bolag": set(), "ordertyp": set()}
+        for var in self.file_vars.values():
+            path = var.get().strip() if var else ""
+            if not path:
+                continue
+            df = self._read_tabular_for_filter_scan(path)
+            if not isinstance(df, pd.DataFrame):
+                continue
+            for filter_key in ("bolag", "ordertyp"):
+                col = self._find_filter_column(df, filter_key)
+                if not col or col not in df.columns:
+                    continue
+                try:
+                    values = df[col].tolist()
+                except Exception:
+                    values = []
+                for val in values:
+                    discovered[filter_key].add(self._normalize_filter_value(val))
+
+        for filter_key in ("bolag", "ordertyp"):
+            previous_values = {
+                value: bool(var.get())
+                for value, var in self.filter_vars.get(filter_key, {}).items()
+            }
+            sorted_values = sorted(
+                discovered[filter_key],
+                key=lambda v: (v == self.filter_null_token, self._display_filter_value(v)),
+            )
+            new_var_map: dict[str, tk.BooleanVar] = {}
+            old_var_map = self.filter_vars.get(filter_key, {})
+            for value in sorted_values:
+                is_checked = previous_values.get(value, True)
+                existing_var = old_var_map.get(value)
+                if existing_var is None:
+                    existing_var = tk.BooleanVar(value=is_checked)
+                else:
+                    existing_var.set(is_checked)
+                new_var_map[value] = existing_var
+            self.filter_options[filter_key] = sorted_values
+            self.filter_vars[filter_key] = new_var_map
+
+        self._render_value_filter_options()
+
+    def _render_value_filter_options(self) -> None:
+        """Rendera checkboxes för alla upptäckta filtervärden."""
+        any_group_visible = False
+        for filter_key in ("bolag", "ordertyp"):
+            frame = self._filter_group_frames.get(filter_key)
+            if frame is None:
+                continue
+            for child in frame.winfo_children():
+                child.destroy()
+            values = self.filter_options.get(filter_key, [])
+            if not values:
+                frame.grid_remove()
+                continue
+            frame.grid()
+            any_group_visible = True
+            for idx, value in enumerate(values):
+                cb = ttk.Checkbutton(
+                    frame,
+                    text=self._display_filter_value(value),
+                    variable=self.filter_vars[filter_key][value],
+                    command=self._on_filter_selection_changed,
+                )
+                cb.grid(row=idx, column=0, sticky="w", padx=4, pady=1)
+        if any_group_visible:
+            self.value_filter_frame.grid()
+        else:
+            self.value_filter_frame.grid_remove()
+
+    def _on_filter_selection_changed(self) -> None:
+        """Hantera klick på filter-checkboxar."""
+        try:
+            self._hide_hover_tooltip()
+        except Exception:
+            pass
+
+    def _get_selected_filter_values(self, filter_key: str) -> set[str]:
+        """Returnera markerade värden för en filtergrupp."""
+        selected: set[str] = set()
+        for value, var in self.filter_vars.get(filter_key, {}).items():
+            try:
+                if bool(var.get()):
+                    selected.add(value)
+            except Exception:
+                continue
+        return selected
+
+    def _log_active_value_filters(self) -> None:
+        """Logga vilka filtervärden som är aktiva för nästa körning."""
+        parts: list[str] = []
+        for filter_key in ("bolag", "ordertyp"):
+            available = self.filter_options.get(filter_key, [])
+            if not available:
+                continue
+            selected = self._get_selected_filter_values(filter_key)
+            if selected:
+                selected_labels = [self._display_filter_value(v) for v in available if v in selected]
+                parts.append(f"{self.filter_titles[filter_key]}: {', '.join(selected_labels)}")
+            else:
+                parts.append(f"{self.filter_titles[filter_key]}: inga val")
+        if parts:
+            self._log("Aktiva filter: " + " | ".join(parts))
+        else:
+            self._log("Aktiva filter: inga filterkolumner hittades i uppladdade filer.")
+
+    def _apply_value_filters(self, df: pd.DataFrame, source_name: str) -> pd.DataFrame:
+        """
+        Filtrera DataFrame med valda Bolag/Ordertyp-värden.
+        AND-logik används när båda kolumnerna finns i samma DataFrame.
+        """
+        if not isinstance(df, pd.DataFrame):
+            return df
+        out_df = df.copy()
+        before = len(out_df)
+        applied_groups: list[str] = []
+        for filter_key in ("bolag", "ordertyp"):
+            available = self.filter_options.get(filter_key, [])
+            if not available:
+                continue
+            col = self._find_filter_column(out_df, filter_key)
+            if not col or col not in out_df.columns:
+                continue
+            selected = self._get_selected_filter_values(filter_key)
+            if not selected:
+                out_df = out_df.iloc[0:0].copy()
+                applied_groups.append(f"{self.filter_titles[filter_key]} ({col}): inga val")
+                break
+            normalized_series = out_df[col].map(self._normalize_filter_value)
+            out_df = out_df[normalized_series.isin(selected)].copy()
+            applied_groups.append(f"{self.filter_titles[filter_key]} ({col})")
+        after = len(out_df)
+        if applied_groups:
+            self._log(f"Filter {source_name}: {before} -> {after} rader ({', '.join(applied_groups)})")
+        else:
+            self._log(f"Filter {source_name}: {before} -> {after} rader (ingen matchande filterkolumn)")
+        return out_df
 
     def _update_action_buttons_state(self) -> None:
         """Aktivera/inaktivera blå actions beroende på vilka indatafiler som finns."""
@@ -3148,6 +3361,7 @@ class App(ttk.Frame):
         if not details_path or not overview_path:
             messagebox.showerror(APP_TITLE, "Välj både beställningslinjer och orderöversikt.")
             return
+        self._log_active_value_filters()
         try:
             # Läs in beställningslinjer
             details_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
@@ -3160,6 +3374,11 @@ class App(ttk.Frame):
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
             return
+        try:
+            details_df = self._apply_value_filters(details_df, "Beställningslinjer (HIB-koppling)")
+            overview_df = self._apply_value_filters(overview_df, "Orderöversikt (HIB-koppling)")
+        except Exception:
+            pass
         # Beräkna ändringar och missade avgångar
         try:
             changes_df = compute_hib_koppling(details_df, overview_df)
@@ -3278,6 +3497,7 @@ class App(ttk.Frame):
         if not path:
             messagebox.showerror(APP_TITLE, "Välj orderöversikten först.")
             return
+        self._log_active_value_filters()
         try:
             df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
             if df.shape[1] == 1:
@@ -3288,6 +3508,16 @@ class App(ttk.Frame):
             return
         # Normalisera kolumnnamn
         df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+        try:
+            df = self._apply_value_filters(df, "Orderöversikt (orderkontroll)")
+        except Exception:
+            pass
+        if df.empty:
+            self.open_overview_check_btn.config(state="disabled")
+            self.last_overview_check_df = pd.DataFrame()
+            self.last_hib_status_check_df = pd.DataFrame()
+            messagebox.showinfo(APP_TITLE, "Inga rader kvar efter filter i orderöversikten.")
+            return
         # Identifiera relevant kolumner
         ship_col = None
         for c in df.columns:
@@ -3363,6 +3593,10 @@ class App(ttk.Frame):
                     if ddf.shape[1] == 1:
                         ddf = pd.read_csv(details_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
                     ddf.columns = [str(c).replace("\ufeff", "").strip() for c in ddf.columns]
+                    try:
+                        ddf = self._apply_value_filters(ddf, "Beställningslinjer (orderkontroll)")
+                    except Exception:
+                        pass
                     if "Order nr" in ddf.columns and "Kund.1" in ddf.columns:
                         try:
                             order_to_customer = (
@@ -3629,6 +3863,7 @@ class App(ttk.Frame):
         if not overview_path or not dispatch_path:
             messagebox.showerror(APP_TITLE, "Välj både orderöversikt och dispatchpallar först.")
             return
+        self._log_active_value_filters()
         # Läs in orderöversikt
         try:
             ov_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
@@ -3648,6 +3883,16 @@ class App(ttk.Frame):
         # Normalisera kolumnnamn
         ov_df.columns = [str(c).replace("\ufeff", "").strip() for c in ov_df.columns]
         dp_df.columns = [str(c).replace("\ufeff", "").strip() for c in dp_df.columns]
+        try:
+            ov_df = self._apply_value_filters(ov_df, "Orderöversikt (dispatchkontroll)")
+            dp_df = self._apply_value_filters(dp_df, "Dispatchpallar (dispatchkontroll)")
+        except Exception:
+            pass
+        if ov_df.empty or dp_df.empty:
+            self.open_dispatch_check_btn.config(state="disabled")
+            self.last_dispatch_check_df = pd.DataFrame()
+            messagebox.showinfo(APP_TITLE, "Inga rader kvar efter filter för dispatchkontrollen.")
+            return
         # Hjälpfunktion för att hitta kolumn baserat på nyckelord
         def _find_col(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
             # exakt match
@@ -3699,6 +3944,10 @@ class App(ttk.Frame):
                     if det_df.shape[1] == 1:
                         det_df = pd.read_csv(details_path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
                     det_df.columns = [str(c).replace("\ufeff", "").strip() for c in det_df.columns]
+                    try:
+                        det_df = self._apply_value_filters(det_df, "Beställningslinjer (dispatchkontroll)")
+                    except Exception:
+                        pass
                     # Standardkolumn för kundnamn i beställningsrader är "Kund.1" enligt HIB‑logiken
                     if "Order nr" in det_df.columns and "Kund.1" in det_df.columns:
                         try:
@@ -3939,6 +4188,8 @@ class App(ttk.Frame):
             messagebox.showerror(APP_TITLE, "Välj både beställningsfil och buffertfil.")
             return
 
+        self._log_active_value_filters()
+
         try:
             self._log("Läser in filer...")
             orders_raw = pd.read_csv(orders_path, dtype=str, sep=None, engine="python")
@@ -3971,6 +4222,17 @@ class App(ttk.Frame):
 
             orders_raw = _clean_columns(orders_raw)
             buffer_raw = _clean_columns(buffer_raw)
+
+            orders_raw = self._apply_value_filters(orders_raw, "Beställningslinjer")
+            buffer_raw = self._apply_value_filters(buffer_raw, "Buffertpallar")
+            if isinstance(self._saldo_raw, pd.DataFrame):
+                self._saldo_raw = self._apply_value_filters(self._saldo_raw, "Saldo inkl. automation")
+            if isinstance(self._item_raw, pd.DataFrame):
+                self._item_raw = self._apply_value_filters(self._item_raw, "Item option")
+            if isinstance(self._saldo_raw, pd.DataFrame):
+                self._saldo_norm = normalize_saldo(self._saldo_raw)
+            if isinstance(self._item_raw, pd.DataFrame):
+                self._item_norm = normalize_items(self._item_raw)
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa CSV-filerna:\n{e}")
             return
