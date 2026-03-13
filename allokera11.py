@@ -2065,6 +2065,19 @@ class App(ttk.Frame):
             # Om temat inte finns installerat, använd standardtemat
             pass
         style.configure("Accent.TButton", padding=10, foreground="white", background="#2D7FF9")
+        style.map(
+            "Accent.TButton",
+            background=[
+                ("disabled", "#6DAEFF"),
+                ("pressed", "#1F6ED8"),
+                ("active", "#3A8DFF"),
+            ],
+            foreground=[
+                ("disabled", "#EAF3FF"),
+                ("pressed", "white"),
+                ("active", "white"),
+            ],
+        )
         style.configure("Green.TButton", padding=10, foreground="white", background="#28a745")
 
         # Dictionaries used to track status icons and associated StringVars for indatafiler.
@@ -2072,6 +2085,10 @@ class App(ttk.Frame):
         # till dem när den sätter upp filvalsraderna.
         self.file_status_widgets: dict[str, tuple[tk.Label, tk.Button]] = {}
         self.file_vars: dict[str, tk.StringVar] = {}
+        self._action_requirements: dict[ttk.Button, list[tuple[str, str]]] = {}
+        self._action_missing_files: dict[ttk.Button, list[str]] = {}
+        self._hover_tooltip: Optional[tk.Toplevel] = None
+        self._hover_tooltip_label: Optional[tk.Label] = None
 
         # Build the GUI widgets
         self._create_widgets()
@@ -2272,6 +2289,29 @@ class App(ttk.Frame):
         # Knapp för kontroll av dispatchpallar (ordernr och sändningsnr)
         self.dispatch_check_btn = ttk.Button(run_frame, text="Kontrollera dispatchpallar", command=self.run_dispatch_check, style="Accent.TButton")
         self.dispatch_check_btn.pack(side="left", padx=4)
+        self._action_requirements = {
+            self.run_btn: [
+                ("orders", "Bestallningslinjer (CSV)"),
+                ("buffer", "Buffertpallar (CSV)"),
+            ],
+            self.koppla_btn: [
+                ("orders", "Bestallningslinjer (CSV)"),
+                ("overview", "Orderoversikt (CSV)"),
+            ],
+            self.overview_check_btn: [
+                ("overview", "Orderoversikt (CSV)"),
+            ],
+            self.dispatch_check_btn: [
+                ("overview", "Orderoversikt (CSV)"),
+                ("dispatch", "Dispatchpallar (CSV)"),
+            ],
+        }
+        for action_btn in self._action_requirements:
+            action_btn.bind("<Enter>", self._on_action_button_hover, add="+")
+            action_btn.bind("<Motion>", self._on_action_button_hover, add="+")
+            action_btn.bind("<Leave>", self._hide_hover_tooltip, add="+")
+            action_btn.bind("<ButtonPress-1>", self._hide_hover_tooltip, add="+")
+        self._update_action_buttons_state()
 
         open_frame = ttk.Frame(self)
         open_frame.grid(row=3, column=0, columnspan=3, pady=10)
@@ -2615,6 +2655,86 @@ class App(ttk.Frame):
                     btn.config(state="disabled")
         except Exception:
             pass
+        try:
+            self._update_action_buttons_state()
+        except Exception:
+            pass
+
+    def _update_action_buttons_state(self) -> None:
+        """Aktivera/inaktivera blå actions beroende på vilka indatafiler som finns."""
+        missing_per_button: dict[ttk.Button, list[str]] = {}
+        for btn, requirements in self._action_requirements.items():
+            missing_labels: list[str] = []
+            for file_key, file_label in requirements:
+                var = self.file_vars.get(file_key)
+                if not var or not var.get().strip():
+                    missing_labels.append(file_label)
+            try:
+                btn.configure(state="normal" if not missing_labels else "disabled")
+            except Exception:
+                pass
+            missing_per_button[btn] = missing_labels
+        self._action_missing_files = missing_per_button
+        self._hide_hover_tooltip()
+
+    def _on_action_button_hover(self, event) -> None:
+        """Visa tooltip med saknade filer när en inaktiv blå knapp hovras."""
+        btn = event.widget
+        try:
+            state = str(btn.cget("state")).strip().lower()
+        except Exception:
+            state = "normal"
+        missing = self._action_missing_files.get(btn, [])
+        if state != "disabled" or not missing:
+            self._hide_hover_tooltip()
+            return
+        tip_text = "Saknar filer: " + ", ".join(missing)
+        self._show_hover_tooltip(tip_text, event.x_root + 12, event.y_root + 10)
+
+    def _show_hover_tooltip(self, text: str, x_root: int, y_root: int) -> None:
+        """Rendera en enkel tooltip nära muspekaren."""
+        if not text:
+            self._hide_hover_tooltip()
+            return
+        tooltip = self._hover_tooltip
+        if tooltip is None or not tooltip.winfo_exists():
+            tooltip = tk.Toplevel(self)
+            tooltip.wm_overrideredirect(True)
+            try:
+                tooltip.wm_attributes("-topmost", True)
+            except Exception:
+                pass
+            label = tk.Label(
+                tooltip,
+                text=text,
+                bg="#1f2933",
+                fg="white",
+                relief="solid",
+                borderwidth=1,
+                padx=6,
+                pady=4,
+                justify="left",
+            )
+            label.pack()
+            self._hover_tooltip = tooltip
+            self._hover_tooltip_label = label
+        else:
+            label = self._hover_tooltip_label
+            if label is not None:
+                label.config(text=text)
+        if self._hover_tooltip is not None and self._hover_tooltip.winfo_exists():
+            self._hover_tooltip.geometry(f"+{x_root}+{y_root}")
+
+    def _hide_hover_tooltip(self, event=None) -> None:
+        """Dolj och nollställ tooltip."""
+        tooltip = self._hover_tooltip
+        if tooltip is not None:
+            try:
+                tooltip.destroy()
+            except Exception:
+                pass
+        self._hover_tooltip = None
+        self._hover_tooltip_label = None
 
     def clear_file(self, file_type: str) -> None:
         """
