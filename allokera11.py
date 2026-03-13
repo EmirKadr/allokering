@@ -3191,6 +3191,35 @@ class App(ttk.Frame):
                 )
             except Exception:
                 order_to_customer = {}
+
+        # Identifiera ordertyp- och statuskolumn för extra HIB-kontroll.
+        ordertype_col = None
+        for c in df.columns:
+            cl = c.lower().replace(" ", "")
+            if cl in {"ordertyp", "ordertype"} or ("order" in cl and "typ" in cl):
+                ordertype_col = c
+                break
+        status_col = None
+        for c in df.columns:
+            cl = c.lower().replace(" ", "")
+            if cl in {"status", "orderstatus", "radstatus", "state"}:
+                status_col = c
+                break
+        if not status_col:
+            for c in df.columns:
+                if "status" in c.lower():
+                    status_col = c
+                    break
+
+        def _to_status_num(value: object) -> Optional[int]:
+            try:
+                raw = str(value).strip().replace(",", ".")
+                if not raw:
+                    return None
+                return int(float(raw))
+            except Exception:
+                return None
+
         # Filtrera bort tomma sändningsnummer
         df = df[df[ship_col].astype(str).str.len() > 0].copy()
         if df.empty:
@@ -3198,7 +3227,9 @@ class App(ttk.Frame):
             self.last_overview_check_df = pd.DataFrame()
             messagebox.showinfo(APP_TITLE, "Orderöversikten innehåller inga sändningsnummer att analysera.")
             return
-        res_rows: List[Dict[str, object]] = []
+
+        # Del 1: befintlig avvikelsekontroll (flera kunder/transportörer per sändning).
+        shipment_diff_rows: List[Dict[str, object]] = []
         try:
             grouped = df.groupby(ship_col)
         except Exception:
@@ -3230,6 +3261,7 @@ class App(ttk.Frame):
                 orders_str = ", ".join(orders_list)
                 if len(customers) > 1 or len(carriers) > 1:
                     res_row = {
+                        "Avvikelsetyp": "Sändningsnr med flera kunder/transportörer",
                         "Sändningsnr": ship,
                         "Unika kunder": len(customers),
                         "Kunder": ", ".join(customers),
@@ -3237,63 +3269,80 @@ class App(ttk.Frame):
                         "Transportörer": ", ".join(carriers),
                         "Antal orderrader": int(len(group)),
                     }
-                    # Lägg till ordernummer med kundnamn om det finns några
                     if orders_str:
                         res_row["Ordernr (kundnamn)"] = orders_str
-                    res_rows.append(res_row)
+                    shipment_diff_rows.append(res_row)
             except Exception:
                 continue
-        result_df = pd.DataFrame(res_rows) if res_rows else pd.DataFrame()
+        result_df = pd.DataFrame(shipment_diff_rows) if shipment_diff_rows else pd.DataFrame()
         self.last_overview_check_df = result_df.copy() if not result_df.empty else pd.DataFrame()
 
-        # --- Ny kontroll: HIB-ordrar med status > 31 som saknar matchande butikssändning ---
+        # Del 2: HIB-order med status > 31 som saknar matchande butikssändning.
         hib_rows: List[Dict[str, object]] = []
-        try:
-            ordertyp_col = None
-            for c in df.columns:
-                if "ordertyp" in c.lower().replace(" ", ""):
-                    ordertyp_col = c
-                    break
-            status_col = None
-            for c in df.columns:
-                if c.lower().replace(" ", "") == "status":
-                    status_col = c
-                    break
-            if ordertyp_col and status_col:
-                df[ordertyp_col] = df[ordertyp_col].astype(str).str.strip()
-                df[status_col] = df[status_col].astype(str).str.strip()
-                hib_mask = df[ordertyp_col].str.upper().str.contains("HIB", na=False)
-                hib_df = df[hib_mask].copy()
-                butik_df = df[~hib_mask].copy()
-                butik_sandnings: set[str] = set(
-                    butik_df[ship_col].dropna().astype(str).str.strip()
-                ) - {"", "nan"}
-                for _, row in hib_df.iterrows():
-                    try:
-                        try:
-                            status_val = int(float(str(row[status_col]).strip()))
-                        except (ValueError, TypeError):
-                            continue
-                        if status_val <= 31:
-                            continue
-                        hib_sandning = str(row[ship_col]).strip()
-                        if not hib_sandning or hib_sandning == "nan":
-                            continue
-                        if hib_sandning not in butik_sandnings:
-                            ordnr = str(row[order_col]).strip() if order_col else ""
-                            kundnamn = str(row.get(cust_col, "")).strip()
-                            hib_rows.append({
-                                "Ordernr": ordnr,
-                                "Sändningsnr": hib_sandning,
-                                "Ordertyp": str(row[ordertyp_col]).strip(),
-                                "Status": status_val,
-                                "Kundnamn": kundnamn,
-                                "Anmärkning": "HIB-order med status > 31 saknar matchande butikssändning",
-                            })
-                    except Exception:
+        missing_hib_cols: List[str] = []
+        if not order_col:
+            missing_hib_cols.append("ordernummer")
+        if not ordertype_col:
+            missing_hib_cols.append("ordertyp")
+        if not status_col:
+            missing_hib_cols.append("status")
+        if not missing_hib_cols:
+            try:
+                hib_df = df[[order_col, ship_col, cust_col, ordertype_col, status_col]].copy()
+                hib_df[order_col] = hib_df[order_col].astype(str).str.strip()
+                hib_df[ship_col] = hib_df[ship_col].astype(str).str.strip()
+                hib_df[cust_col] = hib_df[cust_col].astype(str).str.strip()
+                hib_df["_ordertype_norm"] = hib_df[ordertype_col].astype(str).str.strip().str.upper()
+                hib_df["_status_num"] = hib_df[status_col].apply(_to_status_num)
+
+                store_mask = hib_df["_ordertype_norm"].eq("N") | hib_df["_ordertype_norm"].str.contains("BUTIK", na=False)
+                store_ships = set(hib_df.loc[store_mask, ship_col].dropna().astype(str).str.strip().tolist())
+                store_ships.discard("")
+
+                hib_only_df = hib_df[hib_df["_ordertype_norm"].str.contains("HIB", na=False)].copy()
+                for ordnr, group in hib_only_df.groupby(order_col):
+                    ordnr_str = str(ordnr).strip()
+                    if not ordnr_str:
                         continue
-        except Exception as e:
-            self._log(f"Fel vid HIB-statuskontroll: {e}")
+                    status_values = [s for s in group["_status_num"].tolist() if s is not None]
+                    if not status_values:
+                        continue
+                    max_status = max(status_values)
+                    if max_status <= 31:
+                        continue
+                    hib_ships = sorted(set(group[ship_col].dropna().astype(str).str.strip()))
+                    hib_ships = [s for s in hib_ships if s]
+                    if not hib_ships:
+                        continue
+                    # Avvikelse bara om ingen av HIB-orderns sändningar finns hos butik.
+                    if any(ship_val in store_ships for ship_val in hib_ships):
+                        continue
+
+                    kundnamn = ""
+                    try:
+                        kundnamn = order_to_customer.get(ordnr_str, "")
+                    except Exception:
+                        kundnamn = ""
+                    if not kundnamn:
+                        try:
+                            kunder = [k for k in group[cust_col].dropna().astype(str).str.strip().tolist() if k]
+                            if kunder:
+                                kundnamn = kunder[0]
+                        except Exception:
+                            kundnamn = ""
+
+                    row: Dict[str, object] = {
+                        "Ordernr": ordnr_str,
+                        "Sändningsnr": ", ".join(hib_ships),
+                        "Ordertyp": "HIB",
+                        "Status": int(max_status),
+                        "Anmärkning": "HIB-order med status > 31 saknar matchande butikssändning",
+                    }
+                    if kundnamn:
+                        row["Kundnamn"] = kundnamn
+                    hib_rows.append(row)
+            except Exception:
+                pass
         hib_check_df = pd.DataFrame(hib_rows) if hib_rows else pd.DataFrame()
         self.last_hib_status_check_df = hib_check_df.copy() if not hib_check_df.empty else pd.DataFrame()
 
@@ -3301,7 +3350,10 @@ class App(ttk.Frame):
         has_any = not result_df.empty or not hib_check_df.empty
         self.open_overview_check_btn.config(state="normal" if has_any else "disabled")
         if not has_any:
-            messagebox.showinfo(APP_TITLE, "Inga avvikelser hittades i orderöversikten.")
+            msg = "Inga avvikelser hittades i orderöversikten."
+            if missing_hib_cols:
+                msg += "\nHIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ")."
+            messagebox.showinfo(APP_TITLE, msg)
             return
 
         # Logga
@@ -3324,6 +3376,8 @@ class App(ttk.Frame):
                         self._log(f"  Order {row['Ordernr']}{name_part}: sändning {row['Sändningsnr']} (status {row['Status']})")
                     except Exception:
                         pass
+            if missing_hib_cols:
+                self._log("HIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ").")
             self._log("Orderkontrollen är beräknad och redo att öppnas i Excel.")
         except Exception:
             pass
