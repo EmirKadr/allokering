@@ -2135,9 +2135,10 @@ class App(ttk.Frame):
 
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(2, weight=0)
         self.columnconfigure(3, weight=1)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
-        indata_frame.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=8)
+        indata_frame.grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=8)
         # Keep label/status/remove tightly grouped on the left.
         indata_frame.columnconfigure(0, minsize=280)
         indata_frame.columnconfigure(1, minsize=120)
@@ -2260,7 +2261,7 @@ class App(ttk.Frame):
         self.file_vars["dispatch"] = self.dispatch_var
 
         prog_frame = ttk.LabelFrame(self, text="Prognos / Kampanj")
-        prog_frame.grid(row=1, column=0, columnspan=3, sticky="w", padx=8, pady=8)
+        prog_frame.grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=8)
         # Match horizontal coordinates with indata_frame.
         prog_frame.columnconfigure(0, minsize=280)
         prog_frame.columnconfigure(1, minsize=120)
@@ -2317,7 +2318,7 @@ class App(ttk.Frame):
 
         # DEMO-yta: Eftersok (WMS) med inmatning och egna indatafiler.
         self.demo_frame = ttk.LabelFrame(self, text="")
-        self.demo_frame.grid(row=2, column=2, sticky="nw", padx=(0, 8), pady=(0, 8))
+        self.demo_frame.grid(row=0, column=2, rowspan=2, sticky="nw", padx=(0, 8), pady=8)
         self.demo_frame.columnconfigure(0, minsize=160)
         self.demo_frame.columnconfigure(1, minsize=120)
         tk.Label(
@@ -2535,6 +2536,8 @@ class App(ttk.Frame):
         except tk.TclError:
             self.log_splitter.add(log_frame)
             self.log_splitter.add(summary_frame)
+        # Starta med en balanserad delning så handtaget går att dra både upp/ner direkt.
+        self.after(120, self._set_log_splitter_default_position)
 
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
@@ -3411,6 +3414,32 @@ class App(ttk.Frame):
                 pass
         self._hover_tooltip = None
         self._hover_tooltip_label = None
+
+    def _set_log_splitter_default_position(self) -> None:
+        """Placera logg-delaren mitt/balanserat vid start."""
+        splitter = getattr(self, "log_splitter", None)
+        if splitter is None:
+            return
+        try:
+            total_h = int(splitter.winfo_height())
+        except Exception:
+            total_h = 0
+        if total_h <= 120:
+            try:
+                self.after(120, self._set_log_splitter_default_position)
+            except Exception:
+                pass
+            return
+        # Ge loggen lite mer yta som standard men lämna god marginal åt summeringen.
+        desired = int(total_h * 0.62)
+        min_top = 90
+        min_bottom = 110
+        max_top = max(min_top, total_h - min_bottom)
+        pos = max(min_top, min(desired, max_top))
+        try:
+            splitter.sashpos(0, pos)
+        except Exception:
+            pass
 
     def clear_file(self, file_type: str) -> None:
         """
