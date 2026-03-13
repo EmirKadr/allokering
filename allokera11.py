@@ -2282,9 +2282,9 @@ class App(ttk.Frame):
         for status_lbl, _ in self.file_status_widgets.values():
             status_lbl.bind("<Button-1>", self.open_files_dialog)
 
-        # Dynamiska värdefilter (Bolag/Ordertyp) som gäller alla blå körknappar.
-        self.value_filter_frame = ttk.LabelFrame(self, text="Filtrering (gäller blå knappar)")
-        self.value_filter_frame.grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=(0, 8))
+        # Dynamiska värdefilter (Bolag/Ordertyp), placerade till höger om filraderna.
+        self.value_filter_frame = ttk.LabelFrame(self, text="Filtrering")
+        self.value_filter_frame.grid(row=0, column=3, rowspan=2, sticky="nw", padx=(8, 8), pady=8)
         self.value_filter_frame.grid_remove()
         for idx, filter_key in enumerate(("bolag", "ordertyp")):
             group_frame = ttk.LabelFrame(self.value_filter_frame, text=self.filter_titles[filter_key])
@@ -2294,7 +2294,7 @@ class App(ttk.Frame):
 
         # Placera run-knappar i ett eget ram för att kunna ha flera knappar bredvid varandra
         run_frame = ttk.Frame(self)
-        run_frame.grid(row=3, column=0, columnspan=3, pady=10)
+        run_frame.grid(row=2, column=0, columnspan=3, pady=10)
         self.run_btn = ttk.Button(run_frame, text="Kör allokering", command=self.run_allocation, style="Accent.TButton")
         self.run_btn.pack(side="left", padx=4)
         # Knapp för HIB‑koppling
@@ -2331,7 +2331,7 @@ class App(ttk.Frame):
         self._update_action_buttons_state()
 
         open_frame = ttk.Frame(self)
-        open_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        open_frame.grid(row=3, column=0, columnspan=3, pady=10)
         self.open_result_btn = ttk.Button(open_frame, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
         self.open_result_btn.grid(row=0, column=0, padx=4)
         self.open_nearmiss_btn = ttk.Button(open_frame, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
@@ -2369,12 +2369,12 @@ class App(ttk.Frame):
             open_btn.bind("<Leave>", self._hide_hover_tooltip, add="+")
             open_btn.bind("<ButtonPress-1>", self._hide_hover_tooltip, add="+")
 
-        ttk.Label(self, text="Logg / Summering:").grid(row=5, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Logg / Summering:").grid(row=4, column=0, sticky="w", padx=8)
         self.log = tk.Text(self, height=14, width=110, state="disabled")
-        self.log.grid(row=6, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
-        self.rowconfigure(6, weight=1)
+        self.log.grid(row=5, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
+        self.rowconfigure(5, weight=1)
 
-        ttk.Label(self, text="Summering per Källtyp").grid(row=7, column=0, sticky="w", padx=8)
+        ttk.Label(self, text="Summering per Källtyp").grid(row=6, column=0, sticky="w", padx=8)
         self.summary_table = ttk.Treeview(self, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
         self.summary_table.heading("ktyp", text="Källtyp")
         self.summary_table.heading("antal_rader", text="antal rader")
@@ -2382,7 +2382,7 @@ class App(ttk.Frame):
         self.summary_table.column("ktyp", anchor="w", width=160)
         self.summary_table.column("antal_rader", anchor="e", width=140)
         self.summary_table.column("antal_kolli", anchor="e", width=140)
-        self.summary_table.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
+        self.summary_table.grid(row=7, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
 
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
