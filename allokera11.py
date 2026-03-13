@@ -2090,11 +2090,10 @@ class App(ttk.Frame):
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
         indata_frame = ttk.LabelFrame(self, text="Indatafiler")
-        indata_frame.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
-        # Keep label/status/remove tightly grouped on the left and reserve free space to the right.
+        indata_frame.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=8)
+        # Keep label/status/remove tightly grouped on the left.
         indata_frame.columnconfigure(0, minsize=280)
         indata_frame.columnconfigure(1, minsize=120)
-        indata_frame.columnconfigure(3, weight=1)
         # Row for Beställningslinjer (CSV)
         ttk.Label(indata_frame, text="Beställningslinjer (CSV):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.orders_var = tk.StringVar()
@@ -2214,11 +2213,10 @@ class App(ttk.Frame):
         self.file_vars["dispatch"] = self.dispatch_var
 
         prog_frame = ttk.LabelFrame(self, text="Prognos / Kampanj")
-        prog_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=8)
+        prog_frame.grid(row=1, column=0, columnspan=3, sticky="w", padx=8, pady=8)
         # Match horizontal coordinates with indata_frame.
         prog_frame.columnconfigure(0, minsize=280)
         prog_frame.columnconfigure(1, minsize=120)
-        prog_frame.columnconfigure(3, weight=1)
         ttk.Label(prog_frame, text="Prognos (XLSX):").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.prognos_var = tk.StringVar()
         status_prognos = tk.Label(
