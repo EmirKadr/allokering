@@ -46,9 +46,12 @@ ytterligare förbättrad HIB‑koppling och cache‑hantering.
 from __future__ import annotations
 
 import re
+import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
+import importlib.util
+import unicodedata
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -2101,6 +2104,15 @@ class App(ttk.Frame):
             "demand": ["beställt", "bestalld", "ordered", "orderqty", "qty", "quantity", "antal"],
             "pick": ["plock", "plocksaldo", "saldo", "available", "stock", "qtyavailable", "saldo autoplock"],
         }
+        self.wms_expected_filenames: dict[str, str] = {
+            "wms_receive": "v_ask_receive_log.csv",
+            "wms_booking": "v_ask_booking_putaway.csv",
+            "wms_buffert": "v_ask_article_buffertpallet.csv",
+            "wms_trans": "v_ask_trans_log.csv",
+            "wms_pick": "v_ask_pick_log_full.csv",
+            "wms_correct": "v_ask_correct_log.csv",
+        }
+        self._wms_analyzer_cls = None
         self._action_requirements: dict[ttk.Button, list[tuple[str, str]]] = {}
         self._action_missing_files: dict[ttk.Button, list[str]] = {}
         self._open_button_hints: dict[ttk.Button, str] = {}
@@ -2303,6 +2315,74 @@ class App(ttk.Frame):
             group_frame.grid_remove()
             self._filter_group_frames[filter_key] = group_frame
 
+        # DEMO-yta: Eftersok (WMS) med inmatning och egna indatafiler.
+        self.demo_frame = ttk.LabelFrame(self, text="")
+        self.demo_frame.grid(row=2, column=2, sticky="nw", padx=(0, 8), pady=(0, 8))
+        self.demo_frame.columnconfigure(0, minsize=160)
+        self.demo_frame.columnconfigure(1, minsize=120)
+        tk.Label(
+            self.demo_frame,
+            text="DEMO",
+            fg="#28a745",
+            bg=self.cget("background"),
+            font=("Arial", 11, "bold"),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=4, pady=(4, 2))
+
+        ttk.Label(self.demo_frame, text="Inköpsnummer:").grid(row=1, column=0, sticky="w", padx=4, pady=(2, 2))
+        self.eftersok_purchase_var = tk.StringVar()
+        self.eftersok_purchase_entry = ttk.Entry(self.demo_frame, textvariable=self.eftersok_purchase_var, width=16)
+        self.eftersok_purchase_entry.grid(row=1, column=1, sticky="w", padx=4, pady=(2, 2))
+
+        ttk.Label(self.demo_frame, text="Artikelnummer:").grid(row=2, column=0, sticky="w", padx=4, pady=(2, 4))
+        self.eftersok_article_var = tk.StringVar()
+        self.eftersok_article_entry = ttk.Entry(self.demo_frame, textvariable=self.eftersok_article_var, width=16)
+        self.eftersok_article_entry.grid(row=2, column=1, sticky="w", padx=4, pady=(2, 4))
+
+        self.eftersok_purchase_var.trace_add("write", self._on_eftersok_input_changed)
+        self.eftersok_article_var.trace_add("write", self._on_eftersok_input_changed)
+
+        def _add_demo_file_row(row_idx: int, file_key: str, label_text: str, var_obj: tk.StringVar) -> None:
+            ttk.Label(self.demo_frame, text=label_text).grid(row=row_idx, column=0, sticky="w", padx=4, pady=2)
+            status_lbl = tk.Label(
+                self.demo_frame,
+                text="Ej fil",
+                fg="white",
+                bg="#6c757d",
+                width=10,
+                anchor="w",
+                font=("Arial", 11, "bold"),
+            )
+            status_lbl.grid(row=row_idx, column=1, sticky="w", padx=4)
+            status_lbl.bind("<Button-1>", self.open_files_dialog)
+            remove_btn = tk.Button(
+                self.demo_frame,
+                text="✗",
+                command=lambda fk=file_key: self.clear_file(fk),
+                fg="white",
+                bg="#dc3545",
+                activebackground="#c82333",
+                activeforeground="white",
+                relief="raised",
+                width=2,
+            )
+            remove_btn.grid(row=row_idx, column=2, sticky="w", padx=(4, 0))
+            self.file_status_widgets[file_key] = (status_lbl, remove_btn)
+            self.file_vars[file_key] = var_obj
+
+        self.wms_receive_var = tk.StringVar()
+        self.wms_booking_var = tk.StringVar()
+        self.wms_buffert_var = tk.StringVar()
+        self.wms_trans_var = tk.StringVar()
+        self.wms_pick_var = tk.StringVar()
+        self.wms_correct_var = tk.StringVar()
+
+        _add_demo_file_row(3, "wms_receive", "Mottagningslogg (CSV):", self.wms_receive_var)
+        _add_demo_file_row(4, "wms_booking", "Ej inlagrade (CSV):", self.wms_booking_var)
+        _add_demo_file_row(5, "wms_buffert", "Buffertlogg (CSV):", self.wms_buffert_var)
+        _add_demo_file_row(6, "wms_trans", "Translogg (CSV):", self.wms_trans_var)
+        _add_demo_file_row(7, "wms_pick", "Plocklogg (CSV):", self.wms_pick_var)
+        _add_demo_file_row(8, "wms_correct", "Saldojustering (CSV):", self.wms_correct_var)
+
         # 2000-tal-verktyg på ytan där filter tidigare låg.
         self.split2000_frame = ttk.LabelFrame(self, text="")
         self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
@@ -2348,6 +2428,14 @@ class App(ttk.Frame):
             state="disabled",
         )
         self.ordersaldo_copy_list2_btn.pack(side="left", padx=4)
+        self.eftersok_btn = ttk.Button(
+            run_frame,
+            text="Eftersök",
+            command=self.run_eftersok,
+            style="Accent.TButton",
+            state="disabled",
+        )
+        self.eftersok_btn.pack(side="left", padx=4)
         self._action_requirements = {
             self.run_btn: [
                 ("orders", "Bestallningslinjer (CSV)"),
@@ -2363,6 +2451,9 @@ class App(ttk.Frame):
             self.dispatch_check_btn: [
                 ("overview", "Orderoversikt (CSV)"),
                 ("dispatch", "Dispatchpallar (CSV)"),
+            ],
+            self.eftersok_btn: [
+                ("wms_receive", "Mottagningslogg (CSV)"),
             ],
         }
         for action_btn in self._action_requirements:
@@ -2392,9 +2483,11 @@ class App(ttk.Frame):
         self.open_overview_check_btn.grid(row=0, column=6, padx=4)
         self.open_dispatch_check_btn = ttk.Button(open_frame, text="Öppna dispatchkontroll", command=self.open_dispatch_check_in_excel, state="disabled")
         self.open_dispatch_check_btn.grid(row=0, column=7, padx=4)
+        self.open_eftersok_btn = ttk.Button(open_frame, text="Öppna Eftersök", command=self.open_eftersok_in_excel, state="disabled")
+        self.open_eftersok_btn.grid(row=0, column=8, padx=4)
         self.reset_cache_btn = ttk.Button(open_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
-        # Flytta rensa cache till kolumn 8 när nya knappar lagts till
-        self.reset_cache_btn.grid(row=0, column=8, padx=4)
+        # Flytta rensa cache till kolumn 9 när nya knappar lagts till
+        self.reset_cache_btn.grid(row=0, column=9, padx=4)
         self._open_button_hints = {
             self.open_result_btn: "Tryck forst: Kor allokering",
             self.open_nearmiss_btn: "Tryck forst: Kor allokering",
@@ -2403,6 +2496,7 @@ class App(ttk.Frame):
             self.open_koppla_btn: "Tryck forst: Kor HIB-koppling",
             self.open_overview_check_btn: "Tryck forst: Kontrollera orderoversikt",
             self.open_dispatch_check_btn: "Tryck forst: Kontrollera dispatchpallar",
+            self.open_eftersok_btn: "Tryck forst: Eftersok",
             self.open_prognos_btn: "Ladda upp Prognos eller Kampanjvolymer forst",
         }
         for open_btn in self._open_button_hints:
@@ -2479,6 +2573,9 @@ class App(ttk.Frame):
         self.last_overview_check_path: str | None = None
         self.last_dispatch_check_df: pd.DataFrame | None = None
         self.last_dispatch_check_path: str | None = None
+        self.last_eftersok_df: pd.DataFrame | None = None
+        self.last_eftersok_path: str | None = None
+        self.last_eftersok_report: str | None = None
 
 
 
@@ -2610,6 +2707,18 @@ class App(ttk.Frame):
         import os
         import pandas as _pd
         ext = os.path.splitext(path)[1].lower().lstrip('.')
+        base_name = os.path.basename(path).lower()
+        wms_name_hints = {
+            "v_ask_receive_log": "wms_receive",
+            "v_ask_booking_putaway": "wms_booking",
+            "v_ask_article_buffertpallet": "wms_buffert",
+            "v_ask_trans_log": "wms_trans",
+            "v_ask_pick_log_full": "wms_pick",
+            "v_ask_correct_log": "wms_correct",
+        }
+        for hint, file_type in wms_name_hints.items():
+            if hint in base_name:
+                return file_type
         if ext in ("xlsx", "xlsm", "xls"):
             try:
                 df_c = read_campaign_xlsx(path)
@@ -2643,6 +2752,27 @@ class App(ttk.Frame):
         has_lagerplats = any("lagerplats" in c or "plats" == c or "location" == c or "bin" == c for c in cols)
         has_pallid = any(c in ("pallid", "pall id", "id", "sscc", "etikett", "batch") for c in cols)
         has_status = any(c == "status" for c in cols)
+        has_inkop = any("inköpsnr" in c or "inkopsnr" in c for c in cols)
+        has_mottaget = any("mottaget" in c for c in cols)
+        has_pallnr = any("pall nr" in c or "pallnr" in c for c in cols)
+        has_till = any(c == "till" or c.endswith(" till") or c.startswith("till ") for c in cols)
+        has_fran = any("från" in c or "fran" in c for c in cols)
+        has_plockat = any("plockat" in c for c in cols)
+        has_anledning = any("anledning" in c for c in cols)
+
+        if has_inkop and has_art and has_pallid and has_mottaget:
+            return "wms_receive"
+        if has_inkop and (has_pallnr or has_pallid) and not has_mottaget and not has_plockat:
+            return "wms_booking"
+        if has_lagerplats and has_pallid and has_inkop:
+            return "wms_buffert"
+        if has_pallid and has_till and has_fran:
+            return "wms_trans"
+        if has_pallid and has_plockat and has_ord:
+            return "wms_pick"
+        if has_anledning and has_qty:
+            return "wms_correct"
+
         if has_art and has_qty and has_lagerplats:
             return "buffer"
         has_robot = any(c == "robot" for c in cols)
@@ -2718,6 +2848,18 @@ class App(ttk.Frame):
                 self.overview_var.set(p)
             elif file_type == "dispatch":
                 self.dispatch_var.set(p)
+            elif file_type == "wms_receive":
+                self.wms_receive_var.set(p)
+            elif file_type == "wms_booking":
+                self.wms_booking_var.set(p)
+            elif file_type == "wms_buffert":
+                self.wms_buffert_var.set(p)
+            elif file_type == "wms_trans":
+                self.wms_trans_var.set(p)
+            elif file_type == "wms_pick":
+                self.wms_pick_var.set(p)
+            elif file_type == "wms_correct":
+                self.wms_correct_var.set(p)
             else:
                 self._log(f"Okänd filtyp: {p}")
 
@@ -3164,6 +3306,13 @@ class App(ttk.Frame):
             pass
         messagebox.showinfo(APP_TITLE, "Artikelnummer från lista2 kopierade.")
 
+    def _on_eftersok_input_changed(self, *_args) -> None:
+        """Uppdatera blå knappstatus när inköpsnummer/artikelnummer ändras."""
+        try:
+            self._update_action_buttons_state()
+        except Exception:
+            pass
+
     def _update_action_buttons_state(self) -> None:
         """Aktivera/inaktivera blå actions beroende på vilka indatafiler som finns."""
         missing_per_button: dict[ttk.Button, list[str]] = {}
@@ -3173,6 +3322,14 @@ class App(ttk.Frame):
                 var = self.file_vars.get(file_key)
                 if not var or not var.get().strip():
                     missing_labels.append(file_label)
+            if btn == getattr(self, "eftersok_btn", None):
+                try:
+                    if not str(self.eftersok_purchase_var.get()).strip():
+                        missing_labels.append("Inköpsnummer")
+                    if not str(self.eftersok_article_var.get()).strip():
+                        missing_labels.append("Artikelnummer")
+                except Exception:
+                    missing_labels.extend(["Inköpsnummer", "Artikelnummer"])
             try:
                 btn.configure(state="normal" if not missing_labels else "disabled")
             except Exception:
@@ -3316,6 +3473,18 @@ class App(ttk.Frame):
                 self.overview_var.set(p)
             elif file_type == "dispatch":
                 self.dispatch_var.set(p)
+            elif file_type == "wms_receive":
+                self.wms_receive_var.set(p)
+            elif file_type == "wms_booking":
+                self.wms_booking_var.set(p)
+            elif file_type == "wms_buffert":
+                self.wms_buffert_var.set(p)
+            elif file_type == "wms_trans":
+                self.wms_trans_var.set(p)
+            elif file_type == "wms_pick":
+                self.wms_pick_var.set(p)
+            elif file_type == "wms_correct":
+                self.wms_correct_var.set(p)
             else:
                 try:
                     self._log(f"Okänd filtyp: {p}")
@@ -3323,6 +3492,113 @@ class App(ttk.Frame):
                     pass
         # Uppdatera ikoner efter alla filer har satts
         self.update_file_status_icons()
+
+    def _load_wms_analyzer_class(self):
+        """Ladda WMSAnalyzerUpdated från wms_sök79.py."""
+        if self._wms_analyzer_cls is not None:
+            return self._wms_analyzer_cls
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        module_path = ""
+        def _ascii_lower(value: str) -> str:
+            normalized = unicodedata.normalize("NFKD", str(value))
+            return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
+        for fname in os.listdir(base_dir):
+            fname_low = _ascii_lower(fname)
+            if fname_low == "wms_sok79.py":
+                module_path = os.path.join(base_dir, fname)
+                break
+        if not module_path or not os.path.exists(module_path):
+            raise FileNotFoundError(f"Hittar inte wms_sök79.py i: {base_dir}")
+        spec = importlib.util.spec_from_file_location("wms_sok79_module", module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Kunde inte ladda filen: {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        analyzer_cls = getattr(module, "WMSAnalyzerUpdated", None)
+        if analyzer_cls is None:
+            raise AttributeError("WMSAnalyzerUpdated saknas i wms_sök79.py")
+        self._wms_analyzer_cls = analyzer_cls
+        return analyzer_cls
+
+    def run_eftersok(self) -> None:
+        """Kör DEMO Eftersök med logiken från wms_sök79.py."""
+        purchase = str(self.eftersok_purchase_var.get()).strip()
+        article = str(self.eftersok_article_var.get()).strip()
+        if not purchase or not article:
+            messagebox.showwarning(APP_TITLE, "Både inköpsnummer och artikelnummer måste fyllas i.")
+            return
+
+        receive_path = str(self.wms_receive_var.get()).strip()
+        if not receive_path:
+            messagebox.showwarning(APP_TITLE, "Ladda minst Mottagningslogg (CSV) för att köra Eftersök.")
+            return
+
+        self.last_eftersok_df = None
+        self.last_eftersok_report = None
+        self.last_eftersok_path = None
+        try:
+            self.open_eftersok_btn.configure(state="disabled")
+        except Exception:
+            pass
+
+        wms_paths = {
+            "wms_receive": str(self.wms_receive_var.get()).strip(),
+            "wms_booking": str(self.wms_booking_var.get()).strip(),
+            "wms_buffert": str(self.wms_buffert_var.get()).strip(),
+            "wms_trans": str(self.wms_trans_var.get()).strip(),
+            "wms_pick": str(self.wms_pick_var.get()).strip(),
+            "wms_correct": str(self.wms_correct_var.get()).strip(),
+        }
+
+        try:
+            analyzer_cls = self._load_wms_analyzer_class()
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte ladda wms_sök79.py:\n{e}")
+            return
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for key, src in wms_paths.items():
+                    if not src:
+                        continue
+                    dst_name = self.wms_expected_filenames.get(key)
+                    if not dst_name:
+                        continue
+                    dst = os.path.join(tmpdir, dst_name)
+                    shutil.copy(src, dst)
+                analyzer = analyzer_cls(data_path=tmpdir)
+                report_text = str(analyzer.analyze(purchase, article) or "").strip()
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Ett fel uppstod under Eftersök:\n{e}")
+            return
+
+        if not report_text:
+            report_text = "Ingen text returnerades från Eftersök."
+
+        report_lines = report_text.splitlines()
+        if not report_lines:
+            report_lines = [report_text]
+
+        self.last_eftersok_report = report_text
+        self.last_eftersok_df = pd.DataFrame({"Rapport": report_lines})
+        try:
+            self.open_eftersok_btn.configure(state="normal")
+        except Exception:
+            pass
+        self._log(f"Eftersök klart för inköpsnummer {purchase}, artikelnummer {article}.")
+        self._log(f"Eftersök-rader: {len(report_lines)}")
+
+    def open_eftersok_in_excel(self) -> None:
+        """Öppna senaste Eftersök-resultatet i Excel."""
+        if isinstance(self.last_eftersok_df, pd.DataFrame) and not self.last_eftersok_df.empty:
+            try:
+                path = _open_df_in_excel({"Eftersök": self.last_eftersok_df.copy()}, label="eftersok")
+                self.last_eftersok_path = path
+                self._log(f"Öppnade Eftersök i Excel (temporär fil): {path}")
+            except Exception as e:
+                messagebox.showerror(APP_TITLE, f"Kunde inte öppna Eftersök i Excel:\n{e}")
+        else:
+            messagebox.showinfo(APP_TITLE, "Det finns inget Eftersök-resultat att öppna. Kör Eftersök först.")
 
     def open_chunked_values_in_excel(self) -> None:
         """
@@ -3567,6 +3843,9 @@ class App(ttk.Frame):
             self._prognos_df = None
             self._campaign_raw = None
             self._campaign_norm = None
+            self.last_eftersok_df = None
+            self.last_eftersok_path = None
+            self.last_eftersok_report = None
 
             # Rensa HIB‑kopplingsresultat
             self.last_koppla_df = None
@@ -3584,7 +3863,7 @@ class App(ttk.Frame):
                 pass
 
             # Stäng av alla öppna-knappar inklusive HIB-kopplingsknappen
-            for btn in (self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn, self.open_prognos_btn, self.open_refill_btn, self.open_koppla_btn):
+            for btn in (self.open_result_btn, self.open_nearmiss_btn, self.open_palletspaces_btn, self.open_prognos_btn, self.open_refill_btn, self.open_koppla_btn, self.open_eftersok_btn):
                 try:
                     btn.configure(state="disabled")
                 except Exception:
@@ -3604,6 +3883,22 @@ class App(ttk.Frame):
                 # Rensa även dispatchpallar vid cache-rensning
                 if hasattr(self, "dispatch_var"):
                     self.dispatch_var.set("")
+                if hasattr(self, "wms_receive_var"):
+                    self.wms_receive_var.set("")
+                if hasattr(self, "wms_booking_var"):
+                    self.wms_booking_var.set("")
+                if hasattr(self, "wms_buffert_var"):
+                    self.wms_buffert_var.set("")
+                if hasattr(self, "wms_trans_var"):
+                    self.wms_trans_var.set("")
+                if hasattr(self, "wms_pick_var"):
+                    self.wms_pick_var.set("")
+                if hasattr(self, "wms_correct_var"):
+                    self.wms_correct_var.set("")
+                if hasattr(self, "eftersok_purchase_var"):
+                    self.eftersok_purchase_var.set("")
+                if hasattr(self, "eftersok_article_var"):
+                    self.eftersok_article_var.set("")
                 # Nollställ eventuella resultat från dispatch-kontrollen
                 self.last_dispatch_check_df = None
                 self.last_dispatch_check_path = None
