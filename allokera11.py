@@ -2296,7 +2296,7 @@ class App(ttk.Frame):
             self._filter_group_frames[filter_key] = group_frame
 
         # 2000-tal-verktyg på ytan där filter tidigare låg.
-        self.split2000_frame = ttk.LabelFrame(self, text="2000-tal till Excel")
+        self.split2000_frame = ttk.LabelFrame(self, text="")
         self.split2000_frame.grid(row=0, column=3, rowspan=3, sticky="nsew", padx=(8, 8), pady=8)
         ttk.Label(self.split2000_frame, text="Klistra in värden (en per rad):").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
         self.split_input_text = scrolledtext.ScrolledText(self.split2000_frame, width=48, height=12)
