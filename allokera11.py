@@ -2324,7 +2324,6 @@ class App(ttk.Frame):
             self.demo_frame,
             text="DEMO",
             fg="#28a745",
-            bg=self.cget("background"),
             font=("Arial", 11, "bold"),
         ).grid(row=0, column=0, columnspan=3, sticky="w", padx=4, pady=(4, 2))
 
