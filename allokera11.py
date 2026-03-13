@@ -3283,26 +3283,28 @@ class App(ttk.Frame):
         if not self.ordersaldo_list1_values:
             messagebox.showinfo(APP_TITLE, "Lista1 är tom.")
             return
+        copied_count = len(self.ordersaldo_list1_values)
         try:
             self.master.clipboard_clear()
             self.master.clipboard_append("\n".join(self.ordersaldo_list1_values))
             self.master.update()
         except Exception:
             pass
-        messagebox.showinfo(APP_TITLE, "Ordernummer från lista1 kopierade.")
+        messagebox.showinfo(APP_TITLE, f"{copied_count} ordernummer kopierade.")
 
     def copy_ordersaldo_list2(self) -> None:
         """Kopiera artikelnummer från Lista2."""
         if not self.ordersaldo_list2_values:
             messagebox.showinfo(APP_TITLE, "Lista2 är tom.")
             return
+        copied_count = len(self.ordersaldo_list2_values)
         try:
             self.master.clipboard_clear()
             self.master.clipboard_append("\n".join(self.ordersaldo_list2_values))
             self.master.update()
         except Exception:
             pass
-        messagebox.showinfo(APP_TITLE, "Artikelnummer från lista2 kopierade.")
+        messagebox.showinfo(APP_TITLE, f"{copied_count} artikelnummer kopierade.")
 
     def _on_eftersok_input_changed(self, *_args) -> None:
         """Uppdatera blå knappstatus när inköpsnummer/artikelnummer ändras."""
