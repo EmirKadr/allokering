@@ -2320,7 +2320,7 @@ class App(ttk.Frame):
 
         # Placera run-knappar i ett eget ram för att kunna ha flera knappar bredvid varandra
         run_frame = ttk.Frame(self)
-        run_frame.grid(row=3, column=0, columnspan=3, pady=10)
+        run_frame.grid(row=3, column=0, columnspan=4, sticky="w", pady=10)
         self.run_btn = ttk.Button(run_frame, text="Kör allokering", command=self.run_allocation, style="Accent.TButton")
         self.run_btn.pack(side="left", padx=4)
         # Knapp för HIB‑koppling
@@ -2334,7 +2334,7 @@ class App(ttk.Frame):
         self.dispatch_check_btn.pack(side="left", padx=4)
         self.ordersaldo_copy_list1_btn = ttk.Button(
             run_frame,
-            text="Kompletta ordrar'",
+            text="Kompletta ordrar",
             command=self.copy_ordersaldo_list1,
             style="Accent.TButton",
             state="disabled",
@@ -2373,7 +2373,7 @@ class App(ttk.Frame):
         self._update_action_buttons_state()
 
         open_frame = ttk.Frame(self)
-        open_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        open_frame.grid(row=4, column=0, columnspan=4, sticky="w", pady=10)
         self.open_result_btn = ttk.Button(open_frame, text="Öppna allokerade pallar", command=self.open_result_in_excel, state="disabled")
         self.open_result_btn.grid(row=0, column=0, padx=4)
         self.open_nearmiss_btn = ttk.Button(open_frame, text="Öppna near-miss", command=self.open_nearmiss_in_excel, state="disabled")
