@@ -5041,7 +5041,7 @@ def main() -> None:
     root = root_class()
     root.title(APP_TITLE)
     app = App(root)
-    root.geometry("1160x780")
+    root.geometry("1360x860")
     root.mainloop()
 
 if __name__ == "__main__":
