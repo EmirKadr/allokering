@@ -2091,6 +2091,8 @@ class App(ttk.Frame):
         self.filter_null_token = "__NULL__"
         self.filter_null_label = "(Tomt/Null)"
         self._filter_group_frames: dict[str, ttk.LabelFrame] = {}
+        self._filter_checkbuttons: dict[str, dict[str, ttk.Checkbutton]] = {"bolag": {}, "ordertyp": {}}
+        self._filter_pairs: set[tuple[str, str]] = set()
         self._action_requirements: dict[ttk.Button, list[tuple[str, str]]] = {}
         self._action_missing_files: dict[ttk.Button, list[str]] = {}
         self._open_button_hints: dict[ttk.Button, str] = {}
@@ -2751,6 +2753,7 @@ class App(ttk.Frame):
     def _refresh_value_filter_options(self) -> None:
         """Bygg om Bolag/Ordertyp-filter utifrån uppladdade filer och behåll tidigare val."""
         discovered: dict[str, set[str]] = {"bolag": set(), "ordertyp": set()}
+        discovered_pairs: set[tuple[str, str]] = set()
         for var in self.file_vars.values():
             path = var.get().strip() if var else ""
             if not path:
@@ -2768,6 +2771,20 @@ class App(ttk.Frame):
                     values = []
                 for val in values:
                     discovered[filter_key].add(self._normalize_filter_value(val))
+            bolag_col = self._find_filter_column(df, "bolag")
+            ordertyp_col = self._find_filter_column(df, "ordertyp")
+            if bolag_col and ordertyp_col and bolag_col in df.columns and ordertyp_col in df.columns:
+                try:
+                    pair_df = df[[bolag_col, ordertyp_col]].copy()
+                    for _, row in pair_df.iterrows():
+                        discovered_pairs.add(
+                            (
+                                self._normalize_filter_value(row.get(bolag_col)),
+                                self._normalize_filter_value(row.get(ordertyp_col)),
+                            )
+                        )
+                except Exception:
+                    pass
 
         for filter_key in ("bolag", "ordertyp"):
             previous_values = {
@@ -2790,8 +2807,10 @@ class App(ttk.Frame):
                 new_var_map[value] = existing_var
             self.filter_options[filter_key] = sorted_values
             self.filter_vars[filter_key] = new_var_map
+        self._filter_pairs = discovered_pairs
 
         self._render_value_filter_options()
+        self._enforce_filter_dependencies()
 
     def _render_value_filter_options(self) -> None:
         """Rendera checkboxes för alla upptäckta filtervärden."""
@@ -2800,6 +2819,7 @@ class App(ttk.Frame):
             frame = self._filter_group_frames.get(filter_key)
             if frame is None:
                 continue
+            self._filter_checkbuttons[filter_key] = {}
             for child in frame.winfo_children():
                 child.destroy()
             values = self.filter_options.get(filter_key, [])
@@ -2816,6 +2836,7 @@ class App(ttk.Frame):
                     command=self._on_filter_selection_changed,
                 )
                 cb.grid(row=idx, column=0, sticky="w", padx=4, pady=1)
+                self._filter_checkbuttons[filter_key][value] = cb
         if any_group_visible:
             self.value_filter_frame.grid()
         else:
@@ -2824,9 +2845,78 @@ class App(ttk.Frame):
     def _on_filter_selection_changed(self) -> None:
         """Hantera klick på filter-checkboxar."""
         try:
+            self._enforce_filter_dependencies()
+        except Exception:
+            pass
+        try:
             self._hide_hover_tooltip()
         except Exception:
             pass
+
+    def _enforce_filter_dependencies(self) -> None:
+        """
+        Säkerställ kompatibla kombinationer mellan Bolag och Ordertyp.
+        Ogiltiga val bockas ur och motsvarande checkboxar inaktiveras.
+        """
+        if not self._filter_pairs:
+            for filter_key in ("bolag", "ordertyp"):
+                for value, cb in self._filter_checkbuttons.get(filter_key, {}).items():
+                    try:
+                        cb.configure(state="normal")
+                    except Exception:
+                        pass
+            return
+
+        all_bolag = set(self.filter_options.get("bolag", []))
+        all_ordertyp = set(self.filter_options.get("ordertyp", []))
+
+        for _ in range(6):
+            selected_bolag = self._get_selected_filter_values("bolag")
+            selected_ordertyp = self._get_selected_filter_values("ordertyp")
+
+            if selected_ordertyp:
+                enabled_bolag = {b for (b, o) in self._filter_pairs if o in selected_ordertyp}
+            else:
+                enabled_bolag = set(all_bolag)
+
+            if selected_bolag:
+                enabled_ordertyp = {o for (b, o) in self._filter_pairs if b in selected_bolag}
+            else:
+                enabled_ordertyp = set(all_ordertyp)
+
+            changed = False
+            for value, var in self.filter_vars.get("bolag", {}).items():
+                if value not in enabled_bolag and bool(var.get()):
+                    var.set(False)
+                    changed = True
+            for value, var in self.filter_vars.get("ordertyp", {}).items():
+                if value not in enabled_ordertyp and bool(var.get()):
+                    var.set(False)
+                    changed = True
+            if not changed:
+                break
+
+        selected_bolag = self._get_selected_filter_values("bolag")
+        selected_ordertyp = self._get_selected_filter_values("ordertyp")
+        if selected_ordertyp:
+            enabled_bolag = {b for (b, o) in self._filter_pairs if o in selected_ordertyp}
+        else:
+            enabled_bolag = set(all_bolag)
+        if selected_bolag:
+            enabled_ordertyp = {o for (b, o) in self._filter_pairs if b in selected_bolag}
+        else:
+            enabled_ordertyp = set(all_ordertyp)
+
+        for value, cb in self._filter_checkbuttons.get("bolag", {}).items():
+            try:
+                cb.configure(state="normal" if value in enabled_bolag else "disabled")
+            except Exception:
+                pass
+        for value, cb in self._filter_checkbuttons.get("ordertyp", {}).items():
+            try:
+                cb.configure(state="normal" if value in enabled_ordertyp else "disabled")
+            except Exception:
+                pass
 
     def _get_selected_filter_values(self, filter_key: str) -> set[str]:
         """Returnera markerade värden för en filtergrupp."""
