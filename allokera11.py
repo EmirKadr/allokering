@@ -2411,20 +2411,37 @@ class App(ttk.Frame):
             open_btn.bind("<Leave>", self._hide_hover_tooltip, add="+")
             open_btn.bind("<ButtonPress-1>", self._hide_hover_tooltip, add="+")
 
-        ttk.Label(self, text="Logg / Summering:").grid(row=5, column=0, sticky="w", padx=8)
-        self.log = tk.Text(self, height=14, width=110, state="disabled")
-        self.log.grid(row=6, column=0, columnspan=4, sticky="nsew", padx=8, pady=8)
-        self.rowconfigure(6, weight=1)
+        # Dragbar delare mellan logg och summering så man kan höja/sänka loggrutan.
+        self.log_splitter = ttk.Panedwindow(self, orient="vertical")
+        self.log_splitter.grid(row=5, column=0, columnspan=4, sticky="nsew", padx=8, pady=(0, 8))
+        self.rowconfigure(5, weight=1)
 
-        ttk.Label(self, text="Summering per Källtyp").grid(row=7, column=0, sticky="w", padx=8)
-        self.summary_table = ttk.Treeview(self, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
+        log_frame = ttk.Frame(self.log_splitter)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=1)
+        ttk.Label(log_frame, text="Logg / Summering:").grid(row=0, column=0, sticky="w")
+        self.log = tk.Text(log_frame, height=14, width=110, state="disabled")
+        self.log.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+
+        summary_frame = ttk.Frame(self.log_splitter)
+        summary_frame.columnconfigure(0, weight=1)
+        summary_frame.rowconfigure(1, weight=1)
+        ttk.Label(summary_frame, text="Summering per Källtyp").grid(row=0, column=0, sticky="w")
+        self.summary_table = ttk.Treeview(summary_frame, columns=("ktyp", "antal_rader", "antal_kolli"), show="headings", height=5)
         self.summary_table.heading("ktyp", text="Källtyp")
         self.summary_table.heading("antal_rader", text="antal rader")
         self.summary_table.heading("antal_kolli", text="antal kolli")
         self.summary_table.column("ktyp", anchor="w", width=160)
         self.summary_table.column("antal_rader", anchor="e", width=140)
         self.summary_table.column("antal_kolli", anchor="e", width=140)
-        self.summary_table.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=(0,8))
+        self.summary_table.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+
+        try:
+            self.log_splitter.add(log_frame, weight=3)
+            self.log_splitter.add(summary_frame, weight=1)
+        except tk.TclError:
+            self.log_splitter.add(log_frame)
+            self.log_splitter.add(summary_frame)
 
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
