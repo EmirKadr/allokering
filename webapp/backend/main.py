@@ -21,6 +21,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+
 from session_store import SessionData, create_session, delete_session, get_session
 from logic import (
     _clean_columns,
