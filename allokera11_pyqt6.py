@@ -25,6 +25,7 @@ import os
 import sys
 import subprocess
 import numpy as np
+import importlib.util
 
 def read_prognos_xlsx(path: str) -> pd.DataFrame:
     """
@@ -378,16 +379,14 @@ def compute_hib_koppling(
                 break
 
     # Säkerställ att nödvändiga kolumner finns, annars returnera tomt df
-    required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Bolag", "Orderdatum", "Sändningsnr", "Zon", "Multi"}
+    required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Orderdatum", "Sändningsnr", "Zon", "Multi"}
     missing = [c for c in required_overview_cols if c not in overview.columns]
     if missing:
         return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
 
-    # Filtrera till rätt bolag och ordertyper
+    # Normalisera ordertyp men låt indata-filtret styra vilka rader som ingår.
     ov = overview.copy()
-    ov = ov[(ov["Bolag"].astype(str).str.strip() == "GG")]
     ov["Ordertyp"] = ov["Ordertyp"].astype(str).str.strip().str.upper()
-    ov = ov[ov["Ordertyp"].isin(["N", "HIB"])]
     if ov.empty:
         return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
 
@@ -665,14 +664,12 @@ def compute_missed_departures(details_df: pd.DataFrame, overview_df: pd.DataFram
                     if canonical in overview.columns:
                         break
         # Kontrollera att nödvändiga kolumner finns
-        required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Bolag", "Sändningsnr"}
+        required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Sändningsnr"}
         if any(c not in overview.columns for c in required_overview_cols):
             return pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
-        # Filtrera till bolag GG och ordertyper N/HIB
+        # Normalisera ordertyp men låt indata-filtret styra vilka rader som ingår.
         ov = overview.copy()
-        ov = ov[ov["Bolag"].astype(str).str.strip() == "GG"]
         ov["Ordertyp"] = ov["Ordertyp"].astype(str).str.strip().str.upper()
-        ov = ov[ov["Ordertyp"].isin(["N", "HIB"])]
         if ov.empty:
             return pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
         # Säkerställ att details har ordernr och status
@@ -2082,8 +2079,48 @@ class App(QMainWindow):
         # File path storage (replaces tk.StringVar)
         self._file_paths: Dict[str, str] = {
             "orders": "", "buffer": "", "automation": "",
-            "item": "", "overview": "", "dispatch": ""
+            "item": "", "overview": "", "dispatch": "",
+            "wms_receive": "", "wms_booking": "", "wms_trans": "",
+            "wms_pick": "", "wms_correct": "",
         }
+
+        # Eftersök state
+        self.last_eftersok_df = None
+        self.last_eftersok_path = None
+        self.last_eftersok_report = None
+
+        # Filter infrastructure (Bolag/Ordertyp)
+        self.filter_options: dict = {"bolag": [], "ordertyp": []}
+        self.filter_vars: dict = {"bolag": {}, "ordertyp": {}}
+        self.filter_column_candidates: dict = {
+            "bolag": ["Bolag", "Company", "Bolag nr", "Bol"],
+            "ordertyp": ["Ordertyp", "Order typ", "Order type", "Ordertype"],
+        }
+        self.filter_titles: dict = {"bolag": "Bolag", "ordertyp": "Ordertyp"}
+        self.filter_null_token = "__NULL__"
+        self.filter_null_label = "(Tomt/Null)"
+        self._filter_pairs: set = set()
+
+        # OrderSaldo state
+        self.ordersaldo_list1_values: list = []
+        self.ordersaldo_list2_values: list = []
+        self.ordersaldo_column_candidates: dict = {
+            "order": ["ordernr", "ordernummer", "order number", "order no", "orderid", "order"],
+            "article": ["artikel", "artikelnr", "artikelnummer", "artnr", "sku", "item", "productcode"],
+            "demand": ["beställt", "bestalld", "ordered", "orderqty", "qty", "quantity", "antal"],
+            "pick": ["plock", "plocksaldo", "saldo", "available", "stock", "qtyavailable", "saldo autoplock"],
+        }
+
+        # WMS analyzer
+        self.wms_expected_filenames: dict = {
+            "wms_receive": "v_ask_receive_log.csv",
+            "wms_booking": "v_ask_booking_putaway.csv",
+            "wms_buffert": "v_ask_article_buffertpallet.csv",
+            "wms_trans": "v_ask_trans_log.csv",
+            "wms_pick": "v_ask_pick_log_full.csv",
+            "wms_correct": "v_ask_correct_log.csv",
+        }
+        self._wms_analyzer_cls = None
 
         self._build_ui()
 
@@ -2302,6 +2339,14 @@ class App(QMainWindow):
     def update_file_status_icons(self) -> None:
         for key in self._file_paths:
             self._update_file_status(key)
+        try:
+            self._refresh_value_filter_options()
+        except Exception:
+            pass
+        try:
+            self._refresh_ordersaldo_from_orders()
+        except Exception:
+            pass
 
     def _log(self, msg: str, level: str = "info") -> None:
         self.log_edit.append(msg)
@@ -2361,6 +2406,8 @@ class App(QMainWindow):
             self._set_path("overview", p)
         elif file_type == "dispatch":
             self._set_path("dispatch", p)
+        elif file_type in ("wms_receive", "wms_booking", "wms_trans", "wms_pick", "wms_correct"):
+            self._set_path(file_type, p)
         else:
             self._log(f"Okand filtyp: {p}")
 
@@ -2426,9 +2473,23 @@ class App(QMainWindow):
     # ------------------------------------------------------------------
     # File type detection (identical logic to original)
     # ------------------------------------------------------------------
-    def _detect_file_type(self, path: str):
-        import os as _os
-        ext = _os.path.splitext(path)[1].lower().lstrip(".")
+    def _detect_file_type(self, path: str) -> Optional[str]:
+        """Försök avgöra vilken sorts fil det är (orders, buffer, automation, item, prognos, campaign).
+        Returnerar en sträng med typen eller None om okänd.
+        """
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        base_name = os.path.basename(path).lower()
+        wms_name_hints = {
+            "v_ask_receive_log": "wms_receive",
+            "v_ask_booking_putaway": "wms_booking",
+            "v_ask_article_buffertpallet": "buffer",
+            "v_ask_trans_log": "wms_trans",
+            "v_ask_pick_log_full": "wms_pick",
+            "v_ask_correct_log": "wms_correct",
+        }
+        for hint, file_type in wms_name_hints.items():
+            if hint in base_name:
+                return file_type
         if ext in ("xlsx", "xlsm", "xls"):
             try:
                 df_c = read_campaign_xlsx(path)
@@ -2456,12 +2517,33 @@ class App(QMainWindow):
                 return None
         cols = [str(c).strip().lower() for c in df.columns]
         has_art = any(c in ("artikel", "artikelnummer", "artnr", "art.nr", "sku", "article") for c in cols)
-        has_qty = any(c in ("beställt", "beställt", "antal", "qty", "quantity", "bestalld", "order qty", "antal styck") for c in cols)
+        has_qty = any(c in ("beställt", "antal", "qty", "quantity", "bestalld", "order qty", "antal styck") for c in cols)
         has_ord = any(c in ("ordernr", "order nr", "order number", "kund", "kundnr", "order id") for c in cols)
         has_rad = any(c in ("radnr", "rad nr", "line id", "rad", "struktur", "radsnr") for c in cols)
         if has_art and has_qty and (has_ord or has_rad):
             return "orders"
         has_lagerplats = any("lagerplats" in c or "plats" == c or "location" == c or "bin" == c for c in cols)
+        has_pallid = any(c in ("pallid", "pall id", "id", "sscc", "etikett", "batch") for c in cols)
+        has_status = any(c == "status" for c in cols)
+        has_inkop = any("inköpsnr" in c or "inkopsnr" in c for c in cols)
+        has_mottaget = any("mottaget" in c for c in cols)
+        has_pallnr = any("pall nr" in c or "pallnr" in c for c in cols)
+        has_till = any(c == "till" or c.endswith(" till") or c.startswith("till ") for c in cols)
+        has_fran = any("från" in c or "fran" in c for c in cols)
+        has_plockat = any("plockat" in c for c in cols)
+        has_anledning = any("anledning" in c for c in cols)
+        if has_inkop and has_art and has_pallid and has_mottaget:
+            return "wms_receive"
+        if has_inkop and (has_pallnr or has_pallid) and not has_mottaget and not has_plockat:
+            return "wms_booking"
+        if has_lagerplats and has_pallid and has_inkop:
+            return "buffer"
+        if has_pallid and has_till and has_fran:
+            return "wms_trans"
+        if has_pallid and has_plockat and has_ord:
+            return "wms_pick"
+        if has_anledning and has_qty:
+            return "wms_correct"
         if has_art and has_qty and has_lagerplats:
             return "buffer"
         has_robot = any(c == "robot" for c in cols)
@@ -2474,6 +2556,7 @@ class App(QMainWindow):
             has_dispatch_order = any(c in ("ordernr", "order nr", "order number", "ordernummer") for c in cols)
             has_dispatch_ship = any(
                 ("sändnings" in c) or ("sandnings" in c) or ("sändningsnr" in c) or ("sandningsnr" in c)
+                or ("sändningsnr." in c) or ("sandningsnr." in c)
                 for c in cols
             )
             if has_plockpall and has_dispatch_order and has_dispatch_ship:
@@ -3027,6 +3110,7 @@ class App(QMainWindow):
         if not details_path or not overview_path:
             self._err("Valj bade bestellningslinjer och orderoversikt.")
             return
+        self._log_active_value_filters()
         try:
             details_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
         except Exception as e:
@@ -3037,6 +3121,11 @@ class App(QMainWindow):
         except Exception as e:
             self._err(f"Kunde inte lasa orderoversikten:\n{e}")
             return
+        try:
+            details_df = self._apply_value_filters(details_df, "Beställningslinjer (HIB-koppling)")
+            overview_df = self._apply_value_filters(overview_df, "Orderöversikt (HIB-koppling)")
+        except Exception:
+            pass
         try:
             changes_df = compute_hib_koppling(details_df, overview_df)
         except Exception as e:
@@ -3108,6 +3197,7 @@ class App(QMainWindow):
         if not path:
             self._err("Valj orderoversikten forst.")
             return
+        self._log_active_value_filters()
         try:
             df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
             if df.shape[1] == 1:
@@ -3117,6 +3207,16 @@ class App(QMainWindow):
             return
 
         df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+        try:
+            df = self._apply_value_filters(df, "Orderöversikt (orderkontroll)")
+        except Exception:
+            pass
+        if df.empty:
+            self.open_overview_check_btn.setEnabled(False)
+            self.last_overview_check_df = pd.DataFrame()
+            self.last_hib_status_check_df = pd.DataFrame()
+            self._info("Inga rader kvar efter filter i orderöversikten.")
+            return
 
         ship_col = None
         for c in df.columns:
@@ -3383,6 +3483,7 @@ class App(QMainWindow):
         if not overview_path or not dispatch_path:
             self._err("Valj bade orderoversikt och dispatchpallar forst.")
             return
+        self._log_active_value_filters()
 
         try:
             ov_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
@@ -3402,6 +3503,11 @@ class App(QMainWindow):
 
         ov_df.columns = [str(c).replace("\ufeff", "").strip() for c in ov_df.columns]
         dp_df.columns = [str(c).replace("\ufeff", "").strip() for c in dp_df.columns]
+        try:
+            ov_df = self._apply_value_filters(ov_df, "Orderöversikt (dispatchkontroll)")
+            dp_df = self._apply_value_filters(dp_df, "Dispatchpallar (dispatchkontroll)")
+        except Exception:
+            pass
 
         def _find_col(df_: pd.DataFrame, keywords_: List[str]):
             for kw in keywords_:
@@ -3527,6 +3633,439 @@ class App(QMainWindow):
             self._log("Dispatchkontrollen ar beraknad och redo att oppnas i Excel.")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Filter infrastructure (Bolag / Ordertyp)
+    # ------------------------------------------------------------------
+    def _normalize_filter_value(self, value: object) -> str:
+        """Normalisera filtervärden till trimmat versalt textvärde eller NULL-token."""
+        try:
+            if pd.isna(value):
+                return self.filter_null_token
+        except Exception:
+            pass
+        raw = str(value).strip()
+        if not raw:
+            return self.filter_null_token
+        if raw.lower() in {"null", "none", "nan", "nat", "na"}:
+            return self.filter_null_token
+        return raw.upper()
+
+    def _display_filter_value(self, value: str) -> str:
+        """Visa intern NULL-token som läsbar etikett."""
+        return self.filter_null_label if value == self.filter_null_token else str(value)
+
+    def _find_filter_column(self, df: pd.DataFrame, filter_key: str) -> Optional[str]:
+        """Hitta kolumn för filtergruppen via robust kandidatmatchning."""
+        try:
+            return find_col(
+                df,
+                self.filter_column_candidates.get(filter_key, []),
+                required=False,
+                default=None,
+            )
+        except Exception:
+            return None
+
+    def _read_tabular_for_filter_scan(self, path: str) -> Optional[pd.DataFrame]:
+        """Läs en tabulär fil för att extrahera unika filtervärden."""
+        ext = os.path.splitext(str(path))[1].lower()
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+                if df.shape[1] == 1:
+                    try:
+                        df = pd.read_csv(path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+                    except Exception:
+                        pass
+                return _clean_columns(df)
+            if ext in {".xlsx", ".xlsm", ".xls"}:
+                try:
+                    df = pd.read_excel(path, dtype=str)
+                except Exception:
+                    return None
+                return _clean_columns(df)
+        except Exception:
+            return None
+        return None
+
+    def _refresh_value_filter_options(self) -> None:
+        """Bygg om Bolag/Ordertyp-filter utifrån uppladdade filer och behåll tidigare val."""
+        discovered: dict = {"bolag": set(), "ordertyp": set()}
+        discovered_pairs: set = set()
+        for path in self._file_paths.values():
+            if not path:
+                continue
+            df = self._read_tabular_for_filter_scan(path)
+            if not isinstance(df, pd.DataFrame):
+                continue
+            for filter_key in ("bolag", "ordertyp"):
+                col = self._find_filter_column(df, filter_key)
+                if not col or col not in df.columns:
+                    continue
+                try:
+                    values = df[col].tolist()
+                except Exception:
+                    values = []
+                for val in values:
+                    discovered[filter_key].add(self._normalize_filter_value(val))
+            bolag_col = self._find_filter_column(df, "bolag")
+            ordertyp_col = self._find_filter_column(df, "ordertyp")
+            if bolag_col and ordertyp_col and bolag_col in df.columns and ordertyp_col in df.columns:
+                try:
+                    pair_df = df[[bolag_col, ordertyp_col]].copy()
+                    for _, row in pair_df.iterrows():
+                        discovered_pairs.add(
+                            (
+                                self._normalize_filter_value(row.get(bolag_col)),
+                                self._normalize_filter_value(row.get(ordertyp_col)),
+                            )
+                        )
+                except Exception:
+                    pass
+
+        for filter_key in ("bolag", "ordertyp"):
+            previous_values = {
+                value: bool(var)
+                for value, var in self.filter_vars.get(filter_key, {}).items()
+            }
+            sorted_values = sorted(
+                discovered[filter_key],
+                key=lambda v: (v == self.filter_null_token, self._display_filter_value(v)),
+            )
+            new_var_map: dict = {}
+            old_var_map = self.filter_vars.get(filter_key, {})
+            for value in sorted_values:
+                is_checked = previous_values.get(value, True)
+                existing_var = old_var_map.get(value)
+                if existing_var is None:
+                    existing_var = is_checked
+                else:
+                    existing_var = is_checked
+                new_var_map[value] = existing_var
+            self.filter_options[filter_key] = sorted_values
+            self.filter_vars[filter_key] = new_var_map
+        self._filter_pairs = discovered_pairs
+
+    def _get_selected_filter_values(self, filter_key: str) -> set:
+        """Returnera markerade värden för en filtergrupp."""
+        selected: set = set()
+        for value, var in self.filter_vars.get(filter_key, {}).items():
+            try:
+                if bool(var):
+                    selected.add(value)
+            except Exception:
+                continue
+        return selected
+
+    def _log_active_value_filters(self) -> None:
+        """Logga vilka filtervärden som är aktiva för nästa körning."""
+        parts: list = []
+        for filter_key in ("bolag", "ordertyp"):
+            available = self.filter_options.get(filter_key, [])
+            if not available:
+                continue
+            selected = self._get_selected_filter_values(filter_key)
+            if selected:
+                selected_labels = [self._display_filter_value(v) for v in available if v in selected]
+                parts.append(f"{self.filter_titles[filter_key]}: {', '.join(selected_labels)}")
+            else:
+                parts.append(f"{self.filter_titles[filter_key]}: inga val")
+        if parts:
+            self._log("Aktiva filter: " + " | ".join(parts))
+        else:
+            self._log("Aktiva filter: inga filterkolumner hittades i uppladdade filer.")
+
+    def _apply_value_filters(self, df: pd.DataFrame, source_name: str, log_result: bool = True) -> pd.DataFrame:
+        """
+        Filtrera DataFrame med valda Bolag/Ordertyp-värden.
+        AND-logik används när båda kolumnerna finns i samma DataFrame.
+        """
+        if not isinstance(df, pd.DataFrame):
+            return df
+        out_df = df.copy()
+        before = len(out_df)
+        applied_groups: list = []
+        for filter_key in ("bolag", "ordertyp"):
+            available = self.filter_options.get(filter_key, [])
+            if not available:
+                continue
+            col = self._find_filter_column(out_df, filter_key)
+            if not col or col not in out_df.columns:
+                continue
+            selected = self._get_selected_filter_values(filter_key)
+            if not selected:
+                out_df = out_df.iloc[0:0].copy()
+                applied_groups.append(f"{self.filter_titles[filter_key]} ({col}): inga val")
+                break
+            normalized_series = out_df[col].map(self._normalize_filter_value)
+            out_df = out_df[normalized_series.isin(selected)].copy()
+            applied_groups.append(f"{self.filter_titles[filter_key]} ({col})")
+        after = len(out_df)
+        if log_result:
+            if applied_groups:
+                self._log(f"Filter {source_name}: {before} -> {after} rader ({', '.join(applied_groups)})")
+            else:
+                self._log(f"Filter {source_name}: {before} -> {after} rader (ingen matchande filterkolumn)")
+        return out_df
+
+    # ------------------------------------------------------------------
+    # OrderSaldo helpers
+    # ------------------------------------------------------------------
+    def _ordersaldo_norm(self, value: str) -> str:
+        """Normalisera kolumnnamn för robust matchning."""
+        txt = str(value).lower()
+        txt = txt.replace("å", "a").replace("ä", "a").replace("ö", "o")
+        txt = re.sub(r"[^a-z0-9]+", "", txt)
+        return txt
+
+    def _ordersaldo_find_col(self, df: pd.DataFrame, candidates: list, used_cols: set) -> Optional[str]:
+        """Hitta kolumn via exakt/fuzzy match mot kandidater."""
+        cols = [str(c) for c in df.columns]
+        norm_cols = {col: self._ordersaldo_norm(col) for col in cols}
+        cand_norm = [self._ordersaldo_norm(c) for c in candidates]
+        for cand in cand_norm:
+            for col, norm_col in norm_cols.items():
+                if col in used_cols:
+                    continue
+                if norm_col == cand:
+                    return col
+        for cand in cand_norm:
+            for col, norm_col in norm_cols.items():
+                if col in used_cols:
+                    continue
+                if cand and cand in norm_col:
+                    return col
+        return None
+
+    def _refresh_ordersaldo_from_orders(self) -> None:
+        """Beräkna data för Kompletta ordrar/Påfyllningsbehov från beställningslinjer."""
+        self.ordersaldo_list1_values = []
+        self.ordersaldo_list2_values = []
+        path = self._get_path("orders")
+        if not path:
+            return
+        df = self._read_tabular_for_filter_scan(path)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return
+        try:
+            df = self._apply_value_filters(df, "OrderSaldo (beställningslinjer)", log_result=False)
+        except Exception:
+            pass
+        if df.empty:
+            return
+        used: set = set()
+        order_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["order"], used)
+        if order_col:
+            used.add(order_col)
+        article_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["article"], used)
+        if article_col:
+            used.add(article_col)
+        demand_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["demand"], used)
+        if demand_col:
+            used.add(demand_col)
+        pick_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["pick"], used)
+        if not order_col or not article_col or not demand_col or not pick_col:
+            return
+        calc_df = df.copy()
+        calc_df[order_col] = calc_df[order_col].astype(str).str.strip()
+        calc_df[article_col] = calc_df[article_col].astype(str).str.strip()
+        calc_df[demand_col] = calc_df[demand_col].map(to_num).astype(float)
+        calc_df[pick_col] = calc_df[pick_col].map(to_num).astype(float)
+        calc_df["_enough_row"] = calc_df[pick_col] >= calc_df[demand_col]
+        complete_mask = calc_df.groupby(order_col)["_enough_row"].all()
+        self.ordersaldo_list1_values = sorted(complete_mask[complete_mask].index.astype(str).tolist())
+        demand_by_art = calc_df.groupby(article_col)[demand_col].sum(min_count=1)
+        stock_by_art = calc_df.groupby(article_col)[pick_col].max()
+        holistic = pd.DataFrame({
+            "Total beställt": demand_by_art,
+            "Tillgängligt saldo (Plock)": stock_by_art,
+        }).fillna(0)
+        holistic["Underskott"] = (holistic["Total beställt"] - holistic["Tillgängligt saldo (Plock)"]).clip(lower=0)
+        holistic_short = holistic[holistic["Underskott"] > 0]
+        self.ordersaldo_list2_values = sorted(holistic_short.index.astype(str).tolist())
+
+    def copy_ordersaldo_list1(self) -> None:
+        """Kopiera ordernummer från Lista1."""
+        if not self.ordersaldo_list1_values:
+            QMessageBox.information(self, APP_TITLE, "Lista1 är tom.")
+            return
+        copied_count = len(self.ordersaldo_list1_values)
+        try:
+            from PyQt6.QtWidgets import QApplication as _QApp
+            _QApp.clipboard().setText("\n".join(self.ordersaldo_list1_values))
+        except Exception:
+            pass
+        QMessageBox.information(self, APP_TITLE, f"{copied_count} ordernummer kopierade.")
+
+    def copy_ordersaldo_list2(self) -> None:
+        """Kopiera artikelnummer från Lista2."""
+        if not self.ordersaldo_list2_values:
+            QMessageBox.information(self, APP_TITLE, "Lista2 är tom.")
+            return
+        copied_count = len(self.ordersaldo_list2_values)
+        try:
+            from PyQt6.QtWidgets import QApplication as _QApp
+            _QApp.clipboard().setText("\n".join(self.ordersaldo_list2_values))
+        except Exception:
+            pass
+        QMessageBox.information(self, APP_TITLE, f"{copied_count} artikelnummer kopierade.")
+
+    # ------------------------------------------------------------------
+    # WMS Eftersök
+    # ------------------------------------------------------------------
+    def _load_wms_analyzer_class(self):
+        """Ladda WMSAnalyzerUpdated från wms_sök79.py."""
+        if self._wms_analyzer_cls is not None:
+            return self._wms_analyzer_cls
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        module_path = ""
+        def _ascii_lower(value: str) -> str:
+            import unicodedata as _ud
+            normalized = _ud.normalize("NFKD", str(value))
+            return "".join(ch for ch in normalized if not _ud.combining(ch)).lower()
+        for fname in os.listdir(base_dir):
+            fname_low = _ascii_lower(fname)
+            if fname_low == "wms_sok79.py":
+                module_path = os.path.join(base_dir, fname)
+                break
+        if not module_path or not os.path.exists(module_path):
+            raise FileNotFoundError(f"Hittar inte wms_sök79.py i: {base_dir}")
+        spec = importlib.util.spec_from_file_location("wms_sok79_module", module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Kunde inte ladda filen: {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        analyzer_cls = getattr(module, "WMSAnalyzerUpdated", None)
+        if analyzer_cls is None:
+            raise AttributeError("WMSAnalyzerUpdated saknas i wms_sök79.py")
+        self._wms_analyzer_cls = analyzer_cls
+        return analyzer_cls
+
+    def run_eftersok(self) -> None:
+        """Kör DEMO Eftersök med logiken från wms_sök79.py."""
+        purchase = str(getattr(self, "_eftersok_purchase", "")).strip()
+        article = str(getattr(self, "_eftersok_article", "")).strip()
+        if not purchase or not article:
+            QMessageBox.warning(self, APP_TITLE, "Både inköpsnummer och artikelnummer måste fyllas i.")
+            return
+        receive_path = self._get_path("wms_receive")
+        if not receive_path:
+            QMessageBox.warning(self, APP_TITLE, "Ladda minst Mottagningslogg (CSV) för att köra Eftersök.")
+            return
+        self.last_eftersok_df = None
+        self.last_eftersok_report = None
+        self.last_eftersok_path = None
+        try:
+            if hasattr(self, "open_eftersok_btn"):
+                self.open_eftersok_btn.setEnabled(False)
+        except Exception:
+            pass
+        wms_paths = {
+            "wms_receive": self._get_path("wms_receive"),
+            "wms_booking": self._get_path("wms_booking"),
+            "wms_buffert": self._get_path("buffer"),
+            "wms_trans": self._get_path("wms_trans"),
+            "wms_pick": self._get_path("wms_pick"),
+            "wms_correct": self._get_path("wms_correct"),
+        }
+        try:
+            analyzer_cls = self._load_wms_analyzer_class()
+        except Exception as e:
+            QMessageBox.critical(self, APP_TITLE, f"Kunde inte ladda wms_sök79.py:\n{e}")
+            return
+        try:
+            import shutil as _shutil
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for key, src in wms_paths.items():
+                    if not src:
+                        continue
+                    dst_name = self.wms_expected_filenames.get(key)
+                    if not dst_name:
+                        continue
+                    dst = os.path.join(tmpdir, dst_name)
+                    _shutil.copy(src, dst)
+                analyzer = analyzer_cls(data_path=tmpdir)
+                report_text = str(analyzer.analyze(purchase, article) or "").strip()
+        except Exception as e:
+            QMessageBox.critical(self, APP_TITLE, f"Ett fel uppstod under Eftersök:\n{e}")
+            return
+        if not report_text:
+            report_text = "Ingen text returnerades från Eftersök."
+        report_lines = report_text.splitlines()
+        if not report_lines:
+            report_lines = [report_text]
+        self.last_eftersok_report = report_text
+        self.last_eftersok_df = pd.DataFrame({"Rapport": report_lines})
+        try:
+            if hasattr(self, "open_eftersok_btn"):
+                self.open_eftersok_btn.setEnabled(True)
+        except Exception:
+            pass
+        self._log(f"Eftersök klart för inköpsnummer {purchase}, artikelnummer {article}.")
+        self._log(f"Eftersök-rader: {len(report_lines)}")
+
+    def open_eftersok_in_excel(self) -> None:
+        """Öppna senaste Eftersök-resultatet i Excel."""
+        if isinstance(self.last_eftersok_df, pd.DataFrame) and not self.last_eftersok_df.empty:
+            try:
+                path = _open_df_in_excel({"Eftersök": self.last_eftersok_df.copy()}, label="eftersok")
+                self.last_eftersok_path = path
+                self._log(f"Öppnade Eftersök i Excel (temporär fil): {path}")
+            except Exception as e:
+                QMessageBox.critical(self, APP_TITLE, f"Kunde inte öppna Eftersök i Excel:\n{e}")
+        else:
+            QMessageBox.information(self, APP_TITLE, "Det finns inget Eftersök-resultat att öppna. Kör Eftersök först.")
+
+    # ------------------------------------------------------------------
+    # Open Sales in Excel
+    # ------------------------------------------------------------------
+    def open_sales_in_excel(self) -> None:
+        if isinstance(self._sales_metrics_df, pd.DataFrame) and not self._sales_metrics_df.empty:
+            try:
+                path = open_sales_insights(self._sales_metrics_df)
+                self._log(f"Öppnade försäljningsinsikter i Excel (temporär fil): {path}")
+            except Exception as e:
+                QMessageBox.critical(self, APP_TITLE, f"Kunde inte öppna försäljningsinsikter:\n{e}")
+        else:
+            QMessageBox.information(self, APP_TITLE, "Det finns inga försäljningsinsikter att öppna ännu. Läs in en plocklogg först.")
+
+    # ------------------------------------------------------------------
+    # Chunked values (split 2000-tal)
+    # ------------------------------------------------------------------
+    def open_chunked_values_in_excel(self) -> None:
+        """
+        Dela inklistrade värden i kolumner (default 2000 rader per kolumn)
+        och öppna resultatet direkt i en temporär Excel-fil.
+        """
+        try:
+            raw_text = getattr(self, "_split_input_text", "")
+            if hasattr(raw_text, "toPlainText"):
+                raw_text = raw_text.toPlainText()
+            lines = [r.strip() for r in str(raw_text).splitlines() if r.strip()]
+        except Exception:
+            lines = []
+        if not lines:
+            QMessageBox.warning(self, APP_TITLE, "Klistra in värden först (en per rad).")
+            return
+        try:
+            chunk_size = int(str(getattr(self, "_split_chunk_size", 2000)).strip())
+            if chunk_size <= 0:
+                raise ValueError
+        except Exception:
+            QMessageBox.critical(self, APP_TITLE, "Antal per kolumn måste vara ett heltal > 0.")
+            return
+        chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+        out_cols: dict = {}
+        for idx, chunk in enumerate(chunks, start=1):
+            out_cols[f"Kolumn {idx}"] = pd.Series([str(v) for v in chunk], dtype="string")
+        out_df = pd.DataFrame(out_cols).fillna("")
+        try:
+            path = _open_df_in_excel({"Delade värden": out_df}, label="2000tal_split")
+            self._log(f"2000-tal: öppnade temporär Excel-fil: {path}")
+            QMessageBox.information(self, APP_TITLE, "Excel-filen öppnades direkt. Spara i Excel om du vill behålla den.")
+        except Exception as e:
+            QMessageBox.critical(self, APP_TITLE, f"Kunde inte skapa/öppna Excel-filen:\n{e}")
 
 
 # ------------------------------------------------------------------
