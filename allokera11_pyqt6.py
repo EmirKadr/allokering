@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QLabel, QPushButton, QLineEdit, QTextEdit,
     QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox,
     QGroupBox, QFrame, QSizePolicy, QAbstractItemView, QHeaderView,
-    QTabWidget, QScrollArea
+    QTabWidget, QScrollArea, QSpinBox
 )
 from PyQt6.QtCore import Qt, QMimeData, QUrl
 from PyQt6.QtGui import QColor, QFont, QDragEnterEvent, QDropEvent
