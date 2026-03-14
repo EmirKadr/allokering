@@ -2080,6 +2080,7 @@ class App(QMainWindow):
             "item": "", "overview": "", "dispatch": "",
             "wms_receive": "", "wms_booking": "", "wms_trans": "",
             "wms_pick": "", "wms_correct": "",
+            "prognos": "", "campaign": "",
         }
 
         # Eftersök state
@@ -2120,6 +2121,7 @@ class App(QMainWindow):
         }
         self._wms_analyzer_cls = None
 
+        self.setAcceptDrops(True)
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -2149,7 +2151,7 @@ class App(QMainWindow):
         indata_layout.setColumnStretch(1, 1)
 
         file_rows = [
-            ("orders",     "Bestallningslinjer (CSV):"),
+            ("orders",     "Beställningslinjer (CSV):"),
             ("buffer",     "Buffertpallar (CSV):"),
             ("automation", "Saldo inkl. automation (CSV):"),
             ("item",       "Item option (CSV):"),
@@ -2183,35 +2185,35 @@ class App(QMainWindow):
             indata_layout.addWidget(rm_btn, row_idx, 2)
             self._remove_btns[key] = rm_btn
 
-        # Drop zone
-        self.drop_zone = DropZoneLabel()
-        self.drop_zone.set_drop_callback(self._handle_drop_paths)
-        self.drop_zone.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.drop_zone.mousePressEvent = lambda e: self.open_files_dialog()
-        indata_layout.addWidget(self.drop_zone, len(file_rows), 0, 1, 3)
-
         left_col_layout.addWidget(indata_group)
 
         # --- Prognos / Kampanj group ---
         prog_group = QGroupBox("Prognos / Kampanj")
         prog_layout = QGridLayout(prog_group)
-        prog_layout.setColumnStretch(1, 1)
 
-        prog_layout.addWidget(QLabel("Prognos (XLSX):"), 0, 0)
-        self.prognos_entry = QLineEdit()
-        self.prognos_entry.setReadOnly(True)
-        prog_layout.addWidget(self.prognos_entry, 0, 1)
-        prog_browse_btn = QPushButton("Bladda...")
-        prog_browse_btn.clicked.connect(self.pick_prognos)
-        prog_layout.addWidget(prog_browse_btn, 0, 2)
-
-        prog_layout.addWidget(QLabel("Kampanjvolymer (XLSX):"), 1, 0)
-        self.campaign_entry = QLineEdit()
-        self.campaign_entry.setReadOnly(True)
-        prog_layout.addWidget(self.campaign_entry, 1, 1)
-        camp_browse_btn = QPushButton("Bladda...")
-        camp_browse_btn.clicked.connect(self.pick_campaign)
-        prog_layout.addWidget(camp_browse_btn, 1, 2)
+        prog_file_rows = [
+            ("prognos",  "Prognos (XLSX):"),
+            ("campaign", "Kampanjvolymer (XLSX):"),
+        ]
+        for row_idx, (key, label_text) in enumerate(prog_file_rows):
+            prog_layout.addWidget(QLabel(label_text), row_idx, 0)
+            status_lbl = QLabel("Ej fil")
+            status_lbl.setFixedWidth(90)
+            status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            status_lbl.setStyleSheet(
+                "background-color: #6c757d; color: white; font-weight: bold; border-radius: 3px; padding: 2px 4px;"
+            )
+            prog_layout.addWidget(status_lbl, row_idx, 1, Qt.AlignmentFlag.AlignLeft)
+            self._status_labels[key] = status_lbl
+            rm_btn = QPushButton("✗")
+            rm_btn.setFixedWidth(28)
+            rm_btn.setStyleSheet(
+                "background-color: #dc3545; color: white; font-weight: bold; border-radius: 3px;"
+            )
+            rm_btn.setEnabled(False)
+            rm_btn.clicked.connect(lambda checked, k=key: self.clear_file(k))
+            prog_layout.addWidget(rm_btn, row_idx, 2)
+            self._remove_btns[key] = rm_btn
 
         left_col_layout.addWidget(prog_group)
         left_col_layout.addStretch()
@@ -2313,17 +2315,17 @@ class App(QMainWindow):
 
         btn_style = "background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;"
 
-        self.run_btn = QPushButton("Kor allokering")
+        self.run_btn = QPushButton("Kör allokering")
         self.run_btn.setStyleSheet(btn_style)
         self.run_btn.clicked.connect(self.run_allocation)
         run_layout.addWidget(self.run_btn)
 
-        self.koppla_btn = QPushButton("Kor HIB-koppling")
+        self.koppla_btn = QPushButton("Kör HIB-koppling")
         self.koppla_btn.setStyleSheet(btn_style)
         self.koppla_btn.clicked.connect(self.run_koppla)
         run_layout.addWidget(self.koppla_btn)
 
-        self.overview_check_btn = QPushButton("Kontrollera orderoversikt")
+        self.overview_check_btn = QPushButton("Kontrollera orderöversikt")
         self.overview_check_btn.setStyleSheet(btn_style)
         self.overview_check_btn.clicked.connect(self.run_overview_check)
         run_layout.addWidget(self.overview_check_btn)
@@ -2353,18 +2355,18 @@ class App(QMainWindow):
 
         self._action_requirements = {
             self.run_btn: [
-                ("orders", "Bestallningslinjer (CSV)"),
+                ("orders", "Beställningslinjer (CSV)"),
                 ("buffer",  "Buffertpallar (CSV)"),
             ],
             self.koppla_btn: [
-                ("orders",   "Bestallningslinjer (CSV)"),
-                ("overview", "Orderoversikt (CSV)"),
+                ("orders",   "Beställningslinjer (CSV)"),
+                ("overview", "Orderöversikt (CSV)"),
             ],
             self.overview_check_btn: [
-                ("overview", "Orderoversikt (CSV)"),
+                ("overview", "Orderöversikt (CSV)"),
             ],
             self.dispatch_check_btn: [
-                ("overview",  "Orderoversikt (CSV)"),
+                ("overview",  "Orderöversikt (CSV)"),
                 ("dispatch",  "Dispatchpallar (CSV)"),
             ],
             self.eftersok_btn: [
@@ -2533,13 +2535,13 @@ class App(QMainWindow):
         elif file_type == "item":
             self._set_path("item", p)
         elif file_type == "prognos":
-            self.prognos_entry.setText(p)
+            self._set_path("prognos", p)
             try:
                 self._load_prognos(p)
             except Exception:
                 pass
         elif file_type == "campaign":
-            self.campaign_entry.setText(p)
+            self._set_path("campaign", p)
             try:
                 self._load_campaign(p)
             except Exception:
@@ -2559,12 +2561,23 @@ class App(QMainWindow):
             self._assign_file(p, file_type)
         self.update_file_status_icons()
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            self._handle_drop_paths(paths)
+
     def pick_prognos(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Valj prognos (XLSX)", "", "Excel (*.xlsx);;Alla filer (*.*)"
         )
         if path:
-            self.prognos_entry.setText(path)
+            self._set_path("prognos", path)
             self._load_prognos(path)
         else:
             self._prognos_df = None
@@ -2590,7 +2603,7 @@ class App(QMainWindow):
             self, "Valj kampanjvolymer (XLSX)", "", "Excel (*.xlsx);;Alla filer (*.*)"
         )
         if path:
-            self.campaign_entry.setText(path)
+            self._set_path("campaign", path)
             self._load_campaign(path)
         else:
             self._campaign_norm = None
@@ -2971,7 +2984,7 @@ class App(QMainWindow):
             except Exception as e:
                 self._err(f"Kunde inte oppna resultat i Excel:\n{e}")
         else:
-            self._info("Det finns inget resultat att oppna annu. Kor allokeringen forst.")
+            self._info("Det finns inget resultat att oppna annu. Kör allokeringen först.")
 
     def open_nearmiss_in_excel(self) -> None:
         if isinstance(self.last_nearmiss_instead_df, pd.DataFrame) and not self.last_nearmiss_instead_df.empty:
@@ -2997,7 +3010,7 @@ class App(QMainWindow):
             except Exception as e:
                 self._err(f"Kunde inte oppna pallplatser i Excel:\n{e}")
         else:
-            self._info("Det finns ingen pallplatsrapport att oppna annu. Kor allokeringen forst.")
+            self._info("Det finns ingen pallplatsrapport att oppna annu. Kör allokeringen först.")
 
     def open_refill_in_excel(self) -> None:
         if isinstance(self._last_refill_hp_df, pd.DataFrame) or isinstance(self._last_refill_autostore_df, pd.DataFrame):
@@ -3012,7 +3025,7 @@ class App(QMainWindow):
             except Exception as e:
                 self._err(f"Kunde inte oppna refill i Excel:\n{e}")
         else:
-            self._info("Det finns ingen refillrapport att oppna annu. Kor allokeringen forst.")
+            self._info("Det finns ingen refillrapport att oppna annu. Kör allokeringen först.")
 
     def open_prognos_in_excel(self) -> None:
         has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
@@ -3109,7 +3122,7 @@ class App(QMainWindow):
             except Exception as e:
                 self._err(f"Kunde inte oppna HIB-koppling i Excel:\n{e}")
         else:
-            self._info("Det finns inget HIB-kopplingsresultat att oppna. Kor HIB-kopplingen forst.")
+            self._info("Det finns inget HIB-kopplingsresultat att oppna. Kör HIB-kopplingen först.")
 
     def open_overview_check_in_excel(self) -> None:
         has_sandning = isinstance(self.last_overview_check_df, pd.DataFrame) and not self.last_overview_check_df.empty
@@ -3195,8 +3208,6 @@ class App(QMainWindow):
 
             for key in list(self._file_paths.keys()):
                 self._set_path(key, "")
-            self.prognos_entry.clear()
-            self.campaign_entry.clear()
 
             self._log("Cache och temporara data har rensats.")
         except Exception:
@@ -3336,7 +3347,7 @@ class App(QMainWindow):
 
         try:
             self._log("\n--------------")
-            self._log(f"Kor allokering (Helpall -> AutoStore -> Huvudplock, FIFO) + {int(NEAR_MISS_PCT * 100)}%-near-miss loggning + Status {sorted(ALLOC_BUFFER_STATUSES)}-filter...")
+            self._log(f"Kör allokering (Helpall -> AutoStore -> Huvudplock, FIFO) + {int(NEAR_MISS_PCT * 100)}%-near-miss loggning + Status {sorted(ALLOC_BUFFER_STATUSES)}-filter...")
             result, near = allocate(orders_raw, buffer_raw, log=self._log)
 
             result = self._reclassify_skrymmande(result, self._saldo_norm)
@@ -3714,7 +3725,7 @@ class App(QMainWindow):
         if df.empty:
             self.open_overview_check_btn.setEnabled(False)
             self.last_overview_check_df = pd.DataFrame()
-            self._info("Orderoversikten innehaller inga sandningsnummer att analysera.")
+            self._info("Orderöversikten innehaller inga sandningsnummer att analysera.")
             return
 
         shipment_diff_rows: List[Dict] = []
@@ -3833,7 +3844,7 @@ class App(QMainWindow):
 
         try:
             if not result_df.empty:
-                self._log("Orderoversikt: sandningsnummer med flera kunder eller transportorer:")
+                self._log("Orderöversikt: sandningsnummer med flera kunder eller transportorer:")
                 for _, row in result_df.iterrows():
                     try:
                         if int(row.get("Unika kunder", 0)) > 1:
