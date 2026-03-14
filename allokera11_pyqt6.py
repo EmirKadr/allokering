@@ -783,12 +783,10 @@ def find_col(df: pd.DataFrame, candidates: List[str], required: bool = True, def
         raise KeyError(f"Hittar inte kolumnerna {candidates} i {list(df.columns)}")
     return default
 
-def logprintln(txt_widget: tk.Text, msg: str) -> None:
-    txt_widget.configure(state="normal")
-    txt_widget.insert("end", msg + "\n")
-    txt_widget.see("end")
-    txt_widget.configure(state="disabled")
-    txt_widget.update()
+def logprintln(txt_widget: QTextEdit, msg: str) -> None:
+    txt_widget.append(msg)
+    txt_widget.ensureCursorVisible()
+    QApplication.processEvents()
 
 def _first_path_from_dnd(event_data: str) -> str:
     raw = str(event_data).strip()
@@ -2469,6 +2467,228 @@ class App(QMainWindow):
         except Exception as e:
             self._campaign_norm = None
             self._err(f"Kunde inte lasa kampanjfilen:\n{e}")
+
+    # ------------------------------------------------------------------
+    # Individual file pickers
+    # ------------------------------------------------------------------
+    def pick_orders(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj beställningsrader (CSV)", "", "CSV (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("orders", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
+
+    def pick_automation(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj Saldo inkl. automation (CSV)", "", "CSV (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("automation", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
+
+    def pick_buffer(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj buffertpallar (CSV)", "", "CSV (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("buffer", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
+
+    def pick_item(self) -> None:
+        """Öppna dialog för att välja item-fil (CSV) med staplingsbar-uppgift."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj item-fil (CSV)", "", "CSV (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("item", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
+
+    def pick_overview(self) -> None:
+        """
+        Öppna dialog för att välja orderöversikt (CSV).  Denna fil innehåller
+        övergripande information om ordrar inklusive ordertyp, kundnummer,
+        orderdatum, sändningsnummer, zoner och multi.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj orderöversikt (CSV)", "", "CSV (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("overview", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
+
+    def pick_not_putaway(self) -> None:
+        """Stub för filval av 'Ej inlagrade artiklar'. Denna funktion gör inget i denna version."""
+        return
+
+    def pick_sales(self) -> None:
+        """Stub för filval av plocklogg. Denna funktion gör inget i denna version."""
+        return
+
+    def _parse_dnd_paths(self, event_data: str) -> list:
+        """Tolka en DnD-sträng (kan innehålla en eller flera filvägar inom klamrar) till en lista med paths."""
+        raw = str(event_data).strip()
+        paths: list = []
+        while raw:
+            raw = raw.strip()
+            if not raw:
+                break
+            if raw.startswith("{"):
+                end = raw.find("}")
+                if end == -1:
+                    break
+                path = raw[1:end]
+                paths.append(path)
+                raw = raw[end + 1:]
+            else:
+                if ' ' in raw:
+                    part, raw = raw.split(' ', 1)
+                else:
+                    part, raw = raw, ''
+                if part:
+                    paths.append(part)
+        return paths
+
+    # ------------------------------------------------------------------
+    # Filter UI helpers
+    # ------------------------------------------------------------------
+    def _render_value_filter_options(self) -> None:
+        """
+        PyQt6-stub: filtervärden hanteras via _refresh_value_filter_options
+        som bygger om filter_vars/filter_options.  Det finns inget separat
+        tkinter-widget-lager att rendera här - den här metoden finns för
+        kompatibilitet med anrop från arv/mixins.
+        """
+        try:
+            self._refresh_value_filter_options()
+        except Exception:
+            pass
+
+    def _on_filter_selection_changed(self) -> None:
+        """Hantera klick på filter-checkboxar."""
+        try:
+            self._enforce_filter_dependencies()
+        except Exception:
+            pass
+        try:
+            self._refresh_ordersaldo_from_orders()
+        except Exception:
+            pass
+
+    def _enforce_filter_dependencies(self) -> None:
+        """
+        Säkerställ kompatibla kombinationer mellan Bolag och Ordertyp.
+        Ogiltiga val bockas ur.
+        """
+        if not self._filter_pairs:
+            return
+
+        all_bolag = set(self.filter_options.get("bolag", []))
+        all_ordertyp = set(self.filter_options.get("ordertyp", []))
+
+        for _ in range(6):
+            selected_bolag = self._get_selected_filter_values("bolag")
+            selected_ordertyp = self._get_selected_filter_values("ordertyp")
+
+            if selected_ordertyp:
+                enabled_bolag = {b for (b, o) in self._filter_pairs if o in selected_ordertyp}
+            else:
+                enabled_bolag = set(all_bolag)
+
+            if selected_bolag:
+                enabled_ordertyp = {o for (b, o) in self._filter_pairs if b in selected_bolag}
+            else:
+                enabled_ordertyp = set(all_ordertyp)
+
+            changed = False
+            for value, var in self.filter_vars.get("bolag", {}).items():
+                if value not in enabled_bolag and bool(var):
+                    self.filter_vars["bolag"][value] = False
+                    changed = True
+            for value, var in self.filter_vars.get("ordertyp", {}).items():
+                if value not in enabled_ordertyp and bool(var):
+                    self.filter_vars["ordertyp"][value] = False
+                    changed = True
+            if not changed:
+                break
+
+    # ------------------------------------------------------------------
+    # Eftersök / action buttons helpers
+    # ------------------------------------------------------------------
+    def _on_eftersok_input_changed(self, *_args) -> None:
+        """Uppdatera knappstatus när inköpsnummer/artikelnummer ändras."""
+        try:
+            self._update_action_buttons_state()
+        except Exception:
+            pass
+
+    def _update_action_buttons_state(self) -> None:
+        """
+        Aktivera/inaktivera action-knappar beroende på vilka indatafiler som finns.
+        Kontrollerar self._action_requirements om den attributet existerar.
+        """
+        action_requirements = getattr(self, "_action_requirements", {})
+        for btn, requirements in action_requirements.items():
+            missing_labels: list = []
+            for file_key, file_label in requirements:
+                if not self._get_path(file_key).strip():
+                    missing_labels.append(file_label)
+            try:
+                btn.setEnabled(len(missing_labels) == 0)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Log splitter positioning
+    # ------------------------------------------------------------------
+    def _set_log_splitter_default_position(self) -> None:
+        """
+        PyQt6-stub: om ett QSplitter vid namn log_splitter finns, sätt
+        en balanserad startposition för logg-panelen.
+        """
+        splitter = getattr(self, "log_splitter", None)
+        if splitter is None:
+            return
+        try:
+            total_h = splitter.height()
+            if total_h <= 120:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(120, self._set_log_splitter_default_position)
+                return
+            desired = int(total_h * 0.62)
+            min_top = 90
+            min_bottom = 110
+            max_top = max(min_top, total_h - min_bottom)
+            pos = max(min_top, min(desired, max_top))
+            splitter.setSizes([pos, total_h - pos])
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Sales / plocklogg file handler
+    # ------------------------------------------------------------------
+    def _on_sales_file_selected(self) -> None:
+        """
+        Stub för hantering av plocklogg. Funktionen för att läsa in plockloggar
+        och beräkna försäljningsinsikter är borttagen i denna version.
+        Denna metod finns kvar för kompatibilitet men gör inget längre.
+        """
+        return
 
     # ------------------------------------------------------------------
     # File type detection (identical logic to original)
