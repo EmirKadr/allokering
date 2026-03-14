@@ -2131,6 +2131,18 @@ class App(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setSpacing(6)
 
+        # --- Top area: left column (Indatafiler + Prognos) + DEMO column + Klistra in column ---
+        top_widget = QWidget()
+        top_layout = QHBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(8)
+
+        # Left column widget
+        left_col = QWidget()
+        left_col_layout = QVBoxLayout(left_col)
+        left_col_layout.setContentsMargins(0, 0, 0, 0)
+        left_col_layout.setSpacing(6)
+
         # --- Indatafiler group ---
         indata_group = QGroupBox("Indatafiler")
         indata_layout = QGridLayout(indata_group)
@@ -2178,7 +2190,7 @@ class App(QMainWindow):
         self.drop_zone.mousePressEvent = lambda e: self.open_files_dialog()
         indata_layout.addWidget(self.drop_zone, len(file_rows), 0, 1, 3)
 
-        main_layout.addWidget(indata_group)
+        left_col_layout.addWidget(indata_group)
 
         # --- Prognos / Kampanj group ---
         prog_group = QGroupBox("Prognos / Kampanj")
@@ -2201,32 +2213,164 @@ class App(QMainWindow):
         camp_browse_btn.clicked.connect(self.pick_campaign)
         prog_layout.addWidget(camp_browse_btn, 1, 2)
 
-        main_layout.addWidget(prog_group)
+        left_col_layout.addWidget(prog_group)
+        left_col_layout.addStretch()
+
+        top_layout.addWidget(left_col)
+
+        # --- DEMO group (WMS / Eftersök) ---
+        demo_group = QGroupBox("")
+        demo_layout = QGridLayout(demo_group)
+        demo_layout.setColumnMinimumWidth(0, 160)
+
+        demo_title = QLabel("DEMO")
+        demo_title.setStyleSheet("color: #28a745; font-weight: bold;")
+        demo_layout.addWidget(demo_title, 0, 0, 1, 3)
+
+        # Inköpsnummer
+        demo_layout.addWidget(QLabel("Inköpsnummer:"), 1, 0)
+        self.eftersok_purchase_entry = QLineEdit()
+        self.eftersok_purchase_entry.setFixedWidth(120)
+        self.eftersok_purchase_entry.textChanged.connect(self._on_eftersok_input_changed)
+        demo_layout.addWidget(self.eftersok_purchase_entry, 1, 1)
+
+        # Artikelnummer
+        demo_layout.addWidget(QLabel("Artikelnummer:"), 2, 0)
+        self.eftersok_article_entry = QLineEdit()
+        self.eftersok_article_entry.setFixedWidth(120)
+        self.eftersok_article_entry.textChanged.connect(self._on_eftersok_input_changed)
+        demo_layout.addWidget(self.eftersok_article_entry, 2, 1)
+
+        # WMS file rows helper
+        def _add_demo_file_row(row_idx: int, file_key: str, label_text: str) -> None:
+            demo_layout.addWidget(QLabel(label_text), row_idx, 0)
+            status_lbl = QLabel("Ej fil")
+            status_lbl.setFixedWidth(90)
+            status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            status_lbl.setStyleSheet(
+                "background-color: #6c757d; color: white; font-weight: bold; border-radius: 3px; padding: 2px 4px;"
+            )
+            demo_layout.addWidget(status_lbl, row_idx, 1, Qt.AlignmentFlag.AlignLeft)
+            self._status_labels[file_key] = status_lbl
+            rm_btn = QPushButton("✗")
+            rm_btn.setFixedWidth(28)
+            rm_btn.setStyleSheet(
+                "background-color: #dc3545; color: white; font-weight: bold; border-radius: 3px;"
+            )
+            rm_btn.setEnabled(False)
+            rm_btn.clicked.connect(lambda checked, k=file_key: self.clear_file(k))
+            demo_layout.addWidget(rm_btn, row_idx, 2)
+            self._remove_btns[file_key] = rm_btn
+
+        _add_demo_file_row(3, "wms_receive", "Mottagningslogg (CSV):")
+        _add_demo_file_row(4, "wms_booking", "Ej inlagrade (CSV):")
+        _add_demo_file_row(5, "wms_trans",   "Translogg (CSV):")
+        _add_demo_file_row(6, "wms_pick",    "Plocklogg (CSV):")
+        _add_demo_file_row(7, "wms_correct", "Saldojustering (CSV):")
+
+        top_layout.addWidget(demo_group)
+
+        # --- Klistra in värden group ---
+        chunked_group = QGroupBox("")
+        chunked_layout = QVBoxLayout(chunked_group)
+        chunked_layout.addWidget(QLabel("Klistra in värden (en per rad):"))
+
+        self._split_input_text = QTextEdit()
+        self._split_input_text.setMinimumWidth(180)
+        self._split_input_text.setMinimumHeight(160)
+        chunked_layout.addWidget(self._split_input_text)
+
+        chunked_bottom = QWidget()
+        chunked_bottom_layout = QHBoxLayout(chunked_bottom)
+        chunked_bottom_layout.setContentsMargins(0, 0, 0, 0)
+        chunked_bottom_layout.addWidget(QLabel("Antal per kolumn:"))
+
+        self._split_chunk_spin = QSpinBox()
+        self._split_chunk_spin.setRange(1, 1000000)
+        self._split_chunk_spin.setValue(2000)
+        self._split_chunk_spin.setFixedWidth(80)
+        self._split_chunk_spin.valueChanged.connect(lambda v: setattr(self, "_split_chunk_size", v))
+        self._split_chunk_size = 2000
+        chunked_bottom_layout.addWidget(self._split_chunk_spin)
+
+        excel_btn = QPushButton("Öppna i Excel direkt")
+        excel_btn.clicked.connect(self.open_chunked_values_in_excel)
+        chunked_bottom_layout.addWidget(excel_btn)
+        chunked_bottom_layout.addStretch()
+
+        chunked_layout.addWidget(chunked_bottom)
+        chunked_layout.addStretch()
+
+        top_layout.addWidget(chunked_group)
+        top_layout.addStretch()
+
+        main_layout.addWidget(top_widget)
 
         # --- Run buttons ---
         run_widget = QWidget()
         run_layout = QHBoxLayout(run_widget)
         run_layout.setContentsMargins(0, 0, 0, 0)
 
+        btn_style = "background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;"
+
         self.run_btn = QPushButton("Kor allokering")
-        self.run_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.run_btn.setStyleSheet(btn_style)
         self.run_btn.clicked.connect(self.run_allocation)
         run_layout.addWidget(self.run_btn)
 
         self.koppla_btn = QPushButton("Kor HIB-koppling")
-        self.koppla_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.koppla_btn.setStyleSheet(btn_style)
         self.koppla_btn.clicked.connect(self.run_koppla)
         run_layout.addWidget(self.koppla_btn)
 
         self.overview_check_btn = QPushButton("Kontrollera orderoversikt")
-        self.overview_check_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.overview_check_btn.setStyleSheet(btn_style)
         self.overview_check_btn.clicked.connect(self.run_overview_check)
         run_layout.addWidget(self.overview_check_btn)
 
         self.dispatch_check_btn = QPushButton("Kontrollera dispatchpallar")
-        self.dispatch_check_btn.setStyleSheet("background-color: #2D7FF9; color: white; padding: 6px 12px; border-radius: 4px;")
+        self.dispatch_check_btn.setStyleSheet(btn_style)
         self.dispatch_check_btn.clicked.connect(self.run_dispatch_check)
         run_layout.addWidget(self.dispatch_check_btn)
+
+        self.ordersaldo_copy_list1_btn = QPushButton("Kompletta ordrar")
+        self.ordersaldo_copy_list1_btn.setStyleSheet(btn_style)
+        self.ordersaldo_copy_list1_btn.setEnabled(False)
+        self.ordersaldo_copy_list1_btn.clicked.connect(self.copy_ordersaldo_list1)
+        run_layout.addWidget(self.ordersaldo_copy_list1_btn)
+
+        self.ordersaldo_copy_list2_btn = QPushButton("Påfyllningsbehov")
+        self.ordersaldo_copy_list2_btn.setStyleSheet(btn_style)
+        self.ordersaldo_copy_list2_btn.setEnabled(False)
+        self.ordersaldo_copy_list2_btn.clicked.connect(self.copy_ordersaldo_list2)
+        run_layout.addWidget(self.ordersaldo_copy_list2_btn)
+
+        self.eftersok_btn = QPushButton("Eftersök")
+        self.eftersok_btn.setStyleSheet(btn_style)
+        self.eftersok_btn.setEnabled(False)
+        self.eftersok_btn.clicked.connect(self.run_eftersok)
+        run_layout.addWidget(self.eftersok_btn)
+
+        self._action_requirements = {
+            self.run_btn: [
+                ("orders", "Bestallningslinjer (CSV)"),
+                ("buffer",  "Buffertpallar (CSV)"),
+            ],
+            self.koppla_btn: [
+                ("orders",   "Bestallningslinjer (CSV)"),
+                ("overview", "Orderoversikt (CSV)"),
+            ],
+            self.overview_check_btn: [
+                ("overview", "Orderoversikt (CSV)"),
+            ],
+            self.dispatch_check_btn: [
+                ("overview",  "Orderoversikt (CSV)"),
+                ("dispatch",  "Dispatchpallar (CSV)"),
+            ],
+            self.eftersok_btn: [
+                ("wms_receive", "Mottagningslogg (CSV)"),
+            ],
+        }
 
         run_layout.addStretch()
         main_layout.addWidget(run_widget)
@@ -2533,12 +2677,30 @@ class App(QMainWindow):
                 pass
 
     def pick_not_putaway(self) -> None:
-        """Stub för filval av 'Ej inlagrade artiklar'. Denna funktion gör inget i denna version."""
-        return
+        """Välj fil för 'Ej inlagrade artiklar' (wms_booking)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj Ej inlagrade (CSV)", "",
+            "CSV-filer (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("wms_booking", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
 
     def pick_sales(self) -> None:
-        """Stub för filval av plocklogg. Denna funktion gör inget i denna version."""
-        return
+        """Välj fil för plocklogg (wms_pick)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Välj Plocklogg (CSV)", "",
+            "CSV-filer (*.csv);;Alla filer (*.*)"
+        )
+        if path:
+            self._set_path("wms_pick", path)
+            try:
+                self.update_file_status_icons()
+            except Exception:
+                pass
 
     def _parse_dnd_paths(self, event_data: str) -> list:
         """Tolka en DnD-sträng (kan innehålla en eller flera filvägar inom klamrar) till en lista med paths."""
@@ -4164,8 +4326,8 @@ class App(QMainWindow):
 
     def run_eftersok(self) -> None:
         """Kör DEMO Eftersök med logiken från wms_sök79.py."""
-        purchase = str(getattr(self, "_eftersok_purchase", "")).strip()
-        article = str(getattr(self, "_eftersok_article", "")).strip()
+        purchase = self.eftersok_purchase_entry.text().strip()
+        article = self.eftersok_article_entry.text().strip()
         if not purchase or not article:
             QMessageBox.warning(self, APP_TITLE, "Både inköpsnummer och artikelnummer måste fyllas i.")
             return
