@@ -1,0 +1,84 @@
+body {
+  font-family: Arial, sans-serif;
+  background: #f8f9fa;
+}
+
+.file-status-badge {
+  min-width: 100px;
+  display: inline-block;
+  text-align: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 12px;
+  background: #6c757d;
+  color: white;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  vertical-align: middle;
+  transition: background 0.15s ease;
+}
+
+.file-status-badge:hover {
+  background: #5a6268;
+}
+
+.file-status-badge.loaded {
+  background: #28a745;
+}
+
+.file-status-badge.loaded:hover {
+  background: #218838;
+}
+
+.drag-over {
+  outline: 3px dashed #2D7FF9 !important;
+  outline-offset: -3px;
+  background: #eef5ff !important;
+}
+
+#log-output {
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.card {
+  border: 1px solid #dee2e6;
+}
+
+.card-header {
+  padding: 0.4rem 0.75rem;
+  background: #f1f3f5;
+  font-size: 13px;
+}
+
+.form-label {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.btn-sm {
+  font-size: 12px;
+}
+
+/* Result-knappar */
+#result-buttons .btn {
+  font-size: 12px;
+}
+
+/* Filter-checkboxar */
+.form-check-sm .form-check-input {
+  width: 0.85em;
+  height: 0.85em;
+}
+
+/* Spinner */
+.spinner-border-sm {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-width: 0.15em;
+}

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Allokering</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container-fluid p-3">
+  <div class="row g-3">
+
+    <!-- Vänster: Indatafiler + Prognos/Kampanj + Filter -->
+    <div class="col-auto">
+
+      <!-- Indatafiler -->
+      <div class="card mb-2">
+        <div class="card-header fw-bold">Indatafiler</div>
+        <div class="card-body py-2" id="file-rows">
+          <!-- Genereras av app.js -->
+        </div>
+      </div>
+
+      <!-- Prognos / Kampanj -->
+      <div class="card mb-2">
+        <div class="card-header fw-bold">Prognos / Kampanj</div>
+        <div class="card-body py-2" id="prog-rows">
+          <!-- Genereras av app.js -->
+        </div>
+      </div>
+
+      <!-- Filter (dolt tills filer laddas upp) -->
+      <div class="card mb-2" id="filter-card" style="display:none">
+        <div class="card-header fw-bold">Filtrering</div>
+        <div class="card-body py-2" id="filter-content">
+          <!-- Genereras av app.js -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Mitten: DEMO (WMS / Eftersök) -->
+    <div class="col-auto">
+      <div class="card mb-2">
+        <div class="card-header">
+          <span class="text-success fw-bold">DEMO</span>
+        </div>
+        <div class="card-body py-2">
+          <div class="mb-2">
+            <label class="form-label mb-1">Inköpsnummer</label>
+            <input type="text" class="form-control form-control-sm" id="purchase-input" placeholder="ex. 12345">
+          </div>
+          <div class="mb-2">
+            <label class="form-label mb-1">Artikelnummer</label>
+            <input type="text" class="form-control form-control-sm" id="article-input" placeholder="ex. 1234567">
+          </div>
+          <div id="wms-file-rows">
+            <!-- WMS-filer genereras av app.js -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Höger: Klistra in värden -->
+    <div class="col-auto">
+      <div class="card mb-2">
+        <div class="card-header fw-bold">Klistra in värden</div>
+        <div class="card-body py-2">
+          <label class="form-label mb-1">Värden (en per rad):</label>
+          <textarea class="form-control form-control-sm" id="paste-values" rows="10"
+                    placeholder="Klistra in dina värden här..."></textarea>
+          <div class="d-flex align-items-center mt-2 gap-2 flex-wrap">
+            <label class="mb-0 text-nowrap">Antal per kolumn:</label>
+            <input type="number" class="form-control form-control-sm" style="width:90px"
+                   id="chunk-size" value="2000" min="1">
+            <button class="btn btn-secondary btn-sm" onclick="openChunkedExcel()">
+              Öppna i Excel direkt
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /row -->
+
+  <!-- Kör-knappar -->
+  <div class="d-flex gap-2 flex-wrap mb-2 mt-1">
+    <button class="btn btn-primary btn-sm" id="btn-allokering" onclick="runJob('allokering')">
+      Kör allokering
+    </button>
+    <button class="btn btn-primary btn-sm" id="btn-hib-koppling" onclick="runJob('hib-koppling')">
+      Kör HIB-koppling
+    </button>
+    <button class="btn btn-primary btn-sm" id="btn-orderkontroll" onclick="runJob('orderkontroll')">
+      Kontrollera orderöversikt
+    </button>
+    <button class="btn btn-primary btn-sm" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')">
+      Kontrollera dispatchpallar
+    </button>
+    <button class="btn btn-outline-secondary btn-sm" id="btn-kompletta" onclick="copyList('list1')">
+      Kompletta ordrar
+    </button>
+    <button class="btn btn-outline-secondary btn-sm" id="btn-pafyllning" onclick="copyList('list2')">
+      Påfyllningsbehov
+    </button>
+    <button class="btn btn-primary btn-sm" id="btn-eftersok" onclick="runJob('eftersok')">
+      Eftersök
+    </button>
+  </div>
+
+  <!-- Öppna resultat-knappar (aktiveras dynamiskt) -->
+  <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons">
+    <!-- Genereras av app.js efter körning -->
+  </div>
+
+  <!-- Loggruta -->
+  <pre id="log-output" class="bg-dark text-light p-2 mb-0"
+       style="height:220px;overflow-y:auto;font-size:12px;border-radius:4px;"></pre>
+
+</div><!-- /container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
