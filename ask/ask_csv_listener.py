@@ -148,12 +148,17 @@ def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
         except Exception:
             continue
 
-    if not candidates:
-        return False
+    if candidates:
+        _, best_box = sorted(candidates, key=lambda it: _grid_box_score(it[1]))[0]
+        x = best_box["x"] + min(260.0, max(90.0, best_box["width"] * 0.18))
+        y = best_box["y"] + min(180.0, max(55.0, best_box["height"] * 0.3))
+    else:
+        # Last resort for views where row/grid selectors are unstable:
+        # click a safe point in the upper data area.
+        vwidth = float(viewport.get("width", 1920))
+        x = min(max(140.0, vwidth * 0.22), vwidth - 140.0)
+        y = min(max(180.0, vheight * 0.30), upper_limit - 20.0)
 
-    _, best_box = sorted(candidates, key=lambda it: _grid_box_score(it[1]))[0]
-    x = best_box["x"] + min(260.0, max(90.0, best_box["width"] * 0.18))
-    y = best_box["y"] + min(180.0, max(55.0, best_box["height"] * 0.3))
     page.mouse.click(x, y, button="left")
     page.wait_for_timeout(90)
     page.mouse.click(x, y, button="right")
