@@ -400,7 +400,7 @@ function connectSSE() {
 
     // Resultat-events
     if (msg.startsWith("__RESULT:")) {
-      const key = msg.replace("__RESULT:", "").trim();
+      const key = msg.replace("__RESULT:", "").replace(/__/g, "").trim();
       activateResultButton(key);
       return;
     }
