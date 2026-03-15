@@ -737,7 +737,7 @@ async function openChunkedExcel() {
 // Kolumnknappar for Dela-sektionen
 // ---------------------------------------------------------------------------
 
-const MAX_CHUNK_COL_BUTTONS = 20;
+const MAX_CHUNK_COL_BUTTONS = 10;
 
 function updateChunkColButtons() {
   const container = document.getElementById("chunk-col-buttons");
@@ -760,7 +760,7 @@ function updateChunkColButtons() {
   for (let i = 0; i < visible; i++) {
     const btn = document.createElement("button");
     btn.className = "btn btn-warning btn-sm";
-    btn.textContent = `Kolumn ${i + 1}`;
+    btn.textContent = `Kopiera ${i + 1}`;
     btn.title = `Kopiera varden i kolumn ${i + 1}`;
     btn.dataset.colIndex = i;
     btn.addEventListener("click", () => copyChunkColumn(i));
