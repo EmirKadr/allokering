@@ -8,9 +8,18 @@ Serverar frontend statiskt och exponerar REST-API + SSE.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
+import mimetypes
 import os
+import random
 import re
+import shutil
+import subprocess
 import tempfile
+import threading
+import time
+import unicodedata
+import uuid
 from urllib.parse import unquote
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -79,6 +88,38 @@ ASK_FETCHABLE_FILE_KEYS = {
     "wms_pick",
     "wms_correct",
 }
+CLASSIFIER_APP_DIR = os.environ.get("CLASSIFIER_APP_DIR", r"C:\artikelplacering\Artikelplacering").strip()
+CLASSIFIER_SCRIPT = os.environ.get("CLASSIFIER_SCRIPT", "classifier.py").strip()
+_classifier_lock = threading.Lock()
+_classifier_proc: Optional[subprocess.Popen] = None
+CLASSIFIER_DEFAULT_IMAGE_DIR = os.environ.get(
+    "CLASSIFIER_DEFAULT_IMAGE_DIR",
+    str(Path(CLASSIFIER_APP_DIR) / "bilder"),
+).strip()
+CLASSIFIER_DEFAULT_OUTPUT_DIR = os.environ.get(
+    "CLASSIFIER_DEFAULT_OUTPUT_DIR",
+    CLASSIFIER_APP_DIR,
+).strip()
+CLASSIFIER_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"}
+
+
+@dataclass
+class WebClassifierSession:
+    session_id: str
+    test_name: str
+    image_dir: str
+    output_dir: str
+    categories: List[str]
+    images: List[str]
+    counts: Dict[str, int] = field(default_factory=dict)
+    index: int = 0
+    skipped: int = 0
+    finished: bool = False
+    created_at: float = field(default_factory=time.time)
+
+
+_web_classifier_lock = threading.Lock()
+_web_classifier_sessions: Dict[str, WebClassifierSession] = {}
 
 # ---------------------------------------------------------------------------
 # Pydantic modeller
@@ -118,6 +159,18 @@ class AskCsvFetchBody(BaseModel):
     output_name: str = ""
 
 
+class WebClassifierStartBody(BaseModel):
+    test_name: str = ""
+    categories: List[str] = []
+    image_dir: str = ""
+    output_dir: str = ""
+    shuffle: bool = False
+
+
+class WebClassifierClassifyBody(BaseModel):
+    category: str = ""
+
+
 def _parse_content_disposition_filename(header_value: str) -> str:
     """Extract filename from Content-Disposition header."""
     if not header_value:
@@ -141,6 +194,158 @@ def _safe_csv_name(name: str, fallback: str = "export.csv") -> str:
     if not safe.lower().endswith(".csv"):
         safe += ".csv"
     return safe
+
+
+SLOT_FILENAME_HINTS: Dict[str, List[str]] = {
+    "orders": ["customer_order_details", "order_details_all", "detalj"],
+    "overview": ["order_overview", "overview"],
+    "buffer": ["buffertpallet", "buffert", "buffer"],
+    "dispatch": ["dispatch"],
+    "wms_receive": ["receive_log", "receive"],
+    "wms_booking": ["booking_putaway", "booking", "putaway"],
+    "wms_trans": ["trans_log", "translog"],
+    "wms_pick": ["pick_log_full", "pick_log", "plocklogg"],
+    "wms_correct": ["correct_log", "correct", "saldojustering"],
+}
+
+
+def _csv_filename_matches_slot(filename: str, file_key: str) -> bool:
+    hints = SLOT_FILENAME_HINTS.get(file_key, [])
+    if not hints:
+        return True
+    lower = (filename or "").lower()
+    if not lower:
+        return True
+    return any(h in lower for h in hints)
+
+
+def _repair_mojibake_text(value: Any) -> str:
+    text = str(value or "")
+    if any(ch in text for ch in ("Ã", "Â", "â")):
+        try:
+            repaired = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+            if repaired:
+                text = repaired
+        except Exception:
+            pass
+    return text
+
+
+def _norm_col_key(value: Any) -> str:
+    text = _repair_mojibake_text(value).lower().strip()
+    text = text.replace("?", "a")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _find_col_by_keywords(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
+    if df is None or not hasattr(df, "columns") or len(df.columns) == 0:
+        return None
+    normalized_cols = {col: _norm_col_key(col) for col in df.columns}
+    normalized_keywords: List[str] = []
+    for k in keywords:
+        nk = _norm_col_key(k)
+        if nk:
+            normalized_keywords.append(nk)
+
+    for kw in normalized_keywords:
+        for col, nk in normalized_cols.items():
+            if nk == kw:
+                return col
+    for kw in normalized_keywords:
+        for col, nk in normalized_cols.items():
+            if kw in nk or nk in kw:
+                return col
+    return None
+
+
+def _classifier_script_path() -> Path:
+    base = Path(CLASSIFIER_APP_DIR)
+    return (base / CLASSIFIER_SCRIPT).resolve()
+
+
+def _classifier_status_payload() -> Dict[str, Any]:
+    script = _classifier_script_path()
+    available = script.exists()
+
+    running = False
+    pid: Optional[int] = None
+    global _classifier_proc
+    with _classifier_lock:
+        if _classifier_proc is not None:
+            if _classifier_proc.poll() is None:
+                running = True
+                pid = int(_classifier_proc.pid) if _classifier_proc.pid else None
+            else:
+                _classifier_proc = None
+
+    if not available:
+        message = "Hittar inte classifier.py i CLASSIFIER_APP_DIR."
+    elif running:
+        message = "Classifier är igång."
+    else:
+        message = "Classifier är stoppad."
+
+    return {
+        "ok": True,
+        "available": available,
+        "running": running,
+        "pid": pid,
+        "script_path": str(script),
+        "message": message,
+    }
+
+
+def _safe_folder_fragment(name: str) -> str:
+    text = str(name or "").strip()
+    text = re.sub(r'[\\/:*?"<>|]+', "_", text)
+    text = re.sub(r"\s+", " ", text).strip(" .")
+    return text or "unnamed"
+
+
+def _unique_target_path(dst_dir: Path, filename: str) -> Path:
+    target = dst_dir / filename
+    if not target.exists():
+        return target
+    stem = target.stem
+    suffix = target.suffix
+    for i in range(2, 10000):
+        candidate = dst_dir / f"{stem}_{i}{suffix}"
+        if not candidate.exists():
+            return candidate
+    return dst_dir / f"{stem}_{int(time.time())}{suffix}"
+
+
+def _build_web_classifier_state(session: WebClassifierSession) -> Dict[str, Any]:
+    total = len(session.images)
+    done = bool(session.finished or session.index >= total)
+    current_path = session.images[session.index] if not done else ""
+    current_name = Path(current_path).name if current_path else ""
+    return {
+        "ok": True,
+        "session_id": session.session_id,
+        "test_name": session.test_name,
+        "image_dir": session.image_dir,
+        "output_dir": session.output_dir,
+        "categories": session.categories,
+        "counts": session.counts,
+        "skipped": session.skipped,
+        "index": session.index,
+        "total": total,
+        "done": done,
+        "current_filename": current_name,
+        "image_url": (
+            f"/api/classifier/web/{session.session_id}/image?ts={int(time.time() * 1000)}"
+            if not done
+            else ""
+        ),
+    }
+
+
+def _find_web_classifier_session(session_id: str) -> Optional[WebClassifierSession]:
+    with _web_classifier_lock:
+        return _web_classifier_sessions.get(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +399,13 @@ def api_list_files(sid: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     result: Dict[str, Optional[str]] = {}
-    for k, v in session.files.items():
-        result[k] = os.path.basename(v) if v else None
+    for k, v in list(session.files.items()):
+        if v and os.path.exists(v):
+            result[k] = os.path.basename(v)
+        else:
+            # Avoid stale "loaded" state in frontend when temp files were removed.
+            session.files[k] = None
+            result[k] = None
     return {"files": result}
 
 
@@ -219,8 +429,8 @@ def api_get_filter_options(sid: str):
                 existing = set(combined.get(fk, []))
                 existing.update(fvals)
                 combined[fk] = sorted(existing)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARN filter-scan misslyckades för '{path}': {e}")
     return combined
 
 
@@ -309,6 +519,14 @@ def api_ask_csv_fetch(sid: str, body: AskCsvFetchBody):
         raise HTTPException(status_code=502, detail="CSV-agent returnerade tom fil")
 
     header_name = _parse_content_disposition_filename(resp.headers.get("content-disposition", ""))
+    if header_name and not _csv_filename_matches_slot(header_name, body.target_file_key):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "CSV-agent returnerade fel vy-fil för slot "
+                f"'{body.target_file_key}': '{header_name}'."
+            ),
+        )
     safe_name = _safe_csv_name(body.output_name or header_name or f"{body.target_file_key}.csv")
     dest = os.path.join(session.temp_dir, f"{body.target_file_key}_{safe_name}")
 
@@ -322,6 +540,239 @@ def api_ask_csv_fetch(sid: str, body: AskCsvFetchBody):
         "filename": os.path.basename(dest),
         "bytes": len(resp.content),
     }
+
+
+# ---------------------------------------------------------------------------
+# Classifier bridge (external desktop app)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/classifier/status")
+def api_classifier_status():
+    return _classifier_status_payload()
+
+
+@app.post("/api/classifier/start")
+def api_classifier_start():
+    script = _classifier_script_path()
+    if not script.exists():
+        raise HTTPException(status_code=404, detail=f"Classifier-script saknas: {script}")
+
+    global _classifier_proc
+    with _classifier_lock:
+        if _classifier_proc is not None and _classifier_proc.poll() is None:
+            return {
+                "ok": True,
+                "already_running": True,
+                "pid": int(_classifier_proc.pid) if _classifier_proc.pid else None,
+                "message": "Classifier kör redan.",
+            }
+
+        try:
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            _classifier_proc = subprocess.Popen(
+                [sys.executable, str(script)],
+                cwd=str(script.parent),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Kunde inte starta classifier: {e}") from e
+
+        return {
+            "ok": True,
+            "started": True,
+            "pid": int(_classifier_proc.pid) if _classifier_proc.pid else None,
+            "message": f"Classifier startad (PID {_classifier_proc.pid}).",
+        }
+
+
+@app.post("/api/classifier/stop")
+def api_classifier_stop():
+    global _classifier_proc
+    with _classifier_lock:
+        if _classifier_proc is None or _classifier_proc.poll() is not None:
+            _classifier_proc = None
+            return {"ok": True, "stopped": False, "message": "Classifier var redan stoppad."}
+
+        pid = int(_classifier_proc.pid) if _classifier_proc.pid else None
+        try:
+            _classifier_proc.terminate()
+            _classifier_proc.wait(timeout=8)
+        except Exception:
+            try:
+                _classifier_proc.kill()
+            except Exception:
+                pass
+        finally:
+            _classifier_proc = None
+
+        return {"ok": True, "stopped": True, "pid": pid, "message": f"Classifier stoppad (PID {pid})."}
+
+
+# ---------------------------------------------------------------------------
+# Classifier web flow
+# ---------------------------------------------------------------------------
+
+@app.get("/api/classifier/web/config")
+def api_classifier_web_config():
+    return {
+        "ok": True,
+        "default_image_dir": CLASSIFIER_DEFAULT_IMAGE_DIR,
+        "default_output_dir": CLASSIFIER_DEFAULT_OUTPUT_DIR,
+        "supported_extensions": sorted(CLASSIFIER_IMAGE_EXTENSIONS),
+    }
+
+
+@app.post("/api/classifier/web/start")
+def api_classifier_web_start(body: WebClassifierStartBody):
+    test_name = str(body.test_name or "").strip()
+    if not test_name:
+        raise HTTPException(status_code=400, detail="Testnamn krävs.")
+
+    categories: List[str] = []
+    seen = set()
+    for raw in body.categories or []:
+        cat = str(raw or "").strip()
+        if not cat:
+            continue
+        key = cat.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        categories.append(cat)
+    if not categories:
+        raise HTTPException(status_code=400, detail="Minst en kategori krävs.")
+
+    image_dir = Path((body.image_dir or CLASSIFIER_DEFAULT_IMAGE_DIR).strip()).expanduser()
+    output_dir = Path((body.output_dir or CLASSIFIER_DEFAULT_OUTPUT_DIR).strip()).expanduser()
+
+    if not image_dir.exists() or not image_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"Bildmapp saknas: {image_dir}")
+    if not output_dir.exists() or not output_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"Outputmapp saknas: {output_dir}")
+
+    images = [
+        str(p.resolve())
+        for p in sorted(image_dir.rglob("*"))
+        if p.is_file() and p.suffix.lower() in CLASSIFIER_IMAGE_EXTENSIONS
+    ]
+    if not images:
+        raise HTTPException(status_code=400, detail=f"Inga bilder hittades i {image_dir}")
+    if body.shuffle:
+        random.shuffle(images)
+
+    cls_id = uuid.uuid4().hex[:12]
+    session = WebClassifierSession(
+        session_id=cls_id,
+        test_name=test_name,
+        image_dir=str(image_dir.resolve()),
+        output_dir=str(output_dir.resolve()),
+        categories=categories,
+        images=images,
+        counts={c: 0 for c in categories},
+    )
+    with _web_classifier_lock:
+        _web_classifier_sessions[cls_id] = session
+
+    state = _build_web_classifier_state(session)
+    state["message"] = f"Klassificering startad med {len(images)} bilder."
+    return state
+
+
+@app.get("/api/classifier/web/{cls_id}")
+def api_classifier_web_state(cls_id: str):
+    session = _find_web_classifier_session(cls_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
+    return _build_web_classifier_state(session)
+
+
+@app.get("/api/classifier/web/{cls_id}/image")
+def api_classifier_web_image(cls_id: str):
+    session = _find_web_classifier_session(cls_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
+    if session.finished or session.index >= len(session.images):
+        raise HTTPException(status_code=404, detail="Ingen aktiv bild kvar.")
+
+    path = Path(session.images[session.index])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Bilden saknas: {path.name}")
+    media_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    return FileResponse(str(path), media_type=media_type, filename=path.name)
+
+
+@app.post("/api/classifier/web/{cls_id}/classify")
+def api_classifier_web_classify(cls_id: str, body: WebClassifierClassifyBody):
+    category = str(body.category or "").strip()
+    if not category:
+        raise HTTPException(status_code=400, detail="Kategori krävs.")
+
+    with _web_classifier_lock:
+        session = _web_classifier_sessions.get(cls_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
+        if session.finished or session.index >= len(session.images):
+            raise HTTPException(status_code=400, detail="Sessionen är redan klar.")
+        if category not in session.categories:
+            raise HTTPException(status_code=400, detail=f"Okänd kategori: {category}")
+
+        src = Path(session.images[session.index])
+        if not src.exists():
+            session.skipped += 1
+            session.index += 1
+            if session.index >= len(session.images):
+                session.finished = True
+            state = _build_web_classifier_state(session)
+            state["message"] = f"Bilden saknades och hoppades över: {src.name}"
+            return state
+
+        dst_dir = Path(session.output_dir) / f"{_safe_folder_fragment(session.test_name)}.{_safe_folder_fragment(category)}"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = _unique_target_path(dst_dir, src.name)
+        shutil.copy2(src, dst)
+
+        session.counts[category] = int(session.counts.get(category, 0)) + 1
+        session.index += 1
+        if session.index >= len(session.images):
+            session.finished = True
+        state = _build_web_classifier_state(session)
+        state["saved_to"] = str(dst)
+        state["message"] = f"Sparad till {dst_dir.name}"
+        return state
+
+
+@app.post("/api/classifier/web/{cls_id}/skip")
+def api_classifier_web_skip(cls_id: str):
+    with _web_classifier_lock:
+        session = _web_classifier_sessions.get(cls_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
+        if session.finished or session.index >= len(session.images):
+            raise HTTPException(status_code=400, detail="Sessionen är redan klar.")
+        session.skipped += 1
+        session.index += 1
+        if session.index >= len(session.images):
+            session.finished = True
+        state = _build_web_classifier_state(session)
+        state["message"] = "Bild hoppades över."
+        return state
+
+
+@app.post("/api/classifier/web/{cls_id}/finish")
+def api_classifier_web_finish(cls_id: str):
+    with _web_classifier_lock:
+        session = _web_classifier_sessions.get(cls_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
+        session.finished = True
+        state = _build_web_classifier_state(session)
+        state["message"] = "Session avslutad."
+        return state
 
 
 # ---------------------------------------------------------------------------
@@ -623,60 +1074,43 @@ async def _job_orderkontroll(session: SessionData):
             log("__DONE__")
             return
 
-        # Hitta kolumner
-        ship_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if "s?ndning" in cl or "sandning" in cl or "s?ndningsnummer" in cl:
-                ship_col = c
-                break
+        # Hitta kolumner robust (klarar teckenkodningsavvikelser).
+        ship_col = _find_col_by_keywords(
+            df,
+            [
+                "Sändningsnr",
+                "Sändnings nr",
+                "Sändningsnummer",
+                "sandningsnr",
+                "sandningsnummer",
+                "shipment",
+            ],
+        )
 
         if not ship_col:
             log("FEL: Kunde inte identifiera s?ndningsnummer-kolumnen.")
             log("__ERROR__")
             return
 
-        cust_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if "kundnr" in cl or "kundnummer" in cl:
-                cust_col = c
-                break
-        if not cust_col:
-            for c in df.columns:
-                if "kund" in c.lower():
-                    cust_col = c
-                    break
+        cust_col = _find_col_by_keywords(
+            df,
+            ["kundnr", "kundnummer", "kund nr", "kund", "customer", "customer number"],
+        )
 
         if not cust_col:
             log("FEL: Kunde inte identifiera kund-kolumnen.")
             log("__ERROR__")
             return
 
-        trans_col = None
-        for c in df.columns:
-            cl = c.lower()
-            if "transport?r" in cl or "transportor" in cl:
-                trans_col = c
-                break
+        trans_col = _find_col_by_keywords(df, ["transportör", "transportor", "carrier", "transport"])
         if not trans_col:
             trans_col = "__transport_dummy__"
             df[trans_col] = ""
 
-        order_col = None
-        order_keywords = ["ordernr", "order nr", "ordernummer", "order number"]
-        for c in df.columns:
-            for kw in order_keywords:
-                if kw.replace(" ", "") == c.lower().replace(" ", ""):
-                    order_col = c
-                    break
-            if order_col:
-                break
-        if not order_col:
-            for c in df.columns:
-                if "order" in c.lower():
-                    order_col = c
-                    break
+        order_col = _find_col_by_keywords(
+            df,
+            ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order"],
+        )
 
         # Bygg kundnamns-mapping
         order_to_customer: Dict[str, str] = {}
@@ -686,9 +1120,23 @@ async def _job_orderkontroll(session: SessionData):
                 ddf = await loop.run_in_executor(None, lambda: read_csv_auto(orders_path))
                 ddf.columns = [str(c).replace("\ufeff", "").strip() for c in ddf.columns]
                 ddf = apply_value_filters(ddf, session.active_filters)
-                if "Order nr" in ddf.columns and "Kund.1" in ddf.columns:
-                    order_to_customer = (ddf.groupby("Order nr")["Kund.1"].first()
-                                         .fillna("").astype(str).str.strip().to_dict())
+                det_order_col = _find_col_by_keywords(
+                    ddf,
+                    ["order nr", "ordernr", "ordernummer", "order number"],
+                )
+                det_customer_col = _find_col_by_keywords(
+                    ddf,
+                    ["kund.1", "kund1", "kund nr", "kund", "customer", "customer name"],
+                )
+                if det_order_col and det_customer_col:
+                    order_to_customer = (
+                        ddf.groupby(det_order_col)[det_customer_col]
+                        .first()
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                        .to_dict()
+                    )
             except Exception:
                 pass
 
@@ -736,23 +1184,8 @@ async def _job_orderkontroll(session: SessionData):
         result_df = pd.DataFrame(shipment_diff_rows) if shipment_diff_rows else pd.DataFrame()
 
         # HIB-kontroll
-        ordertype_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if cl in {"ordertyp", "ordertype"} or ("order" in cl and "typ" in cl):
-                ordertype_col = c
-                break
-        status_col = None
-        for c in df.columns:
-            cl = c.lower().replace(" ", "")
-            if cl in {"status", "orderstatus", "radstatus", "state"}:
-                status_col = c
-                break
-        if not status_col:
-            for c in df.columns:
-                if "status" in c.lower():
-                    status_col = c
-                    break
+        ordertype_col = _find_col_by_keywords(df, ["ordertyp", "order type", "ordertype"])
+        status_col = _find_col_by_keywords(df, ["status", "orderstatus", "radstatus", "state"])
 
         def _to_status_num(value) -> Optional[int]:
             try:
@@ -903,33 +1336,20 @@ async def _job_dispatchkontroll(session: SessionData):
             log("__DONE__")
             return
 
-        def _find_col(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
-            for kw in keywords:
-                kw_norm = kw.lower().replace(" ", "")
-                for col in df.columns:
-                    if col.lower().replace(" ", "") == kw_norm:
-                        return col
-            for kw in keywords:
-                kw_lower = kw.lower()
-                for col in df.columns:
-                    if kw_lower in col.lower():
-                        return col
-            return None
-
         order_kws = ["ordernr", "order nr", "ordernummer", "order number", "orderid"]
-        ship_kws = ["s?ndningsnr", "s?ndnings nr", "s?ndningsnummer", "sandningsnr", "sandningsnummer", "shipment"]
+        ship_kws = ["Sändningsnr", "Sändnings nr", "Sändningsnummer", "sandningsnr", "sandningsnummer", "shipment"]
         plock_kws = ["plockpallsnr", "plockpallsnr.", "plockpall", "plockpallnr", "plockpallsnummer", "plockpall nr"]
 
-        ov_order_col = _find_col(ov_df, order_kws)
-        ov_ship_col = _find_col(ov_df, ship_kws)
+        ov_order_col = _find_col_by_keywords(ov_df, order_kws)
+        ov_ship_col = _find_col_by_keywords(ov_df, ship_kws)
         if not ov_order_col or not ov_ship_col:
             log("FEL: Kunde inte identifiera order- eller s?ndningskolumnen i order?versikten.")
             log("__ERROR__")
             return
 
-        dp_order_col = _find_col(dp_df, order_kws)
-        dp_ship_col = _find_col(dp_df, ship_kws)
-        plock_col = _find_col(dp_df, plock_kws)
+        dp_order_col = _find_col_by_keywords(dp_df, order_kws)
+        dp_ship_col = _find_col_by_keywords(dp_df, ship_kws)
+        plock_col = _find_col_by_keywords(dp_df, plock_kws)
         if not dp_order_col or not dp_ship_col or not plock_col:
             log("FEL: Kunde inte identifiera order-, s?ndnings- eller plockpallskolumnen i dispatchfilen.")
             log("__ERROR__")
@@ -949,9 +1369,23 @@ async def _job_dispatchkontroll(session: SessionData):
                 det_df = await loop.run_in_executor(None, lambda: read_csv_auto(orders_path))
                 det_df.columns = [str(c).replace("\ufeff", "").strip() for c in det_df.columns]
                 det_df = apply_value_filters(det_df, session.active_filters)
-                if "Order nr" in det_df.columns and "Kund.1" in det_df.columns:
-                    order_to_customer = (det_df.groupby("Order nr")["Kund.1"].first()
-                                         .fillna("").astype(str).str.strip().to_dict())
+                det_order_col = _find_col_by_keywords(
+                    det_df,
+                    ["order nr", "ordernr", "ordernummer", "order number"],
+                )
+                det_customer_col = _find_col_by_keywords(
+                    det_df,
+                    ["kund.1", "kund1", "kund nr", "kund", "customer", "customer name"],
+                )
+                if det_order_col and det_customer_col:
+                    order_to_customer = (
+                        det_df.groupby(det_order_col)[det_customer_col]
+                        .first()
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                        .to_dict()
+                    )
             except Exception:
                 pass
 
@@ -1223,6 +1657,38 @@ async def api_reset_results(sid: str):
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
     # Rensa logg-k?n
+    while not session.log_queue.empty():
+        try:
+            session.log_queue.get_nowait()
+        except Exception:
+            break
+    return {"ok": True}
+
+
+@app.post("/api/session/reset-all/{sid}")
+async def api_reset_all(sid: str):
+    """Rensa alla uppladdade filer OCH alla resultat för sessionen."""
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    # Rensa uppladdade filer
+    for path in list(session.files.values()):
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    session.files.clear()
+    # Rensa resultatfiler
+    for path in list(session.results.values()):
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    session.results.clear()
+    session.ordersaldo_list1 = []
+    session.ordersaldo_list2 = []
     while not session.log_queue.empty():
         try:
             session.log_queue.get_nowait()

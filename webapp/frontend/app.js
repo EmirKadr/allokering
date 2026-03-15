@@ -40,6 +40,7 @@ const ASK_FETCHABLE_KEYS = new Set([
 
 const ASK_VIEW_OVERRIDES = {
   overview: "Order\u00f6versikt",
+  buffer: "Buffertpallet",
 };
 
 // Resultatnycklar -> visningsnamn
@@ -67,6 +68,9 @@ let fileStatuses = {};  // key -> filename | null
 let availableResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
 let selectedFilters = { bolag: [], ordertyp: [] };
+let classifierStatusPoll = null;
+let classifierConfig = null;
+let classifierSessionId = null;
 
 // ---------------------------------------------------------------------------
 // Init
@@ -94,6 +98,7 @@ async function ensureSession() {
 window.addEventListener("DOMContentLoaded", async () => {
   await ensureSession();
 
+  setupMainTabs();
   renderFileRows();
   renderProgRows();
   renderWmsRows();
@@ -104,6 +109,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   await refreshFilterOptions();
   await refreshResultStatus();
   await checkAskCsvAgentHealth();
+  await initClassifierWeb();
+
+  if (classifierStatusPoll) {
+    clearInterval(classifierStatusPoll);
+  }
+  classifierStatusPoll = setInterval(() => {
+    refreshClassifierSessionState(false).catch(() => {});
+  }, 15000);
+
+  // Initialisera Bootstrap-tooltips
+  initTooltips();
 });
 
 // ---------------------------------------------------------------------------
@@ -154,14 +170,16 @@ function buildFileRow(slot) {
   const removeBtn = document.createElement("button");
   removeBtn.className = "btn btn-danger btn-sm py-0 px-1";
   removeBtn.innerHTML = "&#10005;";
-  removeBtn.title = "Ta bort fil";
+  removeBtn.title = `Ta bort ${slot.label}`;
+  removeBtn.setAttribute("data-bs-toggle", "tooltip");
   removeBtn.addEventListener("click", () => removeFile(slot.key));
 
   const askBtn = document.createElement("button");
   askBtn.className = "btn btn-outline-primary btn-sm py-0 px-2";
   askBtn.id = `btn-ask-fetch-${slot.key}`;
   askBtn.textContent = "H\u00e4mta CSV";
-  askBtn.title = `H\u00e4mta ${viewNameFromSlotLabel(slot.label)} fr\u00e5n ASK`;
+  askBtn.title = `H\u00e4mta ${viewNameFromSlotLabel(slot.label)} fr\u00e5n ASK och l\u00e4gg i denna slot`;
+  askBtn.setAttribute("data-bs-toggle", "tooltip");
   askBtn.addEventListener("click", () => fetchAskCsvToSlot(slot.key, slot.label));
 
   // Hidden file input (multiple tillatet for att kunna valja flera filer)
@@ -419,10 +437,11 @@ async function refreshFilterOptions() {
 }
 
 function renderFilterCard(options) {
+  const normalized = { ...(options || {}) };
   const card = document.getElementById("filter-card");
   const content = document.getElementById("filter-content");
-  const hasBolag = options.bolag && options.bolag.length > 0;
-  const hasOrdertyp = options.ordertyp && options.ordertyp.length > 0;
+  const hasBolag = normalized.bolag && normalized.bolag.length > 0;
+  const hasOrdertyp = normalized.ordertyp && normalized.ordertyp.length > 0;
 
   if (!hasBolag && !hasOrdertyp) {
     card.style.display = "none";
@@ -435,10 +454,10 @@ function renderFilterCard(options) {
   row.className = "d-flex gap-3 flex-wrap";
 
   if (hasBolag) {
-    row.appendChild(buildFilterGroup("bolag", "Bolag", options.bolag));
+    row.appendChild(buildFilterGroup("bolag", "Bolag", normalized.bolag));
   }
   if (hasOrdertyp) {
-    row.appendChild(buildFilterGroup("ordertyp", "Ordertyp", options.ordertyp));
+    row.appendChild(buildFilterGroup("ordertyp", "Ordertyp", normalized.ordertyp));
   }
   content.appendChild(row);
 
@@ -484,15 +503,36 @@ function buildFilterGroup(key, title, values) {
 }
 
 function saveFilters() {
-  const filters = { bolag: [], ordertyp: [] };
+  // Preserve hidden groups (e.g. if Ordertyp group is temporarily unavailable
+  // after file refresh) so we don't accidentally reset those selections.
+  const filters = {
+    bolag: Array.isArray(selectedFilters.bolag) ? [...selectedFilters.bolag] : [],
+    ordertyp: Array.isArray(selectedFilters.ordertyp) ? [...selectedFilters.ordertyp] : [],
+  };
+  const groupSeen = { bolag: false, ordertyp: false };
+  const groupValues = { bolag: [], ordertyp: [] };
+
   document.querySelectorAll(".filter-check").forEach(cb => {
     if (cb.checked) {
       const group = cb.dataset.group;
-      if (filters[group] !== undefined) {
-        filters[group].push(cb.value);
+      if (groupValues[group] !== undefined) {
+        groupSeen[group] = true;
+        groupValues[group].push(cb.value);
+      }
+    } else {
+      const group = cb.dataset.group;
+      if (groupValues[group] !== undefined) {
+        groupSeen[group] = true;
       }
     }
   });
+
+  for (const key of Object.keys(groupSeen)) {
+    if (groupSeen[key]) {
+      filters[key] = groupValues[key];
+    }
+  }
+
   selectedFilters = filters;
   fetch(`${API}/api/filters/${sessionId}`, {
     method: "POST",
@@ -548,6 +588,7 @@ function resetJobButton(job) {
   if (btn) {
     btn.disabled = false;
     btn.textContent = btn.dataset.originalText || btn.textContent;
+    initTooltips();
   }
 }
 
@@ -622,6 +663,282 @@ function appendLog(msg) {
   el.scrollTop = el.scrollHeight;
 }
 
+function appendClassifierLog(msg) {
+  const el = document.getElementById("classifier-log-output");
+  if (!el) return;
+  const ts = new Date().toLocaleTimeString("sv-SE");
+  el.textContent += `[${ts}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Main tabs
+// ---------------------------------------------------------------------------
+
+function setupMainTabs() {
+  const buttons = Array.from(document.querySelectorAll("#main-tabs .nav-link[data-page]"));
+  if (buttons.length === 0) return;
+  buttons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      setMainPage(btn.dataset.page || "allokering-page");
+    });
+  });
+  setMainPage("allokering-page");
+}
+
+function setMainPage(pageId) {
+  document.querySelectorAll(".main-page-pane").forEach(pane => {
+    pane.classList.toggle("active", pane.id === pageId);
+  });
+  document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.page === pageId);
+  });
+  if (pageId === "classifier-page") {
+    refreshClassifierSessionState(false).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Classifier web flow
+// ---------------------------------------------------------------------------
+
+function parseClassifierCategories() {
+  const raw = document.getElementById("cls-categories")?.value || "";
+  const lines = raw
+    .split("\n")
+    .map(v => v.trim())
+    .filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(line);
+  }
+  return out;
+}
+
+function setClassifierUiEnabled(enabled) {
+  const ids = [
+    "cls-test-name",
+    "cls-image-dir",
+    "cls-output-dir",
+    "cls-categories",
+    "cls-shuffle",
+    "btn-classifier-session-start",
+  ];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  });
+}
+
+function setClassifierStatusBadge(kind, text) {
+  const badge = document.getElementById("classifier-status-badge");
+  if (!badge) return;
+  if (kind === "running") badge.className = "badge text-bg-success";
+  else if (kind === "done") badge.className = "badge text-bg-primary";
+  else if (kind === "error") badge.className = "badge text-bg-danger";
+  else badge.className = "badge text-bg-secondary";
+  badge.textContent = text;
+}
+
+function renderClassifierState(state, announce = false) {
+  const statusText = document.getElementById("classifier-status-text");
+  const sessionIdEl = document.getElementById("classifier-session-id");
+  const fileEl = document.getElementById("classifier-current-file");
+  const img = document.getElementById("classifier-current-image");
+  const catWrap = document.getElementById("classifier-category-buttons");
+  const skipBtn = document.getElementById("btn-classifier-skip");
+  const finishBtn = document.getElementById("btn-classifier-session-finish");
+
+  if (!statusText || !sessionIdEl || !fileEl || !img || !catWrap || !skipBtn || !finishBtn) return;
+
+  if (!state) {
+    setClassifierStatusBadge("idle", "Ej startad");
+    statusText.textContent = "Starta en session för att börja.";
+    sessionIdEl.textContent = "-";
+    fileEl.textContent = "-";
+    img.style.display = "none";
+    img.removeAttribute("src");
+    catWrap.innerHTML = "";
+    skipBtn.disabled = true;
+    finishBtn.disabled = true;
+    setClassifierUiEnabled(true);
+    return;
+  }
+
+  classifierSessionId = state.session_id || classifierSessionId;
+  sessionIdEl.textContent = classifierSessionId || "-";
+  statusText.textContent = `${state.index || 0}/${state.total || 0} klassificerade, hoppade över: ${state.skipped || 0}`;
+  fileEl.textContent = state.current_filename || "-";
+  finishBtn.disabled = false;
+
+  if (state.done) {
+    setClassifierStatusBadge("done", "Klar");
+    img.style.display = "none";
+    img.removeAttribute("src");
+    catWrap.innerHTML = "";
+    skipBtn.disabled = true;
+    setClassifierUiEnabled(true);
+    if (announce) appendClassifierLog("Session klar.");
+    return;
+  }
+
+  setClassifierStatusBadge("running", "Pågår");
+  setClassifierUiEnabled(false);
+  skipBtn.disabled = false;
+
+  if (state.image_url) {
+    img.src = `${API}${state.image_url}`;
+    img.style.display = "block";
+  } else {
+    img.style.display = "none";
+    img.removeAttribute("src");
+  }
+
+  catWrap.innerHTML = "";
+  (state.categories || []).forEach(cat => {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-success btn-sm";
+    btn.textContent = cat;
+    btn.onclick = () => classifyCurrentImage(cat);
+    catWrap.appendChild(btn);
+  });
+}
+
+async function initClassifierWeb() {
+  renderClassifierState(null);
+  try {
+    const resp = await fetch(`${API}/api/classifier/web/config`);
+    if (!resp.ok) throw new Error(await resp.text());
+    classifierConfig = await resp.json();
+    const imageDir = document.getElementById("cls-image-dir");
+    const outputDir = document.getElementById("cls-output-dir");
+    const testName = document.getElementById("cls-test-name");
+    const categories = document.getElementById("cls-categories");
+    if (imageDir) imageDir.value = classifierConfig.default_image_dir || "";
+    if (outputDir) outputDir.value = classifierConfig.default_output_dir || "";
+    if (testName && !testName.value) testName.value = "test1";
+    if (categories && !categories.value) categories.value = "Hund\nKatt\nÖvrigt";
+    appendClassifierLog("Classifier-web klar.");
+  } catch (e) {
+    setClassifierStatusBadge("error", "Fel");
+    const statusText = document.getElementById("classifier-status-text");
+    if (statusText) statusText.textContent = "Kunde inte ladda classifier-konfiguration";
+    appendClassifierLog(`Init-fel: ${e}`);
+  }
+}
+
+async function startClassifierSession() {
+  const btn = document.getElementById("btn-classifier-session-start");
+  const original = btn ? btn.textContent : "Starta klassificering";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${original}`;
+  }
+
+  try {
+    const testName = (document.getElementById("cls-test-name")?.value || "").trim();
+    const imageDir = (document.getElementById("cls-image-dir")?.value || "").trim();
+    const outputDir = (document.getElementById("cls-output-dir")?.value || "").trim();
+    const shuffle = !!document.getElementById("cls-shuffle")?.checked;
+    const categories = parseClassifierCategories();
+    if (!testName) throw new Error("Testnamn saknas.");
+    if (categories.length === 0) throw new Error("Lägg in minst en kategori.");
+
+    const resp = await fetch(`${API}/api/classifier/web/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        test_name: testName,
+        categories,
+        image_dir: imageDir,
+        output_dir: outputDir,
+        shuffle,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderClassifierState(data, true);
+    appendClassifierLog(data.message || "Session startad.");
+  } catch (e) {
+    setClassifierStatusBadge("error", "Fel");
+    appendClassifierLog(`Kunde inte starta: ${e}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+}
+
+async function refreshClassifierSessionState(announce = false) {
+  if (!classifierSessionId) {
+    if (announce) appendClassifierLog("Ingen aktiv session.");
+    return;
+  }
+  try {
+    const resp = await fetch(`${API}/api/classifier/web/${classifierSessionId}`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderClassifierState(data, announce);
+  } catch (e) {
+    appendClassifierLog(`Statusfel: ${e}`);
+  }
+}
+
+async function classifyCurrentImage(category) {
+  if (!classifierSessionId) return;
+  try {
+    const resp = await fetch(`${API}/api/classifier/web/${classifierSessionId}/classify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderClassifierState(data, false);
+    appendClassifierLog(data.message || `Klassad som ${category}`);
+  } catch (e) {
+    appendClassifierLog(`Klassificering misslyckades: ${e}`);
+  }
+}
+
+async function skipClassifierImage() {
+  if (!classifierSessionId) return;
+  try {
+    const resp = await fetch(`${API}/api/classifier/web/${classifierSessionId}/skip`, {
+      method: "POST",
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderClassifierState(data, false);
+    appendClassifierLog(data.message || "Bild hoppades över.");
+  } catch (e) {
+    appendClassifierLog(`Kunde inte hoppa över bild: ${e}`);
+  }
+}
+
+async function finishClassifierSession() {
+  if (!classifierSessionId) {
+    appendClassifierLog("Ingen aktiv session att avsluta.");
+    return;
+  }
+  try {
+    const resp = await fetch(`${API}/api/classifier/web/${classifierSessionId}/finish`, {
+      method: "POST",
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderClassifierState(data, true);
+    appendClassifierLog(data.message || "Session avslutad.");
+  } catch (e) {
+    appendClassifierLog(`Kunde inte avsluta session: ${e}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Resultat-knappar
 // ---------------------------------------------------------------------------
@@ -650,9 +967,12 @@ function renderResultButtons() {
     const btn = document.createElement("button");
     btn.className = "btn btn-success btn-sm";
     btn.textContent = label;
+    btn.title = `Ladda ner och öppna ${label.replace(/^Oppna\s+/i, "")} som Excel-fil`;
+    btn.setAttribute("data-bs-toggle", "tooltip");
     btn.onclick = () => downloadResult(key);
     container.appendChild(btn);
   });
+  initTooltips();
 }
 
 function downloadResult(key) {
@@ -690,11 +1010,17 @@ async function copyList(listId) {
 
 async function resetCache() {
   try {
-    await fetch(`${API}/api/session/reset-results/${sessionId}`, { method: "POST" });
+    await fetch(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" });
+    // Nollstall fil-status
+    fileStatuses = {};
+    [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
+      setBadge(slot.key, "Ej fil", false);
+    });
     availableResults.clear();
     renderResultButtons();
     document.getElementById("log-output").textContent = "";
-    appendLog("Cache rensad.");
+    appendLog("Cache rensad (filer och resultat borttagna).");
+    await refreshFilterOptions();
   } catch (e) {
     appendLog(`FEL vid rensning: ${e}`);
   }
@@ -761,11 +1087,13 @@ function updateChunkColButtons() {
     const btn = document.createElement("button");
     btn.className = "btn btn-warning btn-sm";
     btn.textContent = `Kopiera ${i + 1}`;
-    btn.title = `Kopiera varden i kolumn ${i + 1}`;
+    btn.title = `Kopiera alla värden från kolumn ${i + 1} till urklipp`;
+    btn.setAttribute("data-bs-toggle", "tooltip");
     btn.dataset.colIndex = i;
     btn.addEventListener("click", () => copyChunkColumn(i));
     container.appendChild(btn);
   }
+  initTooltips();
 }
 
 async function copyChunkColumn(colIndex) {
@@ -789,6 +1117,23 @@ window.addEventListener("DOMContentLoaded", () => {
   if (textarea) textarea.addEventListener("input", updateChunkColButtons);
   if (chunkInput) chunkInput.addEventListener("input", updateChunkColButtons);
 });
+
+// ---------------------------------------------------------------------------
+// Bootstrap-tooltips
+// ---------------------------------------------------------------------------
+
+let _tooltipInstances = [];
+
+function initTooltips() {
+  // Förstör gamla instanser
+  _tooltipInstances.forEach(t => { try { t.dispose(); } catch (e) { /* ignoreras */ } });
+  _tooltipInstances = [];
+  // Skapa nya för alla element med data-bs-toggle="tooltip"
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    const instance = new bootstrap.Tooltip(el, { trigger: "hover", placement: "top" });
+    _tooltipInstances.push(instance);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Drag & Drop

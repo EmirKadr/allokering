@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="sv">
 <head>
   <meta charset="UTF-8">
@@ -9,122 +9,214 @@
 </head>
 <body>
 <div class="container-fluid p-3">
-  <div class="row g-3">
+  <ul class="nav nav-tabs mb-3" id="main-tabs">
+    <li class="nav-item">
+      <button class="nav-link active" type="button" data-page="allokering-page">Allokering</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" type="button" data-page="classifier-page">Artikelklassificering</button>
+    </li>
+  </ul>
 
-    <!-- Vanster: Indatafiler + Prognos/Kampanj + Filter -->
-    <div class="col-auto">
+  <div id="allokering-page" class="main-page-pane active">
+    <div class="row g-3">
 
-      <!-- Indatafiler -->
-      <div class="card mb-2">
-        <div class="card-header fw-bold">Indatafiler</div>
-        <div class="card-body py-2" id="file-rows">
-          <!-- Genereras av app.js -->
+      <!-- Vanster: Indatafiler + Prognos/Kampanj + Filter -->
+      <div class="col-auto">
+
+        <!-- Indatafiler -->
+        <div class="card mb-2">
+          <div class="card-header fw-bold">Indatafiler</div>
+          <div class="card-body py-2" id="file-rows">
+            <!-- Genereras av app.js -->
+          </div>
+        </div>
+
+        <!-- Prognos / Kampanj -->
+        <div class="card mb-2">
+          <div class="card-header fw-bold">Prognos / Kampanj</div>
+          <div class="card-body py-2" id="prog-rows">
+            <!-- Genereras av app.js -->
+          </div>
+        </div>
+
+        <!-- Filter (dolt tills filer laddas upp) -->
+        <div class="card mb-2" id="filter-card" style="display:none">
+          <div class="card-header fw-bold">Filtrering</div>
+          <div class="card-body py-2" id="filter-content">
+            <!-- Genereras av app.js -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Mitten: DEMO (WMS / Eftersok) -->
+      <div class="col-auto">
+        <div class="card mb-2">
+          <div class="card-header">
+            <span class="text-success fw-bold">DEMO</span>
+          </div>
+          <div class="card-body py-2">
+            <div class="mb-2">
+              <label class="form-label mb-1">Inkopsnummer</label>
+              <input type="text" class="form-control form-control-sm" id="purchase-input" placeholder="ex. 12345">
+            </div>
+            <div class="mb-2">
+              <label class="form-label mb-1">Artikelnummer</label>
+              <input type="text" class="form-control form-control-sm" id="article-input" placeholder="ex. 1234567">
+            </div>
+            <div id="wms-file-rows">
+              <!-- WMS-filer genereras av app.js -->
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Prognos / Kampanj -->
-      <div class="card mb-2">
-        <div class="card-header fw-bold">Prognos / Kampanj</div>
-        <div class="card-body py-2" id="prog-rows">
-          <!-- Genereras av app.js -->
+      <!-- Hoger: Dela -->
+      <div class="col-auto">
+        <div class="card mb-2">
+          <div class="card-header fw-bold">Dela</div>
+          <div class="card-body py-2">
+            <label class="form-label mb-1">Varden (en per rad):</label>
+            <textarea class="form-control form-control-sm" id="paste-values" rows="10"
+                      placeholder="Klistra in dina varden har..."></textarea>
+            <div class="d-flex align-items-center mt-2 gap-2 flex-wrap">
+              <label class="mb-0 text-nowrap">Antal per kolumn:</label>
+              <input type="number" class="form-control form-control-sm" style="width:90px"
+                     id="chunk-size" value="2000" min="1">
+              <button class="btn btn-secondary btn-sm" onclick="openChunkedExcel()"
+                      data-bs-toggle="tooltip" title="Exportera värdena uppdelade i kolumner till en Excel-fil">
+                Oppna i Excel direkt
+              </button>
+            </div>
+            <div class="d-flex gap-1 flex-wrap mt-2" id="chunk-col-buttons" style="display:none!important"></div>
+          </div>
         </div>
       </div>
 
-      <!-- Filter (dolt tills filer laddas upp) -->
-      <div class="card mb-2" id="filter-card" style="display:none">
-        <div class="card-header fw-bold">Filtrering</div>
-        <div class="card-body py-2" id="filter-content">
-          <!-- Genereras av app.js -->
-        </div>
-      </div>
+    </div><!-- /row -->
 
+    <!-- Kor-knappar -->
+    <div class="d-flex gap-2 flex-wrap mb-1 mt-1">
+      <button class="btn btn-primary btn-sm" id="btn-allokering" onclick="runJob('allokering')"
+              data-bs-toggle="tooltip" title="Kör FIFO-allokering av kundorder mot buffertpallar">
+        Allokering
+      </button>
+      <button class="btn btn-primary btn-sm" id="btn-hib-koppling" onclick="runJob('hib-koppling')"
+              data-bs-toggle="tooltip" title="Koppla e-handelsorder mot lagerorder (HIB)">
+        HIB-koppling
+      </button>
+      <button class="btn btn-primary btn-sm" id="btn-orderkontroll" onclick="runJob('orderkontroll')"
+              data-bs-toggle="tooltip" title="Kontrollera dataintegritet och status i orderöversikten">
+        Orderoversikt
+      </button>
+      <button class="btn btn-primary btn-sm" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')"
+              data-bs-toggle="tooltip" title="Verifiera att dispatchpallar är korrekt tilldelade">
+        Dispatchkontroll
+      </button>
+      <button class="btn btn-primary btn-sm" id="btn-eftersok" onclick="runJob('eftersok')"
+              data-bs-toggle="tooltip" title="Sök order eller artikel via inköpsnummer eller artikelnummer">
+        Eftersok
+      </button>
     </div>
 
-    <!-- Mitten: DEMO (WMS / Eftersok) -->
-    <div class="col-auto">
-      <div class="card mb-2">
-        <div class="card-header">
-          <span class="text-success fw-bold">DEMO</span>
-        </div>
-        <div class="card-body py-2">
-          <div class="mb-2">
-            <label class="form-label mb-1">Inkopsnummer</label>
-            <input type="text" class="form-control form-control-sm" id="purchase-input" placeholder="ex. 12345">
-          </div>
-          <div class="mb-2">
-            <label class="form-label mb-1">Artikelnummer</label>
-            <input type="text" class="form-control form-control-sm" id="article-input" placeholder="ex. 1234567">
-          </div>
-          <div id="wms-file-rows">
-            <!-- WMS-filer genereras av app.js -->
-          </div>
-        </div>
-      </div>
+    <!-- Kopiera-knappar (gula) + Rensa cache -->
+    <div class="d-flex gap-2 flex-wrap mb-2">
+      <button class="btn btn-warning btn-sm" id="btn-kompletta" onclick="copyList('list1')"
+              data-bs-toggle="tooltip" title="Kopiera ordernummer för alla kompletta (fullt allokerade) ordrar">
+        Kompletta ordrar
+      </button>
+      <button class="btn btn-warning btn-sm" id="btn-pafyllning" onclick="copyList('list2')"
+              data-bs-toggle="tooltip" title="Kopiera artikelnummer som behöver påfyllning från lager">
+        Pafyllningsbehov
+      </button>
+      <button class="btn btn-outline-secondary btn-sm ms-3" onclick="resetCache()"
+              data-bs-toggle="tooltip" title="Rensa alla uppladdade filer, resultat och loggar">
+        Rensa cache
+      </button>
     </div>
 
-    <!-- Hoger: Klistra in varden -->
-    <div class="col-auto">
-      <div class="card mb-2">
-        <div class="card-header fw-bold">Dela</div>
-        <div class="card-body py-2">
-          <label class="form-label mb-1">Varden (en per rad):</label>
-          <textarea class="form-control form-control-sm" id="paste-values" rows="10"
-                    placeholder="Klistra in dina varden har..."></textarea>
-          <div class="d-flex align-items-center mt-2 gap-2 flex-wrap">
-            <label class="mb-0 text-nowrap">Antal per kolumn:</label>
-            <input type="number" class="form-control form-control-sm" style="width:90px"
-                   id="chunk-size" value="2000" min="1">
-            <button class="btn btn-secondary btn-sm" onclick="openChunkedExcel()">
-              Oppna i Excel direkt
-            </button>
-          </div>
-          <div class="d-flex gap-1 flex-wrap mt-2" id="chunk-col-buttons" style="display:none!important"></div>
-        </div>
-      </div>
+    <!-- Oppna resultat-knappar (aktiveras dynamiskt) -->
+    <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons">
+      <!-- Genereras av app.js efter korning -->
     </div>
 
-  </div><!-- /row -->
-
-  <!-- Kor-knappar -->
-  <div class="d-flex gap-2 flex-wrap mb-1 mt-1">
-    <button class="btn btn-primary btn-sm" id="btn-allokering" onclick="runJob('allokering')">
-      Kor allokering
-    </button>
-    <button class="btn btn-primary btn-sm" id="btn-hib-koppling" onclick="runJob('hib-koppling')">
-      Kor HIB-koppling
-    </button>
-    <button class="btn btn-primary btn-sm" id="btn-orderkontroll" onclick="runJob('orderkontroll')">
-      Kontrollera orderoversikt
-    </button>
-    <button class="btn btn-primary btn-sm" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')">
-      Kontrollera dispatchpallar
-    </button>
-    <button class="btn btn-primary btn-sm" id="btn-eftersok" onclick="runJob('eftersok')">
-      Eftersok
-    </button>
+    <!-- Loggruta -->
+    <pre id="log-output" class="bg-dark text-light p-2 mb-0"
+         style="height:220px;overflow-y:auto;font-size:12px;border-radius:4px;"></pre>
   </div>
 
-  <!-- Kopiera-knappar (gula) + Rensa cache -->
-  <div class="d-flex gap-2 flex-wrap mb-2">
-    <button class="btn btn-warning btn-sm" id="btn-kompletta" onclick="copyList('list1')">
-      Kompletta ordrar
-    </button>
-    <button class="btn btn-warning btn-sm" id="btn-pafyllning" onclick="copyList('list2')">
-      Pafyllningsbehov
-    </button>
-    <button class="btn btn-outline-secondary btn-sm ms-3" onclick="resetCache()">
-      Rensa cache
-    </button>
+  <div id="classifier-page" class="main-page-pane">
+    <div class="card mb-2 classifier-card">
+      <div class="card-header fw-bold">Artikelklassificering (webb)</div>
+      <div class="card-body py-3">
+        <div class="row g-3">
+          <div class="col-md-5">
+            <div class="mb-2">
+              <label class="form-label mb-1">Testnamn</label>
+              <input type="text" class="form-control form-control-sm" id="cls-test-name" placeholder="ex. test1">
+            </div>
+            <div class="mb-2">
+              <label class="form-label mb-1">Bildmapp</label>
+              <input type="text" class="form-control form-control-sm" id="cls-image-dir">
+            </div>
+            <div class="mb-2">
+              <label class="form-label mb-1">Outputmapp</label>
+              <input type="text" class="form-control form-control-sm" id="cls-output-dir">
+            </div>
+            <div class="mb-2">
+              <label class="form-label mb-1">Kategorier (en per rad)</label>
+              <textarea class="form-control form-control-sm" id="cls-categories" rows="8"
+                        placeholder="ex. Hund&#10;Katt&#10;Övrigt"></textarea>
+            </div>
+            <div class="d-flex align-items-center mb-2">
+              <input class="form-check-input me-2" type="checkbox" id="cls-shuffle">
+              <label class="form-check-label" for="cls-shuffle">Blanda bilder</label>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+              <button class="btn btn-primary btn-sm" id="btn-classifier-session-start" onclick="startClassifierSession()"
+                      data-bs-toggle="tooltip" title="Starta en ny klassificeringssession för bilderna i vald mapp">
+                Starta klassificering
+              </button>
+              <button class="btn btn-outline-danger btn-sm" id="btn-classifier-session-finish" onclick="finishClassifierSession()"
+                      data-bs-toggle="tooltip" title="Avsluta pågående session och spara resultatet">
+                Avsluta session
+              </button>
+              <button class="btn btn-outline-secondary btn-sm" onclick="refreshClassifierSessionState(true)"
+                      data-bs-toggle="tooltip" title="Hämta senaste status från servern">
+                Uppdatera
+              </button>
+            </div>
+          </div>
+          <div class="col-md-7">
+            <div class="mb-2">
+              Status:
+              <span id="classifier-status-badge" class="badge text-bg-secondary">Ej startad</span>
+              <span id="classifier-status-text" class="ms-2 text-muted small"></span>
+            </div>
+            <div class="mb-2 small text-muted">
+              Session: <code id="classifier-session-id">-</code>
+            </div>
+            <div class="mb-2 small text-muted">
+              Fil: <code id="classifier-current-file">-</code>
+            </div>
+            <div class="classifier-image-wrap mb-2">
+              <img id="classifier-current-image" class="classifier-image" alt="Ingen aktiv bild">
+            </div>
+            <div class="d-flex gap-2 flex-wrap mb-2" id="classifier-category-buttons"></div>
+            <div class="d-flex gap-2 flex-wrap">
+              <button class="btn btn-outline-warning btn-sm" id="btn-classifier-skip" onclick="skipClassifierImage()"
+                      data-bs-toggle="tooltip" title="Hoppa över denna bild och gå vidare till nästa">
+                Hoppa över
+              </button>
+            </div>
+          </div>
+        </div>
+        <pre id="classifier-log-output" class="bg-dark text-light p-2 mt-3 mb-0"
+             style="height:180px;overflow-y:auto;font-size:12px;border-radius:4px;"></pre>
+      </div>
+    </div>
   </div>
-
-  <!-- Oppna resultat-knappar (aktiveras dynamiskt) -->
-  <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons">
-    <!-- Genereras av app.js efter korning -->
-  </div>
-
-  <!-- Loggruta -->
-  <pre id="log-output" class="bg-dark text-light p-2 mb-0"
-       style="height:220px;overflow-y:auto;font-size:12px;border-radius:4px;"></pre>
 
 </div><!-- /container -->
 
