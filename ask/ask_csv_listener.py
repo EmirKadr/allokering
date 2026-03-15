@@ -17,6 +17,7 @@ import re
 import tempfile
 import threading
 import time
+import unicodedata
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from pathlib import Path
 from typing import Literal, Optional
@@ -79,6 +80,317 @@ def _grid_box_score(bbox: dict) -> tuple[float, float]:
     area = float(bbox["width"] * bbox["height"])
     top = float(bbox["y"])
     return (top, -area)
+
+
+def _fold_text(value: str) -> str:
+    txt = unicodedata.normalize("NFKD", value or "")
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", txt).strip().casefold()
+
+
+def _view_tokens(view_name: str) -> list[str]:
+    base = _fold_text(view_name)
+    tokens = [t for t in re.split(r"[^a-z0-9]+", base) if len(t) >= 3]
+    return tokens[:8]
+
+
+def _verify_view_open(page: Page, view_name: str, wait_ms: int = 2200) -> bool:
+    tokens = _view_tokens(view_name)
+    folded_hint = _fold_text(view_name)
+    step_ms = 200
+    rounds = max(1, wait_ms // step_ms)
+
+    for _ in range(rounds):
+        try:
+            folded_url = _fold_text(page.url or "")
+            if folded_hint and folded_hint in folded_url:
+                return True
+            if tokens:
+                hit_count = sum(1 for tok in tokens if tok in folded_url)
+                if hit_count >= min(2, len(tokens)):
+                    return True
+        except Exception:
+            pass
+
+        try:
+            folded_title = _fold_text(page.title() or "")
+            if folded_hint and folded_hint in folded_title:
+                return True
+            if tokens:
+                hit_count = sum(1 for tok in tokens if tok in folded_title)
+                if hit_count >= min(2, len(tokens)):
+                    return True
+        except Exception:
+            pass
+
+        for sel in ["[role='tab']", ".nav-link", "button", "a"]:
+            try:
+                loc = page.locator(sel).filter(has_text=view_name)
+                count = min(loc.count(), 15)
+                for i in range(count):
+                    item = loc.nth(i)
+                    if not item.is_visible():
+                        continue
+                    bbox = item.bounding_box()
+                    if bbox and bbox["y"] <= 220:
+                        return True
+            except Exception:
+                continue
+
+        page.wait_for_timeout(step_ms)
+
+    return False
+
+
+def _find_primary_grid_bbox(page: Page) -> Optional[dict]:
+    viewport = page.viewport_size or {"width": 1920, "height": 1080}
+    vheight = float(viewport.get("height", 1080))
+    upper_limit = vheight * 0.72
+
+    row = _first_visible(
+        page,
+        selectors=[
+            "tr.x-grid-row",
+            ".x-grid-row",
+            ".x-grid-item",
+            ".ag-row",
+            "[role='row']",
+            "table tbody tr",
+        ],
+        timeout_ms=900,
+        max_per_selector=120,
+    )
+    if row:
+        try:
+            bbox = row.bounding_box()
+            if bbox and bbox["width"] >= 250 and 90 <= bbox["y"] <= upper_limit:
+                return bbox
+        except Exception:
+            pass
+
+    candidates: list[dict] = []
+    for sel in [
+        ".x-grid-view",
+        ".x-grid-body",
+        ".x-grid-inner-normal",
+        ".x-panel-body",
+        ".ag-root",
+        "[role='grid']",
+        "table",
+    ]:
+        try:
+            loc = page.locator(sel)
+            count = min(loc.count(), 35)
+            for i in range(count):
+                item = loc.nth(i)
+                if not item.is_visible():
+                    continue
+                bbox = item.bounding_box()
+                if not bbox:
+                    continue
+                if bbox["width"] < 450 or bbox["height"] < 120:
+                    continue
+                if bbox["y"] < 80 or bbox["y"] > upper_limit:
+                    continue
+                candidates.append(bbox)
+        except Exception:
+            continue
+
+    if not candidates:
+        return None
+    return sorted(candidates, key=_grid_box_score)[0]
+
+
+def _collect_upper_three_dot_buttons(page: Page) -> list[Locator]:
+    viewport = page.viewport_size or {"width": 1920, "height": 1080}
+    vheight = float(viewport.get("height", 1080))
+    upper_limit = vheight * 0.72
+    grid_box = _find_primary_grid_bbox(page)
+    target_y = float(grid_box["y"] - 25.0) if grid_box else 130.0
+
+    scored: list[tuple[tuple[float, float, float], Locator]] = []
+    selectors = [
+        "button:has(i.bi.bi-three-dots-vertical)",
+        "[role='button']:has(i.bi.bi-three-dots-vertical)",
+        "button:has(i.bi-three-dots-vertical)",
+        "[role='button']:has(i.bi-three-dots-vertical)",
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            count = min(loc.count(), 40)
+            for i in range(count):
+                item = loc.nth(i)
+                if not item.is_visible():
+                    continue
+                bbox = item.bounding_box()
+                if not bbox:
+                    continue
+                if bbox["y"] < 45 or bbox["y"] > upper_limit:
+                    continue
+                if bbox["width"] < 14 or bbox["width"] > 85:
+                    continue
+                if bbox["height"] < 14 or bbox["height"] > 85:
+                    continue
+                score = (
+                    abs((bbox["y"] + (bbox["height"] / 2.0)) - target_y),
+                    bbox["y"],
+                    bbox["x"],
+                )
+                scored.append((score, item))
+        except Exception:
+            continue
+
+    if not scored:
+        return []
+
+    deduped: list[Locator] = []
+    seen_boxes: set[str] = set()
+    for _, item in sorted(scored, key=lambda t: t[0]):
+        try:
+            bbox = item.bounding_box() or {}
+            key = f"{round(float(bbox.get('x', 0.0)), 1)}:{round(float(bbox.get('y', 0.0)), 1)}"
+        except Exception:
+            key = f"loc-{len(deduped)}"
+        if key in seen_boxes:
+            continue
+        seen_boxes.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _find_open_menu_near_button(page: Page, btn_bbox: Optional[dict], timeout_ms: int = 2600):
+    deadline = time.time() + (max(100, timeout_ms) / 1000.0)
+    while time.time() < deadline:
+        try:
+            menus = page.locator("ul.dropdown-menu.show[role='menu']")
+            count = min(menus.count(), 8)
+            visible: list[tuple[float, Locator]] = []
+            for i in range(count):
+                menu = menus.nth(i)
+                if not menu.is_visible():
+                    continue
+                bbox = menu.bounding_box()
+                if not bbox:
+                    continue
+                if not btn_bbox:
+                    score = float(bbox["y"])
+                else:
+                    dx = abs(float(bbox["x"]) - float(btn_bbox["x"]))
+                    dy = abs(float(bbox["y"]) - float(btn_bbox["y"]))
+                    score = (dy * 2.0) + dx
+                visible.append((score, menu))
+            if visible:
+                visible.sort(key=lambda t: t[0])
+                return visible[0][1]
+        except Exception:
+            pass
+        page.wait_for_timeout(100)
+    return None
+
+
+def _click_export_in_dropdown(menu: Locator, export_text: str, timeout_ms: int = 2500) -> tuple[bool, str]:
+    candidates = [
+        ("css_span", menu.locator("a.dropdown-item:has(span:has-text('Exportera till CSV'))")),
+        ("css_item", menu.locator("a.dropdown-item", has_text=export_text)),
+        ("css_text", menu.locator("a.dropdown-item:has-text('Exportera till CSV')")),
+    ]
+    last_hits = "none"
+    deadline = time.time() + (max(100, timeout_ms) / 1000.0)
+    while time.time() < deadline:
+        for key, loc in candidates:
+            try:
+                count = min(loc.count(), 10)
+                if count <= 0:
+                    continue
+                last_hits = f"{key}:{count}"
+                for i in range(count):
+                    item = loc.nth(i)
+                    if not item.is_visible():
+                        continue
+                    cls = (item.get_attribute("class") or "").lower()
+                    if "disabled" in cls:
+                        continue
+                    item.click()
+                    return True, last_hits
+            except Exception:
+                continue
+        time.sleep(0.1)
+    return False, last_hits
+
+
+def _capture_error_screenshot(page: Page, prefix: str) -> str:
+    out_dir = Path(tempfile.gettempdir()) / "ask_csv_listener"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"{prefix}_{ts}.png"
+    try:
+        page.screenshot(path=str(path), full_page=True)
+        return str(path)
+    except Exception:
+        return ""
+
+
+def _export_via_three_dots(page: Page, export_text: str, download_timeout: int, step_log: list[str]):
+    buttons = _collect_upper_three_dot_buttons(page)
+    step_log.append(f"three_dot_buttons={len(buttons)}")
+    if not buttons:
+        raise RuntimeError("no_upper_three_dot_button")
+
+    attempts = min(3, len(buttons))
+    last_error = "menu_export_unknown"
+    for idx in range(attempts):
+        btn = buttons[idx]
+        try:
+            try:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(80)
+            except Exception:
+                pass
+            btn_bbox = btn.bounding_box()
+            step_log.append(f"menu_try_{idx + 1}_btn_y={round(float((btn_bbox or {}).get('y', -1.0)), 1)}")
+
+            with page.expect_download(timeout=max(1, int(download_timeout)) * 1000) as dl_info:
+                btn.click()
+                menu = _find_open_menu_near_button(page, btn_bbox=btn_bbox, timeout_ms=3200)
+                if not menu:
+                    raise RuntimeError("menu_not_found")
+                ok, hit = _click_export_in_dropdown(menu, export_text=export_text, timeout_ms=2600)
+                step_log.append(f"menu_try_{idx + 1}_selector_hits={hit}")
+                if not ok:
+                    raise RuntimeError("export_item_not_found")
+            return dl_info.value
+        except PlaywrightTimeoutError:
+            last_error = f"menu_try_{idx + 1}_download_timeout"
+            step_log.append(last_error)
+            continue
+        except Exception as e:
+            last_error = f"menu_try_{idx + 1}_failed:{e}"
+            step_log.append(last_error)
+            continue
+
+    raise RuntimeError(last_error)
+
+
+def _export_via_right_click(
+    page: Page,
+    export_text: str,
+    grid_wait_sec: int,
+    download_timeout: int,
+    step_log: list[str],
+):
+    if not _right_click_in_primary_grid(page, timeout_ms=max(1, int(grid_wait_sec)) * 1000):
+        raise RuntimeError("grid_not_found_for_right_click")
+    step_log.append("right_click_grid_ok")
+    try:
+        with page.expect_download(timeout=max(1, int(download_timeout)) * 1000) as dl_info:
+            ok = _click_by_text(page, export_text, timeout_ms=10000)
+            step_log.append(f"right_click_export_click={ok}")
+            if not ok:
+                raise RuntimeError(f"export_menu_item_not_found:{export_text}")
+        return dl_info.value
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError("right_click_download_timeout") from e
 
 
 def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
@@ -165,7 +477,7 @@ def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
     return True
 
 
-def _open_view_from_menu(page: Page, view_name: str, use_shortcut: bool = True) -> bool:
+def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = True) -> bool:
     view_name = (view_name or "").strip()
     if not view_name:
         return False
@@ -182,9 +494,12 @@ def _open_view_from_menu(page: Page, view_name: str, use_shortcut: bool = True) 
     search = _first_visible(
         page,
         selectors=[
-            "input[placeholder*='SÃ¶k']",
+            "input[placeholder*='Sök']",
+            "input[placeholder*='sök' i]",
             "input[placeholder*='sok' i]",
             "input[placeholder*='search' i]",
+            ".dropdown-menu.show input[type='search']",
+            ".dropdown-menu.show input[type='text']",
             "input[type='search']",
         ],
         timeout_ms=1800,
@@ -198,6 +513,8 @@ def _open_view_from_menu(page: Page, view_name: str, use_shortcut: bool = True) 
                 "[role='button']:has-text('+')",
                 "button[aria-label*='plus' i]",
                 "button[title*='plus' i]",
+                "button:has(i.bi-plus-circle)",
+                "[role='button']:has(i.bi-plus-circle)",
             ],
             timeout_ms=5000,
         )
@@ -208,9 +525,12 @@ def _open_view_from_menu(page: Page, view_name: str, use_shortcut: bool = True) 
         search = _first_visible(
             page,
             selectors=[
-                "input[placeholder*='SÃ¶k']",
+                "input[placeholder*='Sök']",
+                "input[placeholder*='sök' i]",
                 "input[placeholder*='sok' i]",
                 "input[placeholder*='search' i]",
+                ".dropdown-menu.show input[type='search']",
+                ".dropdown-menu.show input[type='text']",
                 "input[type='search']",
                 "input[type='text']",
             ],
@@ -221,13 +541,39 @@ def _open_view_from_menu(page: Page, view_name: str, use_shortcut: bool = True) 
 
     try:
         search.click()
+        search.press("ControlOrMeta+A")
+        search.press("Backspace")
         search.fill(view_name)
         page.wait_for_timeout(350)
         search.press("Enter")
-        page.wait_for_timeout(450)
+        page.wait_for_timeout(650)
         return True
     except Exception:
         return False
+
+
+def _open_view_from_menu(
+    page: Page,
+    view_name: str,
+    use_shortcut: bool = True,
+    retries: int = 1,
+    step_log: Optional[list[str]] = None,
+) -> bool:
+    logs = step_log if step_log is not None else []
+    for attempt in range(max(0, retries) + 1):
+        ok = _open_view_from_menu_once(page, view_name=view_name, use_shortcut=use_shortcut)
+        logs.append(f"open_view_try_{attempt + 1}_input={ok}")
+        if ok and _verify_view_open(page, view_name=view_name, wait_ms=2500):
+            logs.append(f"open_view_try_{attempt + 1}_verify=ok")
+            return True
+        logs.append(f"open_view_try_{attempt + 1}_verify=failed")
+        if attempt < retries:
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+            page.wait_for_timeout(220)
+    return False
 
 
 def _safe_filename(name: str, fallback: str = "export.csv") -> str:
@@ -534,41 +880,101 @@ class AskCsvAgent:
                 raise RuntimeError("Agenten Ã¤r inte redo Ã¤nnu. VÃ¤nta tills login/2FA Ã¤r klart.")
 
             page = self._page
+            step_log: list[str] = []
 
             if body.url:
                 page.goto(body.url, wait_until="domcontentloaded", timeout=body.goto_timeout * 1000)
                 self._active_url = body.url
+                step_log.append("goto_body_url=ok")
 
             opened = False
             if body.open_via == "tab":
                 opened = _click_by_text(page, body.view_name, timeout_ms=7000)
+                step_log.append(f"open_via_tab_click={opened}")
+                if opened:
+                    opened = _verify_view_open(page, view_name=body.view_name, wait_ms=2400)
+                    step_log.append(f"open_via_tab_verify={opened}")
             elif body.open_via == "menu":
-                opened = _open_view_from_menu(page, body.view_name, use_shortcut=False)
+                opened = _open_view_from_menu(
+                    page,
+                    body.view_name,
+                    use_shortcut=False,
+                    retries=1,
+                    step_log=step_log,
+                )
             elif body.open_via == "shortcut":
-                opened = _open_view_from_menu(page, body.view_name, use_shortcut=True)
+                opened = _open_view_from_menu(
+                    page,
+                    body.view_name,
+                    use_shortcut=True,
+                    retries=1,
+                    step_log=step_log,
+                )
             else:
                 opened = _click_by_text(page, body.view_name, timeout_ms=5000)
+                step_log.append(f"open_auto_tab_click={opened}")
+                if opened:
+                    opened = _verify_view_open(page, view_name=body.view_name, wait_ms=2000)
+                    step_log.append(f"open_auto_tab_verify={opened}")
                 if not opened:
-                    opened = _open_view_from_menu(page, body.view_name, use_shortcut=True)
+                    opened = _open_view_from_menu(
+                        page,
+                        body.view_name,
+                        use_shortcut=True,
+                        retries=1,
+                        step_log=step_log,
+                    )
                 if not opened:
-                    opened = _open_view_from_menu(page, body.view_name, use_shortcut=False)
+                    opened = _open_view_from_menu(
+                        page,
+                        body.view_name,
+                        use_shortcut=False,
+                        retries=1,
+                        step_log=step_log,
+                    )
 
             if not opened:
-                raise RuntimeError(f"Kunde inte Ã¶ppna vy '{body.view_name}'.")
+                screenshot = _capture_error_screenshot(page, "open_view_failed")
+                steps = " | ".join(step_log[-18:])
+                raise RuntimeError(
+                    f"open_view_failed: kunde inte oppna vy '{body.view_name}'. "
+                    f"screenshot: {screenshot or 'n/a'}. steps: {steps}"
+                )
 
             if body.open_text and body.open_text.strip():
-                _click_by_text(page, body.open_text.strip(), timeout_ms=7000)
+                clicked_open = _click_by_text(page, body.open_text.strip(), timeout_ms=7000)
+                step_log.append(f"open_text_click={clicked_open}")
 
-            if not _right_click_in_primary_grid(page, timeout_ms=body.grid_wait * 1000):
-                raise RuntimeError("Kunde inte hitta tabell/grid att högerklicka i.")
+            menu_error: Optional[str] = None
             try:
-                with page.expect_download(timeout=body.download_timeout * 1000) as dl_info:
-                    ok = _click_by_text(page, body.export_text, timeout_ms=10000)
-                    if not ok:
-                        raise RuntimeError(f"Kunde inte hitta menyval '{body.export_text}'.")
-                download = dl_info.value
-            except PlaywrightTimeoutError as e:
-                raise RuntimeError("Ingen fil laddades ner efter export-klick.") from e
+                download = _export_via_three_dots(
+                    page=page,
+                    export_text=body.export_text,
+                    download_timeout=body.download_timeout,
+                    step_log=step_log,
+                )
+                step_log.append("menu_export=ok")
+            except Exception as menu_exc:
+                menu_error = str(menu_exc)
+                step_log.append(f"menu_export_failed:{menu_error}")
+                try:
+                    download = _export_via_right_click(
+                        page=page,
+                        export_text=body.export_text,
+                        grid_wait_sec=body.grid_wait,
+                        download_timeout=body.download_timeout,
+                        step_log=step_log,
+                    )
+                    step_log.append("right_click_fallback=ok")
+                except Exception as rc_exc:
+                    screenshot = _capture_error_screenshot(page, "csv_export_failed")
+                    steps = " | ".join(step_log[-24:])
+                    raise RuntimeError(
+                        f"menu_export_failed: {menu_error}; "
+                        f"right_click_failed: {rc_exc}; "
+                        f"screenshot: {screenshot or 'n/a'}; "
+                        f"steps: {steps}"
+                    ) from rc_exc
 
             suggested = body.output_name.strip() or download.suggested_filename or "export.csv"
             safe_name = _safe_filename(suggested)
