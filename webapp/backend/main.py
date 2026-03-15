@@ -1029,6 +1029,34 @@ def api_ordersaldo_list2(sid: str):
 
 
 # ---------------------------------------------------------------------------
+# Rensa cache
+# ---------------------------------------------------------------------------
+
+@app.post("/api/session/reset-results/{sid}")
+async def api_reset_results(sid: str):
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    # Rensa resultatfiler från disk
+    for path in session.results.values():
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    session.results.clear()
+    session.ordersaldo_list1 = []
+    session.ordersaldo_list2 = []
+    # Rensa logg-kön
+    while not session.log_queue.empty():
+        try:
+            session.log_queue.get_nowait()
+        except Exception:
+            break
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # SSE-logg
 # ---------------------------------------------------------------------------
 

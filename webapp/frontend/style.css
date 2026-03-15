@@ -68,6 +68,11 @@ body {
 /* Result-knappar */
 #result-buttons .btn {
   font-size: 12px;
+  text-decoration: none;
+}
+
+.btn {
+  text-decoration: none !important;
 }
 
 /* Filter-checkboxar */

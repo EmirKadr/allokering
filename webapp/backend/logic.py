@@ -1771,7 +1771,10 @@ def scan_filter_values(df: pd.DataFrame) -> Dict[str, List[str]]:
     for filter_key, candidates in filter_column_candidates.items():
         col = find_col(df, candidates, required=False, default=None)
         if col:
-            vals = sorted(df[col].astype(str).str.strip().dropna().unique().tolist())
+            raw = df[col].astype(str).str.strip().unique().tolist()
+            # Inkludera "(tom)" för null/NaN-värden, filtrera bort tomma strängar
+            vals = sorted([v if v.lower() not in ("nan", "none", "") else "(tom)" for v in raw if v != ""])
+            vals = sorted(set(vals))
             if vals:
                 result[filter_key] = vals
     return result

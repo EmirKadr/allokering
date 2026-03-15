@@ -85,7 +85,7 @@
   </div><!-- /row -->
 
   <!-- Kör-knappar -->
-  <div class="d-flex gap-2 flex-wrap mb-2 mt-1">
+  <div class="d-flex gap-2 flex-wrap mb-1 mt-1">
     <button class="btn btn-primary btn-sm" id="btn-allokering" onclick="runJob('allokering')">
       Kör allokering
     </button>
@@ -98,14 +98,21 @@
     <button class="btn btn-primary btn-sm" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')">
       Kontrollera dispatchpallar
     </button>
-    <button class="btn btn-outline-secondary btn-sm" id="btn-kompletta" onclick="copyList('list1')">
-      Kompletta ordrar
-    </button>
-    <button class="btn btn-outline-secondary btn-sm" id="btn-pafyllning" onclick="copyList('list2')">
-      Påfyllningsbehov
-    </button>
     <button class="btn btn-primary btn-sm" id="btn-eftersok" onclick="runJob('eftersok')">
       Eftersök
+    </button>
+  </div>
+
+  <!-- Kopiera-knappar (gula) + Rensa cache -->
+  <div class="d-flex gap-2 flex-wrap mb-2">
+    <button class="btn btn-warning btn-sm" id="btn-kompletta" onclick="copyList('list1')">
+      Kompletta ordrar
+    </button>
+    <button class="btn btn-warning btn-sm" id="btn-pafyllning" onclick="copyList('list2')">
+      Påfyllningsbehov
+    </button>
+    <button class="btn btn-outline-secondary btn-sm ms-3" onclick="resetCache()">
+      Rensa cache
     </button>
   </div>
 

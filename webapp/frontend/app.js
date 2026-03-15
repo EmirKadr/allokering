@@ -131,16 +131,18 @@ function buildFileRow(slot) {
   removeBtn.title = "Ta bort fil";
   removeBtn.addEventListener("click", () => removeFile(slot.key));
 
-  // Hidden file input
+  // Hidden file input (multiple tillåtet för att kunna välja flera filer)
   const input = document.createElement("input");
   input.type = "file";
   input.accept = slot.accept || "";
+  input.multiple = true;
   input.style.display = "none";
   input.id = `input-${slot.key}`;
   input.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      await uploadFile(slot.key, file);
+    const files = Array.from(e.target.files);
+    for (const file of files) {
+      const detectedKey = matchFileToSlot(file.name) || slot.key;
+      await uploadFile(detectedKey, file);
     }
     input.value = "";
   });
@@ -481,6 +483,22 @@ async function copyList(listId) {
     appendLog(`${values.length} ${label} kopierade.`);
   } catch (e) {
     appendLog(`FEL vid kopiering av ${listId}: ${e}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rensa cache
+// ---------------------------------------------------------------------------
+
+async function resetCache() {
+  try {
+    await fetch(`${API}/api/session/reset-results/${sessionId}`, { method: "POST" });
+    availableResults.clear();
+    renderResultButtons();
+    document.getElementById("log-output").textContent = "";
+    appendLog("Cache rensad.");
+  } catch (e) {
+    appendLog(`FEL vid rensning: ${e}`);
   }
 }
 
