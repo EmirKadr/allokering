@@ -13,7 +13,7 @@ const ASK_OPEN_VIA = "shortcut";        // alltid v+o
 
 const FILE_SLOTS = [
   { key: "orders",     label: "Detalj Kundorder (Alla)", accept: ".csv,.txt" },
-  { key: "buffer",     label: "Buffertpallar",            accept: ".csv,.txt" },
+  { key: "buffer",     label: "Buffertpall",              accept: ".csv,.txt" },
   { key: "automation", label: "Saldo inkl. automation",   accept: ".csv,.txt" },
   { key: "item",       label: "Item option",              accept: ".csv,.txt" },
   { key: "overview",   label: "Order\u00f6versikt",       accept: ".csv,.txt" },
@@ -62,6 +62,7 @@ const RESULT_LABELS = {
 
 let sessionId = null;
 let sseSource = null;
+let sseReconnectTimer = null;
 let fileStatuses = {};  // key -> filename | null
 let availableResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
@@ -560,6 +561,10 @@ function connectSSE() {
   if (sseSource) {
     sseSource.close();
   }
+  if (sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
+  }
   sseSource = new EventSource(`${API}/api/log/stream/${sessionId}`);
   sseSource.onmessage = (e) => {
     const msg = e.data.replace(/\\n/g, "\n");
@@ -586,9 +591,24 @@ function connectSSE() {
 
     appendLog(msg);
   };
-  sseSource.onerror = () => {
-    // Forsok ateransluta efter 3 sekunder
-    setTimeout(connectSSE, 3000);
+  sseSource.onerror = async () => {
+    // Servern kan ha startats om -> session-id kan vara ogiltigt.
+    if (sseSource) {
+      sseSource.close();
+      sseSource = null;
+    }
+    if (sseReconnectTimer) {
+      return;
+    }
+    sseReconnectTimer = setTimeout(async () => {
+      sseReconnectTimer = null;
+      try {
+        await ensureSession();
+      } catch (e) {
+        appendLog(`SSE reconnect misslyckades: ${e}`);
+      }
+      connectSSE();
+    }, 3000);
   };
 }
 
