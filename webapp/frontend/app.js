@@ -59,14 +59,27 @@ let selectedFilters = { bolag: [], ordertyp: [] };
 // Init
 // ---------------------------------------------------------------------------
 
-window.addEventListener("DOMContentLoaded", async () => {
-  sessionId = sessionStorage.getItem("allok_session_id");
-  if (!sessionId) {
-    const resp = await fetch(`${API}/api/session`, { method: "POST" });
-    const data = await resp.json();
-    sessionId = data.session_id;
-    sessionStorage.setItem("allok_session_id", sessionId);
+async function ensureSession() {
+  // Kontrollera om befintlig session fortfarande lever (servern kan ha startats om)
+  const stored = sessionStorage.getItem("allok_session_id");
+  if (stored) {
+    try {
+      const check = await fetch(`${API}/api/upload/${stored}`);
+      if (check.ok) {
+        sessionId = stored;
+        return;
+      }
+    } catch (e) { /* server nere eller session borta */ }
   }
+  // Skapa ny session
+  const resp = await fetch(`${API}/api/session`, { method: "POST" });
+  const data = await resp.json();
+  sessionId = data.session_id;
+  sessionStorage.setItem("allok_session_id", sessionId);
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
+  await ensureSession();
 
   renderFileRows();
   renderProgRows();
@@ -74,7 +87,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   connectSSE();
   setupDragDrop();
 
-  // Hämta befintlig filstatus
   await refreshFileStatus();
   await refreshFilterOptions();
   await refreshResultStatus();
