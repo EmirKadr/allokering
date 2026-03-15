@@ -143,8 +143,7 @@ def api_get_filter_options(sid: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     combined: Dict[str, List[str]] = {}
-    for key in ("orders", "automation", "overview"):
-        path = session.files.get(key)
+    for path in session.files.values():
         if not path or not os.path.exists(path):
             continue
         try:
