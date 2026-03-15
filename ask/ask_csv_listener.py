@@ -28,6 +28,11 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import Locator, Page, sync_playwright
 from starlette.background import BackgroundTask
 
+DEFAULT_ASK_URL = os.environ.get(
+    "ASK_CSV_DEFAULT_URL",
+    "https://noeffectui-frey.nowastelogistics.com/desktop",
+).strip()
+
 
 def _click_by_text(page: Page, text: str, timeout_ms: int = 4000) -> bool:
     candidates = [
@@ -420,9 +425,6 @@ def _looks_logged_in(page: Page) -> bool:
     if "/view/" in url:
         return True
 
-    if "/desktop" in url and "login" not in url:
-        return True
-
     for sel in ["text=Logga ut", "text=Connected", "text=Rapportera fel"]:
         try:
             loc = page.locator(sel)
@@ -500,6 +502,20 @@ class AskCsvAgent:
             "url": current_url,
             "message": "Login klar" if self._ready else "Login ej klar inom väntetid",
         }
+
+    def warm_open(self, url: str, headless: bool = False, slow_mo: int = 80, goto_timeout: int = 60) -> dict:
+        with self._lock:
+            self._ensure_browser(headless=headless, slow_mo=slow_mo)
+            assert self._page is not None
+            self._page.goto(url, wait_until="domcontentloaded", timeout=max(10, int(goto_timeout)) * 1000)
+            self._active_url = url
+            self._ready = _looks_logged_in(self._page)
+            return {
+                "ok": True,
+                "ready": self._ready,
+                "url": self._page.url if self._page else "",
+                "message": "Browser öppnad",
+            }
 
     def status(self) -> dict:
         with self._lock:
@@ -596,6 +612,18 @@ class AskCsvAgent:
 
 app = FastAPI(title="ASK CSV Listener")
 agent = AskCsvAgent()
+
+
+@app.on_event("startup")
+def on_startup():
+    # Open ASK immediately so user can log in even before the webapp sends requests.
+    if not DEFAULT_ASK_URL:
+        return
+    try:
+        agent.warm_open(url=DEFAULT_ASK_URL, headless=False, slow_mo=80, goto_timeout=60)
+    except Exception:
+        # Keep service running even if auto-open fails.
+        pass
 
 
 @app.get("/health")
