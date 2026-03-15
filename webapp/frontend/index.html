@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="sv">
 <head>
   <meta charset="UTF-8">
@@ -11,7 +11,7 @@
 <div class="container-fluid p-3">
   <div class="row g-3">
 
-    <!-- Vänster: Indatafiler + Prognos/Kampanj + Filter -->
+    <!-- Vanster: Indatafiler + Prognos/Kampanj + Filter -->
     <div class="col-auto">
 
       <!-- Indatafiler -->
@@ -40,7 +40,7 @@
 
     </div>
 
-    <!-- Mitten: DEMO (WMS / Eftersök) -->
+    <!-- Mitten: DEMO (WMS / Eftersok) -->
     <div class="col-auto">
       <div class="card mb-2">
         <div class="card-header">
@@ -48,7 +48,7 @@
         </div>
         <div class="card-body py-2">
           <div class="mb-2">
-            <label class="form-label mb-1">Inköpsnummer</label>
+            <label class="form-label mb-1">Inkopsnummer</label>
             <input type="text" class="form-control form-control-sm" id="purchase-input" placeholder="ex. 12345">
           </div>
           <div class="mb-2">
@@ -62,44 +62,45 @@
       </div>
     </div>
 
-    <!-- Höger: Klistra in värden -->
+    <!-- Hoger: Klistra in varden -->
     <div class="col-auto">
       <div class="card mb-2">
-        <div class="card-header fw-bold">Klistra in värden</div>
+        <div class="card-header fw-bold">Dela</div>
         <div class="card-body py-2">
-          <label class="form-label mb-1">Värden (en per rad):</label>
+          <label class="form-label mb-1">Varden (en per rad):</label>
           <textarea class="form-control form-control-sm" id="paste-values" rows="10"
-                    placeholder="Klistra in dina värden här..."></textarea>
+                    placeholder="Klistra in dina varden har..."></textarea>
           <div class="d-flex align-items-center mt-2 gap-2 flex-wrap">
             <label class="mb-0 text-nowrap">Antal per kolumn:</label>
             <input type="number" class="form-control form-control-sm" style="width:90px"
                    id="chunk-size" value="2000" min="1">
             <button class="btn btn-secondary btn-sm" onclick="openChunkedExcel()">
-              Öppna i Excel direkt
+              Oppna i Excel direkt
             </button>
           </div>
+          <div class="d-flex gap-1 flex-wrap mt-2" id="chunk-col-buttons" style="display:none!important"></div>
         </div>
       </div>
     </div>
 
   </div><!-- /row -->
 
-  <!-- Kör-knappar -->
+  <!-- Kor-knappar -->
   <div class="d-flex gap-2 flex-wrap mb-1 mt-1">
     <button class="btn btn-primary btn-sm" id="btn-allokering" onclick="runJob('allokering')">
-      Kör allokering
+      Kor allokering
     </button>
     <button class="btn btn-primary btn-sm" id="btn-hib-koppling" onclick="runJob('hib-koppling')">
-      Kör HIB-koppling
+      Kor HIB-koppling
     </button>
     <button class="btn btn-primary btn-sm" id="btn-orderkontroll" onclick="runJob('orderkontroll')">
-      Kontrollera orderöversikt
+      Kontrollera orderoversikt
     </button>
     <button class="btn btn-primary btn-sm" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')">
       Kontrollera dispatchpallar
     </button>
     <button class="btn btn-primary btn-sm" id="btn-eftersok" onclick="runJob('eftersok')">
-      Eftersök
+      Eftersok
     </button>
   </div>
 
@@ -109,16 +110,16 @@
       Kompletta ordrar
     </button>
     <button class="btn btn-warning btn-sm" id="btn-pafyllning" onclick="copyList('list2')">
-      Påfyllningsbehov
+      Pafyllningsbehov
     </button>
     <button class="btn btn-outline-secondary btn-sm ms-3" onclick="resetCache()">
       Rensa cache
     </button>
   </div>
 
-  <!-- Öppna resultat-knappar (aktiveras dynamiskt) -->
+  <!-- Oppna resultat-knappar (aktiveras dynamiskt) -->
   <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons">
-    <!-- Genereras av app.js efter körning -->
+    <!-- Genereras av app.js efter korning -->
   </div>
 
   <!-- Loggruta -->

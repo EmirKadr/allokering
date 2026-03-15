@@ -1,47 +1,59 @@
-/**
- * app.js – Allokering WebApp frontend
+﻿/**
+ * app.js - Allokering WebApp frontend
  */
 
 const API = "http://localhost:8000";
+const ASK_URL = "https://noeffectui-frey.nowastelogistics.com/desktop";
+const ASK_LOGIN_WAIT_SECONDS = 60 * 60; // 60 min
+const ASK_OPEN_VIA = "shortcut";        // alltid v+o
 
 // ---------------------------------------------------------------------------
 // Fil-konfiguration
 // ---------------------------------------------------------------------------
 
 const FILE_SLOTS = [
-  { key: "orders",     label: "Beställningslinjer (CSV)",   accept: ".csv,.txt" },
-  { key: "buffer",     label: "Buffertpallar (CSV)",         accept: ".csv,.txt" },
-  { key: "automation", label: "Saldo inkl. automation (CSV)", accept: ".csv,.txt" },
-  { key: "item",       label: "Item option (CSV)",           accept: ".csv,.txt" },
-  { key: "overview",   label: "Orderöversikt (CSV)",         accept: ".csv,.txt" },
-  { key: "dispatch",   label: "Dispatchpallar (CSV)",        accept: ".csv,.txt" },
+  { key: "orders",     label: "Detalj Kundorder (Alla)", accept: ".csv,.txt" },
+  { key: "buffer",     label: "Buffertpallar",            accept: ".csv,.txt" },
+  { key: "automation", label: "Saldo inkl. automation",   accept: ".csv,.txt" },
+  { key: "item",       label: "Item option",              accept: ".csv,.txt" },
+  { key: "overview",   label: "Order\u00f6versikt",       accept: ".csv,.txt" },
+  { key: "dispatch",   label: "Dispatchpallar",           accept: ".csv,.txt" },
 ];
 
 const PROG_SLOTS = [
-  { key: "prognos",  label: "Prognos (XLSX)",            accept: ".xlsx,.xls" },
-  { key: "campaign", label: "Kampanjvolymer (XLSX)",      accept: ".xlsx,.xls" },
+  { key: "prognos",  label: "Prognos",        accept: ".xlsx,.xls" },
+  { key: "campaign", label: "Kampanjvolymer", accept: ".xlsx,.xls" },
 ];
 
 const WMS_SLOTS = [
-  { key: "wms_receive", label: "Mottagningslogg (CSV)",   accept: ".csv,.txt" },
-  { key: "wms_booking", label: "Ej inlagrade (CSV)",       accept: ".csv,.txt" },
-  { key: "wms_trans",   label: "Translogg (CSV)",          accept: ".csv,.txt" },
-  { key: "wms_pick",    label: "Plocklogg (CSV)",          accept: ".csv,.txt" },
-  { key: "wms_correct", label: "Saldojustering (CSV)",     accept: ".csv,.txt" },
+  { key: "wms_receive", label: "Varumottagningslogg",                    accept: ".csv,.txt" },
+  { key: "wms_booking", label: "Ej inlagrade artiklar",                  accept: ".csv,.txt" },
+  { key: "wms_trans",   label: "Translogg",                              accept: ".csv,.txt" },
+  { key: "wms_pick",    label: "Plocklogg full",                         accept: ".csv,.txt" },
+  { key: "wms_correct", label: "Saldojusteringar & inventeringsavvikelser", accept: ".csv,.txt" },
 ];
 
-// Resultatnycklar → visningsnamn
+const ASK_FETCHABLE_KEYS = new Set([
+  ...FILE_SLOTS.map(s => s.key),
+  ...WMS_SLOTS.map(s => s.key),
+]);
+
+const ASK_VIEW_OVERRIDES = {
+  overview: "Order\u00f6versikt",
+};
+
+// Resultatnycklar -> visningsnamn
 const RESULT_LABELS = {
-  "allokerade":       "Öppna allokerade",
-  "nearmiss":         "Öppna near-miss",
-  "pallplatser":      "Öppna pallplatser",
-  "refill":           "Öppna påfyllning",
-  "hib-koppling":     "Öppna HIB-koppling",
-  "orderkontroll":    "Öppna orderkontroll",
-  "dispatchkontroll": "Öppna dispatchkontroll",
-  "eftersok":         "Öppna eftersök",
-  "prognos":          "Öppna prognos vs autoplock",
-  "sales":            "Öppna försäljningsinsikter",
+  "allokerade":       "Oppna allokerade",
+  "nearmiss":         "Oppna near-miss",
+  "pallplatser":      "Oppna pallplatser",
+  "refill":           "Oppna pafyllning",
+  "hib-koppling":     "Oppna HIB-koppling",
+  "orderkontroll":    "Oppna orderkontroll",
+  "dispatchkontroll": "Oppna dispatchkontroll",
+  "eftersok":         "Oppna eftersok",
+  "prognos":          "Oppna prognos vs autoplock",
+  "sales":            "Oppna forsaljningsinsikter",
 };
 
 // ---------------------------------------------------------------------------
@@ -90,6 +102,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   await refreshFileStatus();
   await refreshFilterOptions();
   await refreshResultStatus();
+  await checkAskCsvAgentHealth();
 });
 
 // ---------------------------------------------------------------------------
@@ -123,7 +136,7 @@ function renderWmsRows() {
 function buildFileRow(slot) {
   const row = document.createElement("div");
   row.className = "d-flex align-items-center gap-2 mb-1";
-  row.style.minWidth = "360px";
+  row.style.minWidth = "460px";
 
   const label = document.createElement("span");
   label.textContent = slot.label;
@@ -134,7 +147,7 @@ function buildFileRow(slot) {
   badge.className = "file-status-badge";
   badge.id = `badge-${slot.key}`;
   badge.textContent = "Ej fil";
-  badge.title = "Klicka för att välja fil";
+  badge.title = "Klicka for att valja fil";
   badge.addEventListener("click", () => triggerFilePicker(slot.key, slot.accept));
 
   const removeBtn = document.createElement("button");
@@ -143,7 +156,14 @@ function buildFileRow(slot) {
   removeBtn.title = "Ta bort fil";
   removeBtn.addEventListener("click", () => removeFile(slot.key));
 
-  // Hidden file input (multiple tillåtet för att kunna välja flera filer)
+  const askBtn = document.createElement("button");
+  askBtn.className = "btn btn-outline-primary btn-sm py-0 px-2";
+  askBtn.id = `btn-ask-fetch-${slot.key}`;
+  askBtn.textContent = "H\u00e4mta CSV";
+  askBtn.title = `H\u00e4mta ${viewNameFromSlotLabel(slot.label)} fr\u00e5n ASK`;
+  askBtn.addEventListener("click", () => fetchAskCsvToSlot(slot.key, slot.label));
+
+  // Hidden file input (multiple tillatet for att kunna valja flera filer)
   const input = document.createElement("input");
   input.type = "file";
   input.accept = slot.accept || "";
@@ -162,8 +182,25 @@ function buildFileRow(slot) {
   row.appendChild(label);
   row.appendChild(badge);
   row.appendChild(removeBtn);
+  if (isAskFetchableSlot(slot.key)) {
+    row.appendChild(askBtn);
+  }
   row.appendChild(input);
   return row;
+}
+
+function isAskFetchableSlot(fileKey) {
+  return ASK_FETCHABLE_KEYS.has(fileKey);
+}
+
+function viewNameFromSlotLabel(label) {
+  return (label || "")
+    .replace(/\s*\((csv|xlsx|xls)\)\s*$/i, "")
+    .trim();
+}
+
+function askViewNameForSlot(fileKey, label) {
+  return ASK_VIEW_OVERRIDES[fileKey] || viewNameFromSlotLabel(label);
 }
 
 function triggerFilePicker(key, accept) {
@@ -237,6 +274,135 @@ function setBadge(key, text, loaded) {
 }
 
 // ---------------------------------------------------------------------------
+// ASK CSV bridge
+// ---------------------------------------------------------------------------
+
+let askInitPromise = null;
+
+async function checkAskCsvAgentHealth() {
+  try {
+    const resp = await fetch(`${API}/api/ask-csv/health`);
+    if (!resp.ok) throw new Error("agent ej nåbar");
+    const data = await resp.json();
+    if (data.ready) {
+      appendLog("ASK CSV-agent: redo.");
+    } else {
+      appendLog("ASK CSV-agent: uppe men ej initierad. Init sker automatiskt vid första 'Hämta CSV'.");
+    }
+  } catch (e) {
+    appendLog("ASK CSV-agent: inte nåbar. Starta start_ask_csv_listener.bat.");
+  }
+}
+
+async function initAskCsvAgent(options = {}) {
+  const silent = !!options.silent;
+  if (askInitPromise) return askInitPromise;
+
+  askInitPromise = (async () => {
+    try {
+      if (!silent) {
+        appendLog(`Initierar ASK CSV-agent (loginfönster upp till ${ASK_LOGIN_WAIT_SECONDS}s)...`);
+      }
+      const resp = await fetch(`${API}/api/ask-csv/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: ASK_URL,
+          login_wait: ASK_LOGIN_WAIT_SECONDS,
+          headless: false,
+          slow_mo: 80,
+          goto_timeout: 60,
+        }),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.detail || resp.statusText);
+      }
+      const data = await resp.json().catch(() => ({}));
+      if (data && data.ready === false) {
+        appendLog("ASK CSV-agent: login hann inte bli klar inom väntetiden.");
+        return false;
+      }
+      if (!silent) {
+        appendLog("ASK CSV-agent init klar.");
+      }
+      return true;
+    } catch (e) {
+      appendLog(`FEL vid init av ASK CSV-agent: ${e}`);
+      return false;
+    } finally {
+      askInitPromise = null;
+    }
+  })();
+
+  return askInitPromise;
+}
+
+async function fetchAskCsvToSlot(fileKey, slotLabel) {
+  const btn = document.getElementById(`btn-ask-fetch-${fileKey}`);
+  const original = btn ? btn.textContent : "Hämta CSV";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${original}`;
+  }
+
+  try {
+    let healthReady = false;
+    try {
+      const h = await fetch(`${API}/api/ask-csv/health`);
+      if (h.ok) {
+        const hs = await h.json();
+        healthReady = !!hs.ready;
+      }
+    } catch (e) {
+      // ignoreras här, fångas nedan vid init/fetch
+    }
+
+    if (!healthReady) {
+      appendLog("ASK CSV-agent ej initierad. Startar login-flöde nu...");
+      const ok = await initAskCsvAgent({ silent: true });
+      if (!ok) {
+        throw new Error("Initiering misslyckades. Se loggen ovan.");
+      }
+      appendLog("Login-flöde klart. Fortsätter med CSV-hämtning...");
+    }
+
+    const viewName = askViewNameForSlot(fileKey, slotLabel);
+
+    appendLog(`Hämtar CSV från ASK: vy='${viewName}' -> slot='${fileKey}'...`);
+    const resp = await fetch(`${API}/api/ask-csv/fetch/${sessionId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        view_name: viewName,
+        target_file_key: fileKey,
+        open_via: ASK_OPEN_VIA,
+        open_text: "Visa",
+        export_text: "Exportera till CSV",
+        grid_wait: 30,
+        download_timeout: 120,
+      }),
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      throw new Error(errData.detail || resp.statusText);
+    }
+    const data = await resp.json();
+
+    fileStatuses[fileKey] = data.filename;
+    setBadge(fileKey, data.filename, true);
+    appendLog(`CSV hämtad och kopplad till [${fileKey}]: ${data.filename} (${data.bytes} bytes)`);
+    await refreshFilterOptions();
+  } catch (e) {
+    appendLog(`FEL vid CSV-hämtning: ${e}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+}
+// ---------------------------------------------------------------------------
 // Filter
 // ---------------------------------------------------------------------------
 
@@ -275,12 +441,12 @@ function renderFilterCard(options) {
   }
   content.appendChild(row);
 
-  // "Välj alla" / "Rensa" knappar
+  // "Valj alla" / "Rensa" knappar
   const btnRow = document.createElement("div");
   btnRow.className = "d-flex gap-2 mt-2";
   const selectAll = document.createElement("button");
   selectAll.className = "btn btn-sm btn-outline-secondary";
-  selectAll.textContent = "Välj alla";
+  selectAll.textContent = "Valj alla";
   selectAll.onclick = () => {
     document.querySelectorAll(".filter-check").forEach(cb => { cb.checked = true; });
     saveFilters();
@@ -336,7 +502,7 @@ function saveFilters() {
 }
 
 // ---------------------------------------------------------------------------
-// Körning
+// Korning
 // ---------------------------------------------------------------------------
 
 async function runJob(job) {
@@ -407,12 +573,12 @@ function connectSSE() {
 
     // Klar/Fel
     if (msg === "__DONE__" || msg === "__ERROR__") {
-      // Återställ alla körningsknappar
+      // Aterstall alla korningsknappar
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
-      appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbröts med fel ---");
+      appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
       refreshResultStatus();
       if (msg === "__DONE__") {
-        // Uppdatera ordersaldo-listor efter avslutad körning
+        // Uppdatera ordersaldo-listor efter avslutad korning
         fetch(`${API}/api/ordersaldo/refresh/${sessionId}`, { method: "POST" }).catch(() => {});
       }
       return;
@@ -421,7 +587,7 @@ function connectSSE() {
     appendLog(msg);
   };
   sseSource.onerror = () => {
-    // Försök återansluta efter 3 sekunder
+    // Forsok ateransluta efter 3 sekunder
     setTimeout(connectSSE, 3000);
   };
 }
@@ -460,7 +626,7 @@ function renderResultButtons() {
   const container = document.getElementById("result-buttons");
   container.innerHTML = "";
   availableResults.forEach(key => {
-    const label = RESULT_LABELS[key] || `Öppna ${key}`;
+    const label = RESULT_LABELS[key] || `Oppna ${key}`;
     const btn = document.createElement("button");
     btn.className = "btn btn-success btn-sm";
     btn.textContent = label;
@@ -487,7 +653,7 @@ async function copyList(listId) {
     const data = await resp.json();
     const values = data.values || [];
     if (values.length === 0) {
-      appendLog(`${listId === "list1" ? "Kompletta ordrar" : "Påfyllningsbehov"}: listan är tom.`);
+      appendLog(`${listId === "list1" ? "Kompletta ordrar" : "Pafyllningsbehov"}: listan ar tom.`);
       return;
     }
     await navigator.clipboard.writeText(values.join("\n"));
@@ -522,11 +688,11 @@ async function openChunkedExcel() {
   const rawText = document.getElementById("paste-values").value.trim();
   const values = rawText.split("\n").map(v => v.trim()).filter(v => v);
   if (values.length === 0) {
-    appendLog("Inga värden att öppna.");
+    appendLog("Inga varden att oppna.");
     return;
   }
   const chunkSize = parseInt(document.getElementById("chunk-size").value) || 2000;
-  appendLog(`Skapar Excel med ${values.length} värden, ${chunkSize} per kolumn...`);
+  appendLog(`Skapar Excel med ${values.length} varden, ${chunkSize} per kolumn...`);
   try {
     const resp = await fetch(`${API}/api/chunked-excel`, {
       method: "POST",
@@ -546,6 +712,63 @@ async function openChunkedExcel() {
     appendLog(`FEL vid skapande av Excel: ${e}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Kolumnknappar for Dela-sektionen
+// ---------------------------------------------------------------------------
+
+const MAX_CHUNK_COL_BUTTONS = 20;
+
+function updateChunkColButtons() {
+  const container = document.getElementById("chunk-col-buttons");
+  if (!container) return;
+
+  const rawText = document.getElementById("paste-values").value.trim();
+  const values = rawText.split("\n").map(v => v.trim()).filter(v => v);
+  const chunkSize = parseInt(document.getElementById("chunk-size").value) || 2000;
+  const numCols = Math.ceil(values.length / chunkSize);
+
+  container.innerHTML = "";
+
+  if (numCols < 2) {
+    container.style.display = "none";
+    return;
+  }
+
+  container.style.display = "";
+  const visible = Math.min(numCols, MAX_CHUNK_COL_BUTTONS);
+  for (let i = 0; i < visible; i++) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-warning btn-sm";
+    btn.textContent = `Kolumn ${i + 1}`;
+    btn.title = `Kopiera varden i kolumn ${i + 1}`;
+    btn.dataset.colIndex = i;
+    btn.addEventListener("click", () => copyChunkColumn(i));
+    container.appendChild(btn);
+  }
+}
+
+async function copyChunkColumn(colIndex) {
+  const rawText = document.getElementById("paste-values").value.trim();
+  const values = rawText.split("\n").map(v => v.trim()).filter(v => v);
+  const chunkSize = parseInt(document.getElementById("chunk-size").value) || 2000;
+  const start = colIndex * chunkSize;
+  const chunk = values.slice(start, start + chunkSize);
+  if (chunk.length === 0) {
+    appendLog(`Kolumn ${colIndex + 1} ar tom.`);
+    return;
+  }
+  await navigator.clipboard.writeText(chunk.join("\n"));
+  appendLog(`${chunk.length} varden fran kolumn ${colIndex + 1} kopierade.`);
+}
+
+// Lyssna pa andringar i textarea och chunk-size
+window.addEventListener("DOMContentLoaded", () => {
+  const textarea = document.getElementById("paste-values");
+  const chunkInput = document.getElementById("chunk-size");
+  if (textarea) textarea.addEventListener("input", updateChunkColButtons);
+  if (chunkInput) chunkInput.addEventListener("input", updateChunkColButtons);
+});
 
 // ---------------------------------------------------------------------------
 // Drag & Drop
@@ -602,11 +825,12 @@ function matchFileToSlot(filename) {
   // Generiska matchningar
   if (lower.includes("prognos") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "prognos";
   if (lower.includes("kampanj") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "campaign";
-  if (lower.includes("bestall") || lower.includes("beställ") || (lower.includes("order") && lower.includes("detail"))) return "orders";
+  if (lower.includes("bestall") || lower.includes("best\u00e4ll") || (lower.includes("order") && lower.includes("detail"))) return "orders";
   if (lower.includes("buffert") || lower.includes("buffer")) return "buffer";
   if (lower.includes("saldo") || lower.includes("automation")) return "automation";
   if (lower.includes("item") || lower.includes("artikel_option")) return "item";
-  if (lower.includes("overview") || lower.includes("översikt") || lower.includes("order_overview")) return "overview";
+  if (lower.includes("overview") || lower.includes("oversikt") || lower.includes("\u00f6versikt") || lower.includes("order_overview")) return "overview";
   if (lower.includes("dispatch")) return "dispatch";
   return null;
 }
+
