@@ -1777,6 +1777,114 @@ def scan_filter_values(df: pd.DataFrame) -> Dict[str, List[str]]:
     return result
 
 
+ORDERSALDO_COLUMN_CANDIDATES: Dict[str, List[str]] = {
+    "order":   ["ordernr", "ordernummer", "order number", "order no", "orderid", "order"],
+    "article": ["artikel", "artikelnr", "artikelnummer", "artnr", "sku", "item", "productcode"],
+    "demand":  ["beställt", "bestalld", "ordered", "orderqty", "qty", "quantity", "antal"],
+    "pick":    ["plock", "plocksaldo", "saldo", "available", "stock", "qtyavailable", "saldo autoplock"],
+}
+
+
+def _ordersaldo_norm(value: str) -> str:
+    """Normalisera kolumnnamn för robust matchning (portad från allokera11.py)."""
+    txt = str(value).lower()
+    txt = txt.replace("å", "a").replace("ä", "a").replace("ö", "o")
+    txt = re.sub(r"[^a-z0-9]+", "", txt)
+    return txt
+
+
+def _ordersaldo_find_col(df: pd.DataFrame, candidates: List[str], used_cols: set) -> Optional[str]:
+    """Hitta kolumn via exakt/fuzzy match mot kandidater (portad från allokera11.py)."""
+    cols = [str(c) for c in df.columns]
+    norm_cols = {col: _ordersaldo_norm(col) for col in cols}
+    cand_norm = [_ordersaldo_norm(c) for c in candidates]
+    # Exakt match
+    for cand in cand_norm:
+        for col, norm_col in norm_cols.items():
+            if col in used_cols:
+                continue
+            if norm_col == cand:
+                return col
+    # Delsträngsmatch
+    for cand in cand_norm:
+        for col, norm_col in norm_cols.items():
+            if col in used_cols:
+                continue
+            if cand and cand in norm_col:
+                return col
+    return None
+
+
+def refresh_ordersaldo(orders_path: str, active_filters: Optional[Dict[str, List[str]]] = None) -> Tuple[List[str], List[str]]:
+    """
+    Beräkna data för Kompletta ordrar / Påfyllningsbehov från beställningslinjer.
+    Portad från allokera11.py _refresh_ordersaldo_from_orders.
+
+    Returnerar (list1_values, list2_values):
+      list1_values – sorterade ordernummer för ordrar där alla rader har plock >= beställt
+      list2_values – sorterade artikelnummer där total efterfrågan överstiger max plocksaldo
+    """
+    if not orders_path:
+        return [], []
+
+    try:
+        df = read_csv_auto(orders_path)
+    except Exception:
+        return [], []
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return [], []
+
+    # Applicera filter om sådana finns
+    if active_filters:
+        try:
+            df = apply_value_filters(df, active_filters)
+        except Exception:
+            pass
+
+    if df.empty:
+        return [], []
+
+    used: set = set()
+    order_col = _ordersaldo_find_col(df, ORDERSALDO_COLUMN_CANDIDATES["order"], used)
+    if order_col:
+        used.add(order_col)
+    article_col = _ordersaldo_find_col(df, ORDERSALDO_COLUMN_CANDIDATES["article"], used)
+    if article_col:
+        used.add(article_col)
+    demand_col = _ordersaldo_find_col(df, ORDERSALDO_COLUMN_CANDIDATES["demand"], used)
+    if demand_col:
+        used.add(demand_col)
+    pick_col = _ordersaldo_find_col(df, ORDERSALDO_COLUMN_CANDIDATES["pick"], used)
+
+    if not order_col or not article_col or not demand_col or not pick_col:
+        return [], []
+
+    calc_df = df.copy()
+    calc_df[order_col] = calc_df[order_col].astype(str).str.strip()
+    calc_df[article_col] = calc_df[article_col].astype(str).str.strip()
+    calc_df[demand_col] = calc_df[demand_col].map(to_num).astype(float)
+    calc_df[pick_col] = calc_df[pick_col].map(to_num).astype(float)
+
+    # Lista 1: Kompletta ordrar – alla rader har plock >= beställt
+    calc_df["_enough_row"] = calc_df[pick_col] >= calc_df[demand_col]
+    complete_mask = calc_df.groupby(order_col)["_enough_row"].all()
+    list1_values: List[str] = sorted(complete_mask[complete_mask].index.astype(str).tolist())
+
+    # Lista 2: Påfyllningsbehov – artiklar där total efterfrågan > max plocksaldo
+    demand_by_art = calc_df.groupby(article_col)[demand_col].sum(min_count=1)
+    stock_by_art = calc_df.groupby(article_col)[pick_col].max()
+    holistic = pd.DataFrame({
+        "Total beställt": demand_by_art,
+        "Tillgängligt saldo (Plock)": stock_by_art,
+    }).fillna(0)
+    holistic["Underskott"] = (holistic["Total beställt"] - holistic["Tillgängligt saldo (Plock)"]).clip(lower=0)
+    holistic_short = holistic[holistic["Underskott"] > 0]
+    list2_values: List[str] = sorted(holistic_short.index.astype(str).tolist())
+
+    return list1_values, list2_values
+
+
 def read_csv_auto(path: str) -> pd.DataFrame:
     """Läs CSV med automatisk separator-detektering."""
     try:

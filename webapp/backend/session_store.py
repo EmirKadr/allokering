@@ -17,6 +17,8 @@ class SessionData:
     log_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     created_at: datetime = field(default_factory=datetime.utcnow)
     running: bool = False
+    ordersaldo_list1: list = field(default_factory=list)       # Kompletta ordernummer
+    ordersaldo_list2: list = field(default_factory=list)       # Artiklar med påfyllningsbehov
 
 
 _sessions: Dict[str, SessionData] = {}

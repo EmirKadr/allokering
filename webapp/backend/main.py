@@ -38,6 +38,7 @@ from logic import (
     normalize_items,
     normalize_saldo,
     read_csv_auto,
+    refresh_ordersaldo,
     save_df_to_excel,
     scan_filter_values,
     ORDER_SCHEMA,
@@ -326,6 +327,20 @@ async def _job_allokering(session: SessionData):
                 log(f"  Zon {r[zon_col]}: {r['Totalt antal']:.0f}")
         except Exception:
             pass
+
+        # Beräkna ordersaldo-listor (kompletta ordrar / påfyllningsbehov)
+        try:
+            if orders_path:
+                list1, list2 = await loop.run_in_executor(
+                    None,
+                    lambda: refresh_ordersaldo(orders_path, session.active_filters),
+                )
+                session.ordersaldo_list1 = list1
+                session.ordersaldo_list2 = list2
+                if list1 or list2:
+                    log(f"Ordersaldo: {len(list1)} kompletta ordrar, {len(list2)} artiklar med påfyllningsbehov.")
+        except Exception as e:
+            log(f"Varning: Ordersaldo-beräkning misslyckades: {e}")
 
         log("Allokeringen är klar.")
         log("__DONE__")
@@ -970,6 +985,47 @@ async def api_run_eftersok(sid: str, body: EftersokBody, background_tasks: Backg
     session.running = True
     background_tasks.add_task(_job_eftersok, session, body.purchase, body.article)
     return {"job_id": "eftersok", "status": "started"}
+
+
+# ---------------------------------------------------------------------------
+# Ordersaldo endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/ordersaldo/refresh/{sid}")
+async def api_ordersaldo_refresh(sid: str):
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    orders_path = session.files.get("orders")
+    if not orders_path or not os.path.exists(orders_path):
+        raise HTTPException(status_code=400, detail="Beställningslinjer-filen saknas")
+    loop = asyncio.get_event_loop()
+    list1, list2 = await loop.run_in_executor(
+        None,
+        lambda: refresh_ordersaldo(orders_path, session.active_filters),
+    )
+    session.ordersaldo_list1 = list1
+    session.ordersaldo_list2 = list2
+    return {
+        "list1_count": len(list1),
+        "list2_count": len(list2),
+    }
+
+
+@app.get("/api/ordersaldo/list1/{sid}")
+def api_ordersaldo_list1(sid: str):
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    return {"values": session.ordersaldo_list1}
+
+
+@app.get("/api/ordersaldo/list2/{sid}")
+def api_ordersaldo_list2(sid: str):
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    return {"values": session.ordersaldo_list2}
 
 
 # ---------------------------------------------------------------------------

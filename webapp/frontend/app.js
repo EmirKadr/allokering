@@ -397,6 +397,10 @@ function connectSSE() {
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbröts med fel ---");
       refreshResultStatus();
+      if (msg === "__DONE__") {
+        // Uppdatera ordersaldo-listor efter avslutad körning
+        fetch(`${API}/api/ordersaldo/refresh/${sessionId}`, { method: "POST" }).catch(() => {});
+      }
       return;
     }
 
@@ -459,8 +463,25 @@ function downloadResult(key) {
 // Kopiera listor
 // ---------------------------------------------------------------------------
 
-function copyList(listId) {
-  appendLog(`Kopiering av ${listId} är inte implementerat i webbversionen.`);
+async function copyList(listId) {
+  try {
+    const resp = await fetch(`${API}/api/ordersaldo/${listId}/${sessionId}`);
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      throw new Error(errData.detail || resp.statusText);
+    }
+    const data = await resp.json();
+    const values = data.values || [];
+    if (values.length === 0) {
+      appendLog(`${listId === "list1" ? "Kompletta ordrar" : "Påfyllningsbehov"}: listan är tom.`);
+      return;
+    }
+    await navigator.clipboard.writeText(values.join("\n"));
+    const label = listId === "list1" ? "ordernummer" : "artikelnummer";
+    appendLog(`${values.length} ${label} kopierade.`);
+  } catch (e) {
+    appendLog(`FEL vid kopiering av ${listId}: ${e}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
