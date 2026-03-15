@@ -534,25 +534,28 @@ function setupDragDrop() {
 
 function matchFileToSlot(filename) {
   const lower = filename.toLowerCase();
-  // Försök matcha på förväntade filnamn
-  const wmsMap = {
-    "wms_receive":  ["receive", "mottagning", "v_ask_receive"],
-    "wms_booking":  ["booking", "putaway", "inlagrade", "v_ask_booking"],
-    "wms_buffert":  ["buffert", "buffer", "v_ask_article_buffert"],
-    "wms_trans":    ["trans_log", "translogg", "v_ask_trans"],
-    "wms_pick":     ["pick_log", "plocklogg", "v_ask_pick"],
-    "wms_correct":  ["correct", "saldojust", "v_ask_correct"],
+
+  // Exakta prefix-matchningar (speglar allokera11.py _detect_file_type)
+  const exactMap = {
+    "wms_receive": "v_ask_receive_log",
+    "wms_booking": "v_ask_booking_putaway",
+    "buffer":      "v_ask_article_buffertpallet",
+    "wms_trans":   "v_ask_trans_log",
+    "wms_pick":    "v_ask_pick_log_full",
+    "wms_correct": "v_ask_correct_log",
   };
-  for (const [key, patterns] of Object.entries(wmsMap)) {
-    if (patterns.some(p => lower.includes(p))) return key;
+  for (const [slot, hint] of Object.entries(exactMap)) {
+    if (lower.includes(hint)) return slot;
   }
+
+  // Generiska matchningar
   if (lower.includes("prognos") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "prognos";
   if (lower.includes("kampanj") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "campaign";
-  if (lower.includes("bestall") || lower.includes("beställ") || lower.includes("order") && lower.includes("detail")) return "orders";
+  if (lower.includes("bestall") || lower.includes("beställ") || (lower.includes("order") && lower.includes("detail"))) return "orders";
   if (lower.includes("buffert") || lower.includes("buffer")) return "buffer";
   if (lower.includes("saldo") || lower.includes("automation")) return "automation";
   if (lower.includes("item") || lower.includes("artikel_option")) return "item";
-  if (lower.includes("overview") || lower.includes("översikt")) return "overview";
+  if (lower.includes("overview") || lower.includes("översikt") || lower.includes("order_overview")) return "overview";
   if (lower.includes("dispatch")) return "dispatch";
   return null;
 }
