@@ -1028,6 +1028,25 @@ def api_ordersaldo_list2(sid: str):
 
 
 # ---------------------------------------------------------------------------
+# Debug
+# ---------------------------------------------------------------------------
+
+@app.get("/api/debug/columns/{sid}/{file_key}")
+def api_debug_columns(sid: str, file_key: str):
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    path = session.files.get(file_key)
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Fil saknas")
+    try:
+        df = read_csv_auto(path)
+        return {"columns": list(df.columns), "rows": len(df)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Rensa cache
 # ---------------------------------------------------------------------------
 
