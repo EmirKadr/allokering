@@ -218,14 +218,8 @@ def _open_view_from_menu(page: Page, view_name: str, use_shortcut: bool = True) 
         search.click()
         search.fill(view_name)
         page.wait_for_timeout(350)
-    except Exception:
-        return False
-
-    if _click_by_text(page, view_name, timeout_ms=5000):
-        return True
-
-    try:
         search.press("Enter")
+        page.wait_for_timeout(450)
         return True
     except Exception:
         return False
@@ -560,12 +554,6 @@ class AskCsvAgent:
             if body.open_text and body.open_text.strip():
                 _click_by_text(page, body.open_text.strip(), timeout_ms=7000)
 
-            # Preferred path: call the same ASK download endpoint directly.
-            direct = _try_direct_csv_download(page, output_name=body.output_name.strip())
-            if direct:
-                return direct
-
-            # Fallback path: UI context-menu export.
             if not _right_click_in_primary_grid(page, timeout_ms=body.grid_wait * 1000):
                 raise RuntimeError("Kunde inte hitta tabell/grid att högerklicka i.")
             try:
