@@ -13,6 +13,7 @@ Run:
 from __future__ import annotations
 
 import os
+import queue
 import re
 import tempfile
 import threading
@@ -33,6 +34,8 @@ DEFAULT_ASK_URL = os.environ.get(
     "ASK_CSV_DEFAULT_URL",
     "https://noeffectui-frey.nowastelogistics.com/desktop",
 ).strip()
+DEFAULT_MS_USERNAME = os.environ.get("ASK_MS_USERNAME", "").strip()
+DEFAULT_MS_PASSWORD = os.environ.get("ASK_MS_PASSWORD", "").strip()
 
 
 def _click_by_text(page: Page, text: str, timeout_ms: int = 4000) -> bool:
@@ -51,6 +54,34 @@ def _click_by_text(page: Page, text: str, timeout_ms: int = 4000) -> bool:
         except Exception:
             continue
     return False
+
+
+def _find_clickable_export_item(page: Page, text: str, timeout_ms: int = 2500):
+    candidates = [
+        page.get_by_role("menuitem", name=text),
+        page.locator("a.dropdown-item", has_text=text),
+        page.locator("a.dropdown-item:has-text('Exportera till CSV')"),
+        page.get_by_text(text, exact=True),
+        page.get_by_text(text),
+    ]
+    step_ms = 120
+    tries = max(1, timeout_ms // step_ms)
+    for _ in range(tries):
+        for loc in candidates:
+            try:
+                count = min(loc.count(), 10)
+                for i in range(count):
+                    item = loc.nth(i)
+                    if not item.is_visible():
+                        continue
+                    cls = (item.get_attribute("class") or "").lower()
+                    if "disabled" in cls:
+                        continue
+                    return item
+            except Exception:
+                continue
+        page.wait_for_timeout(step_ms)
+    return None
 
 
 def _first_visible(
@@ -123,7 +154,16 @@ def _verify_view_open(page: Page, view_name: str, wait_ms: int = 2200) -> bool:
         except Exception:
             pass
 
-        for sel in ["[role='tab']", ".nav-link", "button", "a"]:
+        # Prefer active/selected UI markers only, to avoid false positives from
+        # merely visible tabs/buttons that are not currently selected.
+        for sel in [
+            "[role='tab'][aria-selected='true']",
+            ".nav-link.active",
+            "[aria-current='page']",
+            ".btn.active",
+            ".btn.btn-light",
+            "button.dropdown-toggle",
+        ]:
             try:
                 loc = page.locator(sel).filter(has_text=view_name)
                 count = min(loc.count(), 15)
@@ -289,7 +329,7 @@ def _find_open_menu_near_button(page: Page, btn_bbox: Optional[dict], timeout_ms
     return None
 
 
-def _click_export_in_dropdown(menu: Locator, export_text: str, timeout_ms: int = 2500) -> tuple[bool, str]:
+def _find_export_in_dropdown(menu: Locator, export_text: str, timeout_ms: int = 2500):
     candidates = [
         ("css_span", menu.locator("a.dropdown-item:has(span:has-text('Exportera till CSV'))")),
         ("css_item", menu.locator("a.dropdown-item", has_text=export_text)),
@@ -311,12 +351,11 @@ def _click_export_in_dropdown(menu: Locator, export_text: str, timeout_ms: int =
                     cls = (item.get_attribute("class") or "").lower()
                     if "disabled" in cls:
                         continue
-                    item.click()
-                    return True, last_hits
+                    return item, last_hits
             except Exception:
                 continue
         time.sleep(0.1)
-    return False, last_hits
+    return None, last_hits
 
 
 def _capture_error_screenshot(page: Page, prefix: str) -> str:
@@ -331,16 +370,36 @@ def _capture_error_screenshot(page: Page, prefix: str) -> str:
         return ""
 
 
-def _export_via_three_dots(page: Page, export_text: str, download_timeout: int, step_log: list[str]):
+def _ms_since(start: float) -> int:
+    return int((time.perf_counter() - start) * 1000)
+
+
+def _ts() -> str:
+    return time.strftime("%H:%M:%S")
+
+
+def _push_step(step_log: list[str], msg: str, trace=None) -> None:
+    step_log.append(msg)
+    if trace:
+        try:
+            trace(msg)
+        except Exception:
+            pass
+
+
+def _export_via_three_dots(page: Page, export_text: str, download_timeout: int, step_log: list[str], trace=None):
+    fn_start = time.perf_counter()
     buttons = _collect_upper_three_dot_buttons(page)
-    step_log.append(f"three_dot_buttons={len(buttons)}")
+    _push_step(step_log, f"menu_collect_ms={_ms_since(fn_start)}", trace=trace)
+    _push_step(step_log, f"three_dot_buttons={len(buttons)}", trace=trace)
     if not buttons:
         raise RuntimeError("no_upper_three_dot_button")
 
-    attempts = min(3, len(buttons))
+    attempts = min(2, len(buttons))
     last_error = "menu_export_unknown"
     for idx in range(attempts):
         btn = buttons[idx]
+        attempt_start = time.perf_counter()
         try:
             try:
                 page.keyboard.press("Escape")
@@ -348,27 +407,34 @@ def _export_via_three_dots(page: Page, export_text: str, download_timeout: int, 
             except Exception:
                 pass
             btn_bbox = btn.bounding_box()
-            step_log.append(f"menu_try_{idx + 1}_btn_y={round(float((btn_bbox or {}).get('y', -1.0)), 1)}")
+            _push_step(step_log, f"menu_try_{idx + 1}_btn_y={round(float((btn_bbox or {}).get('y', -1.0)), 1)}", trace=trace)
 
+            btn.click()
+            menu = _find_open_menu_near_button(page, btn_bbox=btn_bbox, timeout_ms=1800)
+            if not menu:
+                raise RuntimeError("menu_not_found")
+            export_item, hit = _find_export_in_dropdown(menu, export_text=export_text, timeout_ms=1200)
+            _push_step(step_log, f"menu_try_{idx + 1}_selector_hits={hit}", trace=trace)
+            if not export_item:
+                raise RuntimeError("export_item_not_found")
+
+            click_start = time.perf_counter()
+            _push_step(step_log, f"menu_try_{idx + 1}_pre_click_ms={_ms_since(attempt_start)}", trace=trace)
             with page.expect_download(timeout=max(1, int(download_timeout)) * 1000) as dl_info:
-                btn.click()
-                menu = _find_open_menu_near_button(page, btn_bbox=btn_bbox, timeout_ms=3200)
-                if not menu:
-                    raise RuntimeError("menu_not_found")
-                ok, hit = _click_export_in_dropdown(menu, export_text=export_text, timeout_ms=2600)
-                step_log.append(f"menu_try_{idx + 1}_selector_hits={hit}")
-                if not ok:
-                    raise RuntimeError("export_item_not_found")
+                export_item.click()
+            _push_step(step_log, f"menu_try_{idx + 1}_wait_download_ms={_ms_since(click_start)}", trace=trace)
+            _push_step(step_log, f"menu_try_{idx + 1}_ok_ms={_ms_since(attempt_start)}", trace=trace)
             return dl_info.value
         except PlaywrightTimeoutError:
             last_error = f"menu_try_{idx + 1}_download_timeout"
-            step_log.append(last_error)
+            _push_step(step_log, f"{last_error}_ms={_ms_since(attempt_start)}", trace=trace)
             continue
         except Exception as e:
             last_error = f"menu_try_{idx + 1}_failed:{e}"
-            step_log.append(last_error)
+            _push_step(step_log, f"{last_error}_ms={_ms_since(attempt_start)}", trace=trace)
             continue
 
+    _push_step(step_log, f"menu_all_attempts_ms={_ms_since(fn_start)}", trace=trace)
     raise RuntimeError(last_error)
 
 
@@ -378,31 +444,46 @@ def _export_via_right_click(
     grid_wait_sec: int,
     download_timeout: int,
     step_log: list[str],
+    trace=None,
 ):
-    if not _right_click_in_primary_grid(page, timeout_ms=max(1, int(grid_wait_sec)) * 1000):
+    rc_start = time.perf_counter()
+    if not _right_click_in_primary_grid(
+        page,
+        timeout_ms=max(1, int(grid_wait_sec)) * 1000,
+        trace=trace,
+    ):
         raise RuntimeError("grid_not_found_for_right_click")
-    step_log.append("right_click_grid_ok")
+    _push_step(step_log, f"right_click_grid_ok_ms={_ms_since(rc_start)}", trace=trace)
+    export_item = _find_clickable_export_item(page, text=export_text, timeout_ms=1800)
+    if not export_item:
+        raise RuntimeError(f"export_menu_item_not_found:{export_text}")
+    _push_step(step_log, f"right_click_pre_click_ms={_ms_since(rc_start)}", trace=trace)
     try:
+        click_start = time.perf_counter()
         with page.expect_download(timeout=max(1, int(download_timeout)) * 1000) as dl_info:
-            ok = _click_by_text(page, export_text, timeout_ms=10000)
-            step_log.append(f"right_click_export_click={ok}")
-            if not ok:
-                raise RuntimeError(f"export_menu_item_not_found:{export_text}")
+            export_item.click()
+        _push_step(step_log, "right_click_export_click=True", trace=trace)
+        _push_step(step_log, f"right_click_wait_download_ms={_ms_since(click_start)}", trace=trace)
+        _push_step(step_log, f"right_click_ok_ms={_ms_since(rc_start)}", trace=trace)
         return dl_info.value
     except PlaywrightTimeoutError as e:
         raise RuntimeError("right_click_download_timeout") from e
 
 
-def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
+def _right_click_in_primary_grid(page: Page, timeout_ms: int, trace=None) -> bool:
     viewport = page.viewport_size or {"width": 1920, "height": 1080}
     vheight = float(viewport.get("height", 1080))
     upper_limit = vheight * 0.72
+    if trace:
+        trace(f"right_click_begin timeout_ms={timeout_ms}")
     try:
         page.keyboard.press("Escape")
     except Exception:
         pass
 
     # First try visible rows in the upper/main grid.
+    # Keep this probe short so we do not delay export click by many seconds.
+    row_probe_timeout = min(max(600, int(timeout_ms)), 1800)
     row = _first_visible(
         page,
         selectors=[
@@ -413,7 +494,7 @@ def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
             "[role='row']",
             "table tbody tr",
         ],
-        timeout_ms=timeout_ms,
+        timeout_ms=row_probe_timeout,
         max_per_selector=120,
     )
     if row:
@@ -424,9 +505,16 @@ def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
                 if 90 <= center_y <= upper_limit and bbox["width"] >= 250:
                     x = bbox["x"] + min(220.0, max(70.0, bbox["width"] * 0.2))
                     y = center_y
+                    if trace:
+                        trace(
+                            f"right_click_row_target x={round(x,1)} y={round(y,1)} "
+                            f"w={round(float(bbox['width']),1)} h={round(float(bbox['height']),1)}"
+                        )
                     page.mouse.click(x, y, button="left")
                     page.wait_for_timeout(90)
                     page.mouse.click(x, y, button="right")
+                    if trace:
+                        trace("right_click_row_context_opened")
                     return True
         except Exception:
             pass
@@ -464,30 +552,65 @@ def _right_click_in_primary_grid(page: Page, timeout_ms: int) -> bool:
         _, best_box = sorted(candidates, key=lambda it: _grid_box_score(it[1]))[0]
         x = best_box["x"] + min(260.0, max(90.0, best_box["width"] * 0.18))
         y = best_box["y"] + min(180.0, max(55.0, best_box["height"] * 0.3))
+        if trace:
+            trace(
+                f"right_click_container_target x={round(x,1)} y={round(y,1)} "
+                f"w={round(float(best_box['width']),1)} h={round(float(best_box['height']),1)}"
+            )
     else:
         # Last resort for views where row/grid selectors are unstable:
         # click a safe point in the upper data area.
         vwidth = float(viewport.get("width", 1920))
         x = min(max(140.0, vwidth * 0.22), vwidth - 140.0)
         y = min(max(180.0, vheight * 0.30), upper_limit - 20.0)
+        if trace:
+            trace(f"right_click_fallback_target x={round(x,1)} y={round(y,1)}")
 
     page.mouse.click(x, y, button="left")
     page.wait_for_timeout(90)
     page.mouse.click(x, y, button="right")
+    if trace:
+        trace("right_click_context_opened")
     return True
 
 
-def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = True) -> bool:
+def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = True, trace=None) -> bool:
     view_name = (view_name or "").strip()
     if not view_name:
+        if trace:
+            trace("open_view_once_empty_view_name")
         return False
+    if trace:
+        trace(f"open_view_once_start view='{view_name}' use_shortcut={use_shortcut}")
+
+    # Fast path: already in requested view.
+    if _verify_view_open(page, view_name=view_name, wait_ms=500):
+        if trace:
+            trace("open_view_once_already_open")
+        return True
+
+    # Fast path: tab/button is already visible and clickable.
+    try:
+        if _click_by_text(page, view_name, timeout_ms=1200):
+            if _verify_view_open(page, view_name=view_name, wait_ms=1800):
+                if trace:
+                    trace("open_view_once_clicked_visible_tab_or_button")
+                return True
+    except Exception:
+        pass
 
     if use_shortcut:
+        try:
+            page.mouse.click(40, 40)
+        except Exception:
+            pass
         try:
             page.keyboard.press("v")
             page.wait_for_timeout(120)
             page.keyboard.press("o")
             page.wait_for_timeout(250)
+            if trace:
+                trace("open_view_once_shortcut_vo_sent")
         except Exception:
             pass
 
@@ -498,12 +621,16 @@ def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = T
             "input[placeholder*='sök' i]",
             "input[placeholder*='sok' i]",
             "input[placeholder*='search' i]",
+            "input[aria-label*='sök' i]",
+            "input[aria-label*='search' i]",
             ".dropdown-menu.show input[type='search']",
             ".dropdown-menu.show input[type='text']",
             "input[type='search']",
         ],
         timeout_ms=1800,
     )
+    if trace:
+        trace(f"open_view_once_search_found={bool(search)}")
 
     if not search:
         plus = _first_visible(
@@ -519,7 +646,58 @@ def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = T
             timeout_ms=5000,
         )
         if not plus:
+            if trace:
+                trace("open_view_once_plus_not_found")
+            if use_shortcut:
+                # One more shortcut try in case first keypress missed focus.
+                try:
+                    page.mouse.click(40, 40)
+                except Exception:
+                    pass
+                try:
+                    page.keyboard.press("v")
+                    page.wait_for_timeout(120)
+                    page.keyboard.press("o")
+                    page.wait_for_timeout(300)
+                    if trace:
+                        trace("open_view_once_shortcut_retry_sent")
+                except Exception:
+                    pass
+                search = _first_visible(
+                    page,
+                    selectors=[
+                        "input[placeholder*='Sök']",
+                        "input[placeholder*='sök' i]",
+                        "input[placeholder*='sok' i]",
+                        "input[placeholder*='search' i]",
+                        "input[aria-label*='sök' i]",
+                        "input[aria-label*='search' i]",
+                        ".dropdown-menu.show input[type='search']",
+                        ".dropdown-menu.show input[type='text']",
+                        "input[type='search']",
+                        "input[type='text']",
+                    ],
+                    timeout_ms=2500,
+                )
+                if search:
+                    if trace:
+                        trace("open_view_once_search_found_after_shortcut_retry")
+                    try:
+                        search.click()
+                        search.press("ControlOrMeta+A")
+                        search.press("Backspace")
+                        search.fill(view_name)
+                        page.wait_for_timeout(320)
+                        search.press("Enter")
+                        page.wait_for_timeout(600)
+                        if trace:
+                            trace("open_view_once_enter_sent_after_shortcut_retry")
+                        return True
+                    except Exception:
+                        pass
             return False
+        if trace:
+            trace("open_view_once_click_plus")
         plus.click()
 
         search = _first_visible(
@@ -537,6 +715,8 @@ def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = T
             timeout_ms=7000,
         )
         if not search:
+            if trace:
+                trace("open_view_once_search_not_found_after_plus")
             return False
 
     try:
@@ -547,8 +727,12 @@ def _open_view_from_menu_once(page: Page, view_name: str, use_shortcut: bool = T
         page.wait_for_timeout(350)
         search.press("Enter")
         page.wait_for_timeout(650)
+        if trace:
+            trace("open_view_once_enter_sent")
         return True
     except Exception:
+        if trace:
+            trace("open_view_once_exception_during_fill_enter")
         return False
 
 
@@ -558,15 +742,21 @@ def _open_view_from_menu(
     use_shortcut: bool = True,
     retries: int = 1,
     step_log: Optional[list[str]] = None,
+    trace=None,
 ) -> bool:
     logs = step_log if step_log is not None else []
     for attempt in range(max(0, retries) + 1):
-        ok = _open_view_from_menu_once(page, view_name=view_name, use_shortcut=use_shortcut)
-        logs.append(f"open_view_try_{attempt + 1}_input={ok}")
+        attempt_start = time.perf_counter()
+        if trace:
+            trace(f"open_view_try_{attempt + 1}_start")
+        ok = _open_view_from_menu_once(page, view_name=view_name, use_shortcut=use_shortcut, trace=trace)
+        _push_step(logs, f"open_view_try_{attempt + 1}_input={ok}", trace=trace)
         if ok and _verify_view_open(page, view_name=view_name, wait_ms=2500):
-            logs.append(f"open_view_try_{attempt + 1}_verify=ok")
+            _push_step(logs, f"open_view_try_{attempt + 1}_verify=ok", trace=trace)
+            _push_step(logs, f"open_view_try_{attempt + 1}_ms={_ms_since(attempt_start)}", trace=trace)
             return True
-        logs.append(f"open_view_try_{attempt + 1}_verify=failed")
+        _push_step(logs, f"open_view_try_{attempt + 1}_verify=failed", trace=trace)
+        _push_step(logs, f"open_view_try_{attempt + 1}_ms={_ms_since(attempt_start)}", trace=trace)
         if attempt < retries:
             try:
                 page.keyboard.press("Escape")
@@ -789,12 +979,252 @@ def _wait_for_login_ready(page: Page, wait_sec: int) -> bool:
     return _looks_logged_in(page)
 
 
+def _click_first_visible(page: Page, selectors: list[str], timeout_ms: int = 2000) -> bool:
+    target = _first_visible(page, selectors=selectors, timeout_ms=timeout_ms)
+    if not target:
+        return False
+    try:
+        target.click()
+        return True
+    except Exception:
+        return False
+
+
+def _fill_first_visible(page: Page, selectors: list[str], value: str, timeout_ms: int = 3000) -> bool:
+    target = _first_visible(page, selectors=selectors, timeout_ms=timeout_ms)
+    if not target:
+        return False
+    try:
+        target.click()
+        target.press("ControlOrMeta+A")
+        target.press("Backspace")
+        target.fill(value)
+        return True
+    except Exception:
+        return False
+
+
+def _fill_first_visible_with_js_fallback(
+    page: Page,
+    selectors: list[str],
+    value: str,
+    timeout_ms: int = 3000,
+) -> bool:
+    if _fill_first_visible(page, selectors=selectors, value=value, timeout_ms=timeout_ms):
+        return True
+    for sel in selectors:
+        try:
+            ok = bool(
+                page.evaluate(
+                    """([selector, v]) => {
+                        const el = document.querySelector(selector);
+                        if (!el) return false;
+                        try { el.focus(); } catch (_) {}
+                        try { el.value = ''; } catch (_) {}
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        try { el.value = v; } catch (_) { return false; }
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }""",
+                    [sel, value],
+                )
+            )
+            if ok:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _looks_like_microsoft_login(page: Page) -> bool:
+    try:
+        url = (page.url or "").lower()
+    except Exception:
+        url = ""
+    if "login.microsoftonline.com" in url or "microsoftonline" in url:
+        return True
+    for sel in [
+        "input[name='loginfmt']",
+        "input[name='passwd']",
+        "#i0116",
+        "#i0118",
+        "#idSIButton9",
+    ]:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _find_microsoft_login_page(page: Page, timeout_ms: int = 12000) -> Optional[Page]:
+    deadline = time.time() + (max(100, timeout_ms) / 1000.0)
+    while time.time() < deadline:
+        candidates: list[Page] = [page]
+        try:
+            candidates.extend(list(page.context.pages))
+        except Exception:
+            pass
+
+        seen: set[int] = set()
+        for p in candidates:
+            pid = id(p)
+            if pid in seen:
+                continue
+            seen.add(pid)
+            try:
+                if _looks_like_microsoft_login(p):
+                    return p
+            except Exception:
+                continue
+        page.wait_for_timeout(200)
+    return None
+
+
+def _try_microsoft_login(page: Page, username: str, password: str) -> str:
+    user = (username or "").strip()
+    pwd = (password or "").strip()
+    if not user or not pwd:
+        return "skipped_no_credentials"
+
+    auth_page = _find_microsoft_login_page(page, timeout_ms=14000)
+    if not auth_page:
+        return "skipped_not_microsoft_login"
+    try:
+        auth_page.bring_to_front()
+    except Exception:
+        pass
+
+    email_selectors = [
+        "input[name='loginfmt']",
+        "#i0116",
+        "input[type='email']",
+    ]
+    filled_user = _fill_first_visible_with_js_fallback(
+        auth_page,
+        selectors=email_selectors,
+        value=user,
+        timeout_ms=7000,
+    )
+
+    if not filled_user:
+        # If account picker appears first, switch to "other account" so we can type email.
+        switched_account = _click_first_visible(
+            auth_page,
+            selectors=[
+                "div:has-text('Använd ett annat konto')",
+                "div:has-text('Use another account')",
+                "a:has-text('Använd ett annat konto')",
+                "a:has-text('Use another account')",
+                "button:has-text('Använd ett annat konto')",
+                "button:has-text('Use another account')",
+            ],
+            timeout_ms=2500,
+        )
+        if switched_account:
+            auth_page.wait_for_timeout(350)
+            filled_user = _fill_first_visible_with_js_fallback(
+                auth_page,
+                selectors=email_selectors,
+                value=user,
+                timeout_ms=3500,
+            )
+
+    if filled_user or _first_visible(auth_page, selectors=["#i0116", "input[name='loginfmt']"], timeout_ms=800):
+        clicked_next = _click_first_visible(
+            auth_page,
+            selectors=[
+                "input#idSIButton9",
+                "button#idSIButton9",
+                "input[type='submit']",
+                "button[type='submit']",
+                "button:has-text('Next')",
+                "button:has-text('Nästa')",
+            ],
+            timeout_ms=3500,
+        )
+        if not clicked_next:
+            try:
+                auth_page.keyboard.press("Enter")
+            except Exception:
+                pass
+        auth_page.wait_for_timeout(900)
+
+    filled_pass = _fill_first_visible(
+        auth_page,
+        selectors=[
+            "input[name='passwd']",
+            "#i0118",
+            "input[type='password']",
+        ],
+        value=pwd,
+        timeout_ms=12000,
+    )
+    has_pass_field = (
+        _first_visible(
+            auth_page,
+            selectors=[
+                "input[name='passwd']",
+                "#i0118",
+                "input[type='password']",
+            ],
+            timeout_ms=1200,
+        )
+        is not None
+    )
+    if filled_pass or has_pass_field:
+        auth_page.wait_for_timeout(250)
+        clicked_signin = _click_first_visible(
+            auth_page,
+            selectors=[
+                "input#idSIButton9",
+                "button#idSIButton9",
+                "input[type='submit']",
+                "button[type='submit']",
+                "input[value*='Logga in']",
+                "input[value*='Sign in']",
+                "button:has-text('Sign in')",
+                "button:has-text('Logga in')",
+            ],
+            timeout_ms=6000,
+        )
+        if not clicked_signin:
+            clicked_signin = _click_by_text(auth_page, "Logga in", timeout_ms=2000)
+        if not clicked_signin:
+            clicked_signin = _click_by_text(auth_page, "Sign in", timeout_ms=2000)
+        if not clicked_signin:
+            try:
+                auth_page.keyboard.press("Enter")
+            except Exception:
+                pass
+        auth_page.wait_for_timeout(1200)
+
+    # Some tenants show "Stay signed in?" before 2FA or after.
+    _click_first_visible(
+        auth_page,
+        selectors=[
+            "input#idSIButton9",
+            "button#idSIButton9",
+            "button:has-text('Ja')",
+            "button:has-text('Yes')",
+        ],
+        timeout_ms=1500,
+    )
+
+    return "attempted"
+
+
 class InitBody(BaseModel):
     url: str
     login_wait: int = 60
     headless: bool = False
     slow_mo: int = 80
     goto_timeout: int = 60
+    ms_username: str = ""
+    ms_password: str = ""
 
 
 class FetchBody(BaseModel):
@@ -818,6 +1248,47 @@ class AskCsvAgent:
         self._page: Optional[Page] = None
         self._active_url: str = ""
         self._ready: bool = False
+        self._last_fetch_report: dict = {}
+        self._ops: "queue.Queue[object]" = queue.Queue()
+        self._worker_ident: Optional[int] = None
+        self._worker_ready = threading.Event()
+        self._worker = threading.Thread(target=self._worker_loop, name="ask-csv-worker", daemon=True)
+        self._op_seq = 0
+        self._worker.start()
+        self._worker_ready.wait(timeout=5)
+
+    def _next_op_id(self, kind: str) -> str:
+        self._op_seq += 1
+        return f"{kind}-{int(time.time())}-{self._op_seq}"
+
+    def _trace(self, op_id: str, msg: str) -> None:
+        print(f"{_ts()} [ASKCSV][{op_id}] {msg}")
+
+    def _worker_loop(self) -> None:
+        self._worker_ident = threading.get_ident()
+        self._worker_ready.set()
+        while True:
+            item = self._ops.get()
+            if item is None:
+                break
+            fn, done, holder = item
+            try:
+                holder["result"] = fn()
+            except Exception as e:
+                holder["error"] = e
+            finally:
+                done.set()
+
+    def _run_on_worker(self, fn):
+        if self._worker_ident is not None and threading.get_ident() == self._worker_ident:
+            return fn()
+        done = threading.Event()
+        holder: dict = {}
+        self._ops.put((fn, done, holder))
+        done.wait()
+        if "error" in holder:
+            raise holder["error"]
+        return holder.get("result")
 
     def _ensure_browser(self, headless: bool, slow_mo: int) -> None:
         if self._browser:
@@ -828,6 +1299,14 @@ class AskCsvAgent:
         self._page = self._context.new_page()
 
     def init_login(self, body: InitBody) -> dict:
+        return self._run_on_worker(lambda: self._init_login_impl(body))
+
+    def _init_login_impl(self, body: InitBody) -> dict:
+        op_id = self._next_op_id("init")
+        self._trace(
+            op_id,
+            f"start init_login url='{body.url}' login_wait={body.login_wait}s headless={body.headless} slow_mo={body.slow_mo}",
+        )
         with self._lock:
             self._ensure_browser(headless=body.headless, slow_mo=body.slow_mo)
             assert self._page is not None
@@ -835,26 +1314,41 @@ class AskCsvAgent:
             page.goto(body.url, wait_until="domcontentloaded", timeout=body.goto_timeout * 1000)
             self._active_url = body.url
             self._ready = False
+            self._trace(op_id, f"goto_done page_url='{page.url}'")
+
+        ms_username = (body.ms_username or DEFAULT_MS_USERNAME).strip()
+        ms_password = (body.ms_password or DEFAULT_MS_PASSWORD).strip()
+        self._trace(op_id, f"microsoft_login_attempt user_set={bool(ms_username)} pass_set={bool(ms_password)}")
+        login_mode = _try_microsoft_login(page, ms_username, ms_password)
+        self._trace(op_id, f"microsoft_login_mode='{login_mode}'")
 
         ready = _wait_for_login_ready(page, wait_sec=body.login_wait)
         with self._lock:
             self._ready = bool(ready)
             current_url = self._page.url if self._page else ""
+            self._trace(op_id, f"init_login_done ready={self._ready} current_url='{current_url}'")
 
         return {
             "ok": True,
             "ready": self._ready,
             "url": current_url,
-            "message": "Login klar" if self._ready else "Login ej klar inom väntetid",
+            "login_mode": login_mode,
+            "message": "Login klar" if self._ready else "Login ej klar inom väntetid (vanta pa 2FA-kod eller godkannande)",
         }
 
     def warm_open(self, url: str, headless: bool = False, slow_mo: int = 80, goto_timeout: int = 60) -> dict:
+        return self._run_on_worker(lambda: self._warm_open_impl(url, headless=headless, slow_mo=slow_mo, goto_timeout=goto_timeout))
+
+    def _warm_open_impl(self, url: str, headless: bool = False, slow_mo: int = 80, goto_timeout: int = 60) -> dict:
+        op_id = self._next_op_id("warm")
+        self._trace(op_id, f"start warm_open url='{url}' headless={headless} slow_mo={slow_mo}")
         with self._lock:
             self._ensure_browser(headless=headless, slow_mo=slow_mo)
             assert self._page is not None
             self._page.goto(url, wait_until="domcontentloaded", timeout=max(10, int(goto_timeout)) * 1000)
             self._active_url = url
             self._ready = _looks_logged_in(self._page)
+            self._trace(op_id, f"warm_open_done ready={self._ready} page_url='{self._page.url if self._page else ''}'")
             return {
                 "ok": True,
                 "ready": self._ready,
@@ -863,6 +1357,9 @@ class AskCsvAgent:
             }
 
     def status(self) -> dict:
+        return self._run_on_worker(self._status_impl)
+
+    def _status_impl(self) -> dict:
         with self._lock:
             return {
                 "ok": True,
@@ -873,27 +1370,41 @@ class AskCsvAgent:
             }
 
     def fetch_csv(self, body: FetchBody) -> tuple[str, str]:
+        return self._run_on_worker(lambda: self._fetch_csv_impl(body))
+
+    def _fetch_csv_impl(self, body: FetchBody) -> tuple[str, str]:
         with self._lock:
+            op_id = self._next_op_id("fetch")
+            trace = lambda msg: self._trace(op_id, msg)
             if not self._page:
+                trace("abort: page_not_initialized")
                 raise RuntimeError("Agenten Ã¤r inte initierad. KÃ¶r /init-login fÃ¶rst.")
             if not self._ready:
+                trace("abort: agent_not_ready")
                 raise RuntimeError("Agenten Ã¤r inte redo Ã¤nnu. VÃ¤nta tills login/2FA Ã¤r klart.")
 
             page = self._page
             step_log: list[str] = []
+            fetch_start = time.perf_counter()
+            strategy = "menu"
+            trace(
+                f"start view='{body.view_name}' open_via={body.open_via} "
+                f"export_text='{body.export_text}' grid_wait={body.grid_wait}s dl_timeout={body.download_timeout}s"
+            )
 
             if body.url:
+                trace(f"goto_body_url start url='{body.url}'")
                 page.goto(body.url, wait_until="domcontentloaded", timeout=body.goto_timeout * 1000)
                 self._active_url = body.url
-                step_log.append("goto_body_url=ok")
+                _push_step(step_log, "goto_body_url=ok", trace=trace)
 
             opened = False
             if body.open_via == "tab":
                 opened = _click_by_text(page, body.view_name, timeout_ms=7000)
-                step_log.append(f"open_via_tab_click={opened}")
+                _push_step(step_log, f"open_via_tab_click={opened}", trace=trace)
                 if opened:
                     opened = _verify_view_open(page, view_name=body.view_name, wait_ms=2400)
-                    step_log.append(f"open_via_tab_verify={opened}")
+                    _push_step(step_log, f"open_via_tab_verify={opened}", trace=trace)
             elif body.open_via == "menu":
                 opened = _open_view_from_menu(
                     page,
@@ -901,6 +1412,7 @@ class AskCsvAgent:
                     use_shortcut=False,
                     retries=1,
                     step_log=step_log,
+                    trace=trace,
                 )
             elif body.open_via == "shortcut":
                 opened = _open_view_from_menu(
@@ -909,13 +1421,14 @@ class AskCsvAgent:
                     use_shortcut=True,
                     retries=1,
                     step_log=step_log,
+                    trace=trace,
                 )
             else:
                 opened = _click_by_text(page, body.view_name, timeout_ms=5000)
-                step_log.append(f"open_auto_tab_click={opened}")
+                _push_step(step_log, f"open_auto_tab_click={opened}", trace=trace)
                 if opened:
                     opened = _verify_view_open(page, view_name=body.view_name, wait_ms=2000)
-                    step_log.append(f"open_auto_tab_verify={opened}")
+                    _push_step(step_log, f"open_auto_tab_verify={opened}", trace=trace)
                 if not opened:
                     opened = _open_view_from_menu(
                         page,
@@ -923,6 +1436,7 @@ class AskCsvAgent:
                         use_shortcut=True,
                         retries=1,
                         step_log=step_log,
+                        trace=trace,
                     )
                 if not opened:
                     opened = _open_view_from_menu(
@@ -931,32 +1445,51 @@ class AskCsvAgent:
                         use_shortcut=False,
                         retries=1,
                         step_log=step_log,
+                        trace=trace,
                     )
 
             if not opened:
                 screenshot = _capture_error_screenshot(page, "open_view_failed")
                 steps = " | ".join(step_log[-18:])
+                self._last_fetch_report = {
+                    "ok": False,
+                    "view_name": body.view_name,
+                    "stage": "open_view_failed",
+                    "strategy": "n/a",
+                    "total_ms": _ms_since(fetch_start),
+                    "screenshot": screenshot or "",
+                    "steps_tail": step_log[-18:],
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                trace(
+                    f"FAIL stage=open_view_failed total_ms={self._last_fetch_report['total_ms']} "
+                    f"screenshot='{screenshot or 'n/a'}' steps='{steps}'"
+                )
                 raise RuntimeError(
                     f"open_view_failed: kunde inte oppna vy '{body.view_name}'. "
                     f"screenshot: {screenshot or 'n/a'}. steps: {steps}"
                 )
 
-            if body.open_text and body.open_text.strip():
-                clicked_open = _click_by_text(page, body.open_text.strip(), timeout_ms=7000)
-                step_log.append(f"open_text_click={clicked_open}")
+            # In shortcut/menu flow (v+o + Enter), "Visa" is usually unnecessary and can
+            # add several seconds if missing. Keep it only for tab/auto flows.
+            if body.open_text and body.open_text.strip() and body.open_via in {"tab", "auto"}:
+                clicked_open = _click_by_text(page, body.open_text.strip(), timeout_ms=1200)
+                _push_step(step_log, f"open_text_click={clicked_open}", trace=trace)
 
             menu_error: Optional[str] = None
+            export_start = time.perf_counter()
             try:
                 download = _export_via_three_dots(
                     page=page,
                     export_text=body.export_text,
                     download_timeout=body.download_timeout,
                     step_log=step_log,
+                    trace=trace,
                 )
-                step_log.append("menu_export=ok")
+                _push_step(step_log, "menu_export=ok", trace=trace)
             except Exception as menu_exc:
                 menu_error = str(menu_exc)
-                step_log.append(f"menu_export_failed:{menu_error}")
+                _push_step(step_log, f"menu_export_failed:{menu_error}", trace=trace)
                 try:
                     download = _export_via_right_click(
                         page=page,
@@ -964,11 +1497,31 @@ class AskCsvAgent:
                         grid_wait_sec=body.grid_wait,
                         download_timeout=body.download_timeout,
                         step_log=step_log,
+                        trace=trace,
                     )
-                    step_log.append("right_click_fallback=ok")
+                    _push_step(step_log, "right_click_fallback=ok", trace=trace)
+                    strategy = "right_click_fallback"
                 except Exception as rc_exc:
                     screenshot = _capture_error_screenshot(page, "csv_export_failed")
                     steps = " | ".join(step_log[-24:])
+                    self._last_fetch_report = {
+                        "ok": False,
+                        "view_name": body.view_name,
+                        "stage": "csv_export_failed",
+                        "strategy": "menu_then_right_click",
+                        "total_ms": _ms_since(fetch_start),
+                        "export_ms": _ms_since(export_start),
+                        "menu_error": menu_error,
+                        "right_click_error": str(rc_exc),
+                        "screenshot": screenshot or "",
+                        "steps_tail": step_log[-24:],
+                        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    trace(
+                        f"FAIL stage=csv_export_failed total_ms={self._last_fetch_report['total_ms']} "
+                        f"export_ms={self._last_fetch_report['export_ms']} menu_error='{menu_error}' "
+                        f"rc_error='{rc_exc}' screenshot='{screenshot or 'n/a'}' steps='{steps}'"
+                    )
                     raise RuntimeError(
                         f"menu_export_failed: {menu_error}; "
                         f"right_click_failed: {rc_exc}; "
@@ -982,9 +1535,37 @@ class AskCsvAgent:
             tmp_path = tmp.name
             tmp.close()
             download.save_as(tmp_path)
+            file_bytes = 0
+            try:
+                file_bytes = int(os.path.getsize(tmp_path))
+            except Exception:
+                pass
+            report = {
+                "ok": True,
+                "view_name": body.view_name,
+                "strategy": strategy,
+                "filename": safe_name,
+                "bytes": file_bytes,
+                "total_ms": _ms_since(fetch_start),
+                "open_view_ms": _ms_since(fetch_start) - _ms_since(export_start),
+                "export_ms": _ms_since(export_start),
+                "steps_tail": step_log[-20:],
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self._last_fetch_report = report
+            trace(
+                f"OK strategy={report['strategy']} total_ms={report['total_ms']} "
+                f"open_view_ms={report['open_view_ms']} export_ms={report['export_ms']} "
+                f"bytes={report['bytes']} file='{safe_name}'"
+            )
+            for i, step in enumerate(step_log, start=1):
+                trace(f"step[{i:02d}] {step}")
             return tmp_path, safe_name
 
     def shutdown(self) -> dict:
+        return self._run_on_worker(self._shutdown_impl)
+
+    def _shutdown_impl(self) -> dict:
         with self._lock:
             try:
                 if self._context:
@@ -1018,11 +1599,14 @@ def on_startup():
     # Open ASK immediately so user can log in even before the webapp sends requests.
     if not DEFAULT_ASK_URL:
         return
-    try:
-        agent.warm_open(url=DEFAULT_ASK_URL, headless=False, slow_mo=80, goto_timeout=60)
-    except Exception:
-        # Keep service running even if auto-open fails.
-        pass
+    def _warm_open_bg():
+        try:
+            agent.warm_open(url=DEFAULT_ASK_URL, headless=False, slow_mo=80, goto_timeout=60)
+        except Exception as e:
+            # Keep service running even if auto-open fails, but log reason.
+            print(f"WARN: ASK auto-open misslyckades: {e}")
+
+    threading.Thread(target=_warm_open_bg, name="ask-csv-auto-open", daemon=True).start()
 
 
 @app.get("/health")
@@ -1032,14 +1616,20 @@ def health():
 
 @app.post("/init-login")
 def init_login(body: InitBody):
+    print(f"{_ts()} [ASKCSV][api] /init-login url='{body.url}' wait={body.login_wait}s")
     try:
         return agent.init_login(body)
     except Exception as e:
+        print(f"{_ts()} [ASKCSV][api] /init-login ERROR {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/fetch-csv")
 def fetch_csv(body: FetchBody):
+    print(
+        f"{_ts()} [ASKCSV][api] /fetch-csv view='{body.view_name}' open_via={body.open_via} "
+        f"grid_wait={body.grid_wait}s dl_timeout={body.download_timeout}s"
+    )
     try:
         tmp_path, filename = agent.fetch_csv(body)
         return FileResponse(
@@ -1049,6 +1639,7 @@ def fetch_csv(body: FetchBody):
             background=BackgroundTask(lambda: os.path.exists(tmp_path) and os.remove(tmp_path)),
         )
     except Exception as e:
+        print(f"{_ts()} [ASKCSV][api] /fetch-csv ERROR {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

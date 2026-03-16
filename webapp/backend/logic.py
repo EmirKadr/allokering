@@ -198,6 +198,44 @@ def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _repair_mojibake_text(value: Any) -> str:
+    text = str(value or "")
+    if any(ch in text for ch in ("Ã", "Â", "â")):
+        try:
+            repaired = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+            if repaired:
+                text = repaired
+        except Exception:
+            pass
+    return text
+
+
+def _normalize_match_key(value: Any) -> str:
+    text = _repair_mojibake_text(value).lower().strip()
+    text = text.replace("?", "a")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", "", text)
+    return text
+
+
+def _safe_sheet_name(name: Any, used_names: set[str]) -> str:
+    raw = _repair_mojibake_text(name).strip()
+    raw = re.sub(r'[:\\/*?\[\]]+', "_", raw)
+    raw = re.sub(r"\s+", " ", raw).strip().strip("'")
+    if not raw:
+        raw = "Sheet"
+    base = raw[:31]
+    candidate = base
+    index = 2
+    while candidate.lower() in used_names:
+        suffix = f"_{index}"
+        candidate = (base[: max(1, 31 - len(suffix))] + suffix).strip()
+        index += 1
+    used_names.add(candidate.lower())
+    return candidate
+
+
 def smart_to_datetime(s) -> pd.Series:
     """Robust datumtolkning."""
     try:
@@ -240,6 +278,23 @@ def find_col(df: pd.DataFrame, candidates: List[str], required: bool = True, def
         for cand in candidates:
             if cand.lower() in key:
                 return orig
+
+    norm_cols: Dict[str, str] = {}
+    for orig in df.columns:
+        norm = _normalize_match_key(orig)
+        if norm and norm not in norm_cols:
+            norm_cols[norm] = orig
+
+    norm_candidates = [_normalize_match_key(c) for c in candidates if _normalize_match_key(c)]
+    for cand in norm_candidates:
+        if cand in norm_cols:
+            return norm_cols[cand]
+
+    for cand in norm_candidates:
+        for key, orig in norm_cols.items():
+            if cand in key or key in cand:
+                return orig
+
     if required and default is None:
         raise KeyError(f"Hittar inte kolumnerna {candidates} i {list(df.columns)}")
     return default
@@ -296,9 +351,11 @@ def _open_df_in_excel(df, label: str = "data") -> str:
         path = tmp.name
         tmp.close()
         with pd.ExcelWriter(path, engine=engine) as writer:
+            used_sheet_names: set[str] = set()
             for sheet, d in df.items():
                 dd = d if isinstance(d, pd.DataFrame) else pd.DataFrame(d)
-                dd.to_excel(writer, sheet_name=str(sheet)[:31] or "Sheet1", index=False)
+                sheet_name = _safe_sheet_name(sheet, used_sheet_names)
+                dd.to_excel(writer, sheet_name=sheet_name, index=False)
     else:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.csv")
         path = tmp.name
@@ -333,9 +390,10 @@ def save_df_to_excel(df, label: str = "data", out_path: str = None) -> str:
 
     if isinstance(df, dict):
         with pd.ExcelWriter(out_path, engine=engine) as writer:
+            used_sheet_names: set[str] = set()
             for sheet, d in df.items():
                 dd = d if isinstance(d, pd.DataFrame) else pd.DataFrame(d)
-                sheet_name = str(sheet)[:31] or "Sheet1"
+                sheet_name = _safe_sheet_name(sheet, used_sheet_names)
                 dd.to_excel(writer, sheet_name=sheet_name, index=False)
     else:
         with pd.ExcelWriter(out_path, engine=engine) as writer:
@@ -1749,12 +1807,25 @@ def apply_value_filters(df: pd.DataFrame, active_filters: Dict[str, List[str]]) 
         "bolag": ["Bolag", "Company", "Bolag nr", "Bol"],
         "ordertyp": ["Ordertyp", "Order typ", "Order type", "Ordertype"],
     }
+
+    def _find_filter_col(frame: pd.DataFrame, filter_key: str):
+        candidates = filter_column_candidates.get(filter_key, [filter_key])
+        norm_cols: Dict[str, str] = {}
+        for c in frame.columns:
+            norm = _normalize_match_key(c)
+            if norm and norm not in norm_cols:
+                norm_cols[norm] = c
+        for cand in candidates:
+            norm_cand = _normalize_match_key(cand)
+            if norm_cand and norm_cand in norm_cols:
+                return norm_cols[norm_cand]
+        return None
+
     result = df.copy()
     for filter_key, selected_values in active_filters.items():
         if not selected_values:
             continue
-        candidates = filter_column_candidates.get(filter_key, [filter_key])
-        col = find_col(result, candidates, required=False, default=None)
+        col = _find_filter_col(result, filter_key)
         if col is None:
             continue
         result = result[result[col].astype(str).str.strip().isin([str(v) for v in selected_values])].copy()
@@ -1767,14 +1838,35 @@ def scan_filter_values(df: pd.DataFrame) -> Dict[str, List[str]]:
         "bolag": ["Bolag", "Company", "Bolag nr", "Bol"],
         "ordertyp": ["Ordertyp", "Order typ", "Order type", "Ordertype"],
     }
+    def _find_filter_col(frame: pd.DataFrame, filter_key: str):
+        candidates = filter_column_candidates.get(filter_key, [filter_key])
+        norm_cols: Dict[str, str] = {}
+        for c in frame.columns:
+            norm = _normalize_match_key(c)
+            if norm and norm not in norm_cols:
+                norm_cols[norm] = c
+        for cand in candidates:
+            norm_cand = _normalize_match_key(cand)
+            if norm_cand and norm_cand in norm_cols:
+                return norm_cols[norm_cand]
+        return None
+
     result: Dict[str, List[str]] = {}
     for filter_key, candidates in filter_column_candidates.items():
-        col = find_col(df, candidates, required=False, default=None)
+        col = _find_filter_col(df, filter_key)
         if col:
-            raw = df[col].astype(str).str.strip().unique().tolist()
-            # Inkludera "(tom)" för null/NaN-värden, filtrera bort tomma strängar
-            vals = sorted([v if v.lower() not in ("nan", "none", "") else "(tom)" for v in raw if v != ""])
-            vals = sorted(set(vals))
+            series = df[col]
+            vals_set: set[str] = set()
+            for v in series.tolist():
+                if pd.isna(v):
+                    vals_set.add("(tom)")
+                    continue
+                txt = str(v).strip()
+                if not txt or txt.lower() in {"nan", "none", "<na>"}:
+                    vals_set.add("(tom)")
+                else:
+                    vals_set.add(txt)
+            vals = sorted(vals_set)
             if vals:
                 result[filter_key] = vals
     return result

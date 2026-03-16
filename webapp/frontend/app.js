@@ -43,6 +43,13 @@ const ASK_VIEW_OVERRIDES = {
   buffer: "Buffertpallet",
 };
 
+const CLASSIFIER_DATA_SLOTS = [
+  { key: "item_attribute", label: "item_attribute" },
+  { key: "item_alias", label: "item_alias" },
+  { key: "item", label: "item" },
+  { key: "main_category", label: "main_category" },
+];
+
 // Resultatnycklar -> visningsnamn
 const RESULT_LABELS = {
   "allokerade":       "Oppna allokerade",
@@ -71,6 +78,7 @@ let selectedFilters = { bolag: [], ordertyp: [] };
 let classifierStatusPoll = null;
 let classifierConfig = null;
 let classifierSessionId = null;
+let classifierDataFiles = {};
 
 // ---------------------------------------------------------------------------
 // Init
@@ -744,6 +752,135 @@ function setClassifierStatusBadge(kind, text) {
   badge.textContent = text;
 }
 
+function buildClassifierDataRow(slot) {
+  const row = document.createElement("div");
+  row.className = "d-flex align-items-center gap-2 mb-1 classifier-data-row";
+
+  const label = document.createElement("span");
+  label.textContent = slot.label;
+  label.style.minWidth = "110px";
+  label.style.fontSize = "12px";
+
+  const badge = document.createElement("span");
+  badge.className = "file-status-badge";
+  badge.id = `cls-data-badge-${slot.key}`;
+  badge.textContent = "Ej fil";
+  badge.title = "Välj fil";
+  badge.addEventListener("click", () => {
+    const inp = document.getElementById(`cls-data-input-${slot.key}`);
+    if (inp) inp.click();
+  });
+
+  const uploadBtn = document.createElement("button");
+  uploadBtn.className = "btn btn-outline-primary btn-sm py-0 px-2";
+  uploadBtn.textContent = "Ladda upp";
+  uploadBtn.onclick = () => {
+    const inp = document.getElementById(`cls-data-input-${slot.key}`);
+    if (inp) inp.click();
+  };
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "btn btn-danger btn-sm py-0 px-1";
+  removeBtn.innerHTML = "&#10005;";
+  removeBtn.title = "Ta bort fil";
+  removeBtn.onclick = () => removeClassifierDataFile(slot.key);
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".csv,.txt";
+  input.style.display = "none";
+  input.id = `cls-data-input-${slot.key}`;
+  input.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadClassifierDataFile(slot.key, file);
+    input.value = "";
+  });
+
+  row.appendChild(label);
+  row.appendChild(badge);
+  row.appendChild(uploadBtn);
+  row.appendChild(removeBtn);
+  row.appendChild(input);
+  return row;
+}
+
+function renderClassifierDataRows() {
+  const container = document.getElementById("cls-data-file-rows");
+  if (!container) return;
+  container.innerHTML = "";
+  CLASSIFIER_DATA_SLOTS.forEach(slot => {
+    container.appendChild(buildClassifierDataRow(slot));
+  });
+}
+
+function setClassifierDataBadge(key, text, loaded) {
+  const badge = document.getElementById(`cls-data-badge-${key}`);
+  if (!badge) return;
+  const maxLen = 18;
+  const raw = String(text || "");
+  const displayText = raw.length > maxLen ? "..." + raw.slice(-maxLen + 3) : raw;
+  badge.textContent = displayText || "Ej fil";
+  badge.title = raw || "Ej fil";
+  badge.classList.toggle("loaded", !!loaded);
+}
+
+function applyClassifierDataStatus(files) {
+  classifierDataFiles = files || {};
+  CLASSIFIER_DATA_SLOTS.forEach(slot => {
+    const f = classifierDataFiles[slot.key];
+    const loaded = !!(f && f.exists);
+    const name = loaded ? (f.filename || "Laddad") : "Ej fil";
+    setClassifierDataBadge(slot.key, name, loaded);
+  });
+}
+
+async function refreshClassifierDataFiles() {
+  const resp = await fetch(`${API}/api/classifier/web/data-files`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.detail || resp.statusText);
+  applyClassifierDataStatus(data.files || {});
+  if (typeof data.item_attribute_rows === "number") {
+    appendClassifierLog(`item_attribute IMG-rader: ${data.item_attribute_rows}`);
+  }
+}
+
+async function uploadClassifierDataFile(fileKey, file) {
+  setClassifierDataBadge(fileKey, "Laddar...", false);
+  try {
+    const formData = new FormData();
+    formData.append("file_key", fileKey);
+    formData.append("file", file);
+    const resp = await fetch(`${API}/api/classifier/web/data-files/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    applyClassifierDataStatus(data.files || {});
+    if (fileKey === "item_attribute" && typeof data.item_attribute_rows === "number") {
+      appendClassifierLog(`item_attribute uppladdad, IMG-rader: ${data.item_attribute_rows}`);
+    } else {
+      appendClassifierLog(`${fileKey} uppladdad: ${data.filename || file.name}`);
+    }
+  } catch (e) {
+    setClassifierDataBadge(fileKey, "FEL", false);
+    appendClassifierLog(`Kunde inte ladda upp ${fileKey}: ${e}`);
+  }
+}
+
+async function removeClassifierDataFile(fileKey) {
+  try {
+    const resp = await fetch(`${API}/api/classifier/web/data-files/${fileKey}`, { method: "DELETE" });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    applyClassifierDataStatus(data.files || {});
+    appendClassifierLog(`${fileKey} borttagen.`);
+  } catch (e) {
+    appendClassifierLog(`Kunde inte ta bort ${fileKey}: ${e}`);
+  }
+}
+
 function renderClassifierState(state, announce = false) {
   const statusText = document.getElementById("classifier-status-text");
   const sessionIdEl = document.getElementById("classifier-session-id");
@@ -771,8 +908,9 @@ function renderClassifierState(state, announce = false) {
 
   classifierSessionId = state.session_id || classifierSessionId;
   sessionIdEl.textContent = classifierSessionId || "-";
-  statusText.textContent = `${state.index || 0}/${state.total || 0} klassificerade, hoppade över: ${state.skipped || 0}`;
-  fileEl.textContent = state.current_filename || "-";
+  const sourceLabel = state.image_source === "url" ? "källa: datafil-URL" : "källa: bildmapp";
+  statusText.textContent = `${state.index || 0}/${state.total || 0} klassificerade, hoppade över: ${state.skipped || 0} (${sourceLabel})`;
+  fileEl.textContent = state.current_article ? `${state.current_article} (${state.current_filename || "-"})` : (state.current_filename || "-");
   finishBtn.disabled = false;
 
   if (state.done) {
@@ -810,6 +948,7 @@ function renderClassifierState(state, announce = false) {
 
 async function initClassifierWeb() {
   renderClassifierState(null);
+  renderClassifierDataRows();
   try {
     const resp = await fetch(`${API}/api/classifier/web/config`);
     if (!resp.ok) throw new Error(await resp.text());
@@ -822,6 +961,8 @@ async function initClassifierWeb() {
     if (outputDir) outputDir.value = classifierConfig.default_output_dir || "";
     if (testName && !testName.value) testName.value = "test1";
     if (categories && !categories.value) categories.value = "Hund\nKatt\nÖvrigt";
+    applyClassifierDataStatus(classifierConfig.data_files || {});
+    await refreshClassifierDataFiles();
     appendClassifierLog("Classifier-web klar.");
   } catch (e) {
     setClassifierStatusBadge("error", "Fel");

@@ -3,6 +3,49 @@ body {
   background: #f8f9fa;
 }
 
+.main-page-pane {
+  display: none;
+}
+
+.main-page-pane.active {
+  display: block;
+}
+
+#main-tabs .nav-link {
+  font-size: 13px;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+.classifier-card {
+  max-width: 980px;
+}
+
+.classifier-image-wrap {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.classifier-image {
+  max-width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  display: none;
+}
+
+.classifier-data-row .file-status-badge {
+  min-width: 84px;
+  max-width: 140px;
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
 .file-status-badge {
   min-width: 100px;
   display: inline-block;

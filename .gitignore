@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Local secrets / env
+.env
+.env.*
+*.env
+*.local
+secrets/
+*.secret
+*.secrets
