@@ -5,6 +5,9 @@
   --card-bg: #ffffff;
   --card-header-bg: #f1f3f5;
   --card-border: #dee2e6;
+  --table-bg: #ffffff;
+  --table-header-bg: #f8f9fa;
+  --table-text: #1f2328;
   --input-bg: #ffffff;
   --input-text: #1f2328;
   --input-border: #ced4da;
@@ -29,6 +32,9 @@ html[data-theme="dark"] {
   --card-bg: #182028;
   --card-header-bg: #222c36;
   --card-border: #33404d;
+  --table-bg: #182028;
+  --table-header-bg: #24303b;
+  --table-text: #e7edf3;
   --input-bg: #111920;
   --input-text: #e7edf3;
   --input-border: #42505e;
@@ -99,6 +105,22 @@ body {
 .kalltyp-sidebar-card th,
 .kalltyp-sidebar-card td {
   padding: 0.35rem 0.45rem;
+}
+
+#kalltyp-summary-table {
+  --bs-table-bg: var(--table-bg);
+  --bs-table-color: var(--table-text);
+  --bs-table-border-color: var(--card-border);
+}
+
+#kalltyp-summary-table > :not(caption) > * > * {
+  background: var(--table-bg) !important;
+  color: var(--table-text) !important;
+  border-color: var(--card-border) !important;
+}
+
+#kalltyp-summary-table thead th {
+  background: var(--table-header-bg) !important;
 }
 
 .share-card {
