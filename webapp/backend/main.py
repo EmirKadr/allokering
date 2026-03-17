@@ -37,7 +37,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from session_store import SessionData, create_session, delete_session, get_session
-from classifier_v2 import router as classifier_v2_router
+try:
+    from classifier_v2 import router as classifier_v2_router
+    _classifier_v2_import_error: Optional[Exception] = None
+except Exception as e:
+    classifier_v2_router = None
+    _classifier_v2_import_error = e
 from logic import (
     _clean_columns,
     _reclassify_skrymmande,
@@ -72,7 +77,10 @@ app.add_middleware(
 )
 
 # v2 classifier router (kept isolated from legacy v1 endpoints)
-app.include_router(classifier_v2_router)
+if classifier_v2_router is not None:
+    app.include_router(classifier_v2_router)
+else:
+    print(f"[WARN] classifier_v2 disabled: {_classifier_v2_import_error}")
 
 ASK_CSV_AGENT_URL = os.environ.get("ASK_CSV_AGENT_URL", "http://127.0.0.1:8010").rstrip("/")
 ASK_CSV_DEFAULT_URL = os.environ.get(
