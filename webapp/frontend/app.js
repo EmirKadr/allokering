@@ -2,7 +2,14 @@
  * app.js - Allokering WebApp frontend
  */
 
-const API = "http://localhost:8000";
+const API = (() => {
+  // Default: same origin (works on Render/production and local when served by FastAPI).
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return "";
+  }
+  // Fallback if frontend is opened as file://
+  return "http://localhost:8000";
+})();
 const ASK_URL = "https://noeffectui-frey.nowastelogistics.com/desktop";
 const ASK_LOGIN_WAIT_SECONDS = 60 * 60; // 60 min
 const ASK_OPEN_VIA = "shortcut";        // alltid v+o
