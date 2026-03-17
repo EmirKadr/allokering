@@ -375,6 +375,7 @@ function buildFileRow(slot) {
   label.textContent = slot.label;
   label.style.minWidth = "220px";
   label.style.fontSize = "13px";
+  label.style.color = "var(--page-text)";
 
   const badge = document.createElement("span");
   badge.className = "file-status-badge";
@@ -1116,6 +1117,7 @@ function buildClassifierDataRow(slot) {
   label.textContent = slot.label;
   label.style.minWidth = "110px";
   label.style.fontSize = "12px";
+  label.style.color = "var(--page-text)";
 
   const badge = document.createElement("span");
   badge.className = "file-status-badge";

@@ -303,8 +303,13 @@ body {
 }
 
 .card {
+  --bs-card-bg: var(--card-bg);
+  --bs-card-color: var(--page-text);
+  --bs-card-border-color: var(--card-border);
+  --bs-card-cap-bg: var(--card-header-bg);
   border: 1px solid var(--card-border);
   background: var(--card-bg);
+  color: var(--page-text);
 }
 
 .card-header {
@@ -314,9 +319,20 @@ body {
   font-size: 13px;
 }
 
+.card-body,
+.card-body label,
+.card-body strong,
+.card-body span:not(.file-status-badge) {
+  color: var(--page-text);
+}
+
 .form-label {
   font-size: 12px;
   margin-bottom: 2px;
+  color: var(--page-text);
+}
+
+.form-check-label {
   color: var(--page-text);
 }
 
