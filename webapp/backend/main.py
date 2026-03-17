@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py ? FastAPI-webbapp f?r Allokering.
+main.py - FastAPI-webbapp för Allokering.
 Serverar frontend statiskt och exponerar REST-API + SSE.
 """
 
@@ -954,7 +954,7 @@ def api_ask_csv_health():
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Kunde inte n? CSV-agenten: {e}") from e
+        raise HTTPException(status_code=502, detail=f"Kunde inte nå CSV-agenten: {e}") from e
 
 
 @app.post("/api/ask-csv/init")
@@ -1006,7 +1006,7 @@ def api_ask_csv_fetch(sid: str, body: AskCsvFetchBody):
             timeout=timeout_sec,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Kunde inte n? CSV-agenten: {e}") from e
+        raise HTTPException(status_code=502, detail=f"Kunde inte nå CSV-agenten: {e}") from e
 
     if not resp.ok:
         detail = resp.text[:1000]
@@ -1421,7 +1421,7 @@ def api_run_status(sid: str):
 
 
 # ---------------------------------------------------------------------------
-# Job-k?rningar
+# Jobbkörningar
 # ---------------------------------------------------------------------------
 
 def _start_job(session: SessionData, coro):
@@ -1434,14 +1434,14 @@ def _start_job(session: SessionData, coro):
 
 
 async def _generate_excel_files(session: SessionData, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path):
-    """Generera Excel-filer i bakgrunden efter att allokeringen ?r klar."""
+    """Generera Excel-filer i bakgrunden efter att allokeringen är klar."""
     loop = asyncio.get_event_loop()
 
     def log(msg: str):
         session.log_queue.put_nowait(msg)
 
     try:
-        # Allokerade (viktigast ? genereras f?rst)
+        # Allokerade (viktigast - genereras först)
         allok_path = os.path.join(session.temp_dir, "allokerade.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel(result, "allokerade", allok_path))
         session.results["allokerade"] = allok_path
@@ -1454,7 +1454,7 @@ async def _generate_excel_files(session: SessionData, result, near, buffer_raw, 
             session.results["nearmiss"] = nearmiss_path
             log("__RESULT:nearmiss__")
 
-        # Pallplatser + Refill parallellt (oberoende ber?kningar)
+        # Pallplatser + Refill parallellt (oberoende beräkningar)
         async def _gen_pallplatser():
             try:
                 ps = await loop.run_in_executor(None, lambda: compute_pallet_spaces(result))
@@ -1523,7 +1523,7 @@ async def _job_allokering(session: SessionData):
             log("__ERROR__")
             return
 
-        # --- Fas 1: L?s alla filer parallellt ---
+        # --- Fas 1: Läs alla filer parallellt ---
         log("L\u00e4ser in filer...")
         read_tasks: Dict[str, Any] = {}
         read_tasks["orders"] = loop.run_in_executor(None, lambda p=orders_path: read_csv_auto(p))
@@ -1571,13 +1571,13 @@ async def _job_allokering(session: SessionData):
             saldo_raw = apply_value_filters(saldo_raw, session.active_filters)
             saldo_norm = await loop.run_in_executor(None, lambda: normalize_saldo(saldo_raw))
 
-        # --- Fas 2: K?r allokering ---
+        # --- Fas 2: Kör allokering ---
         log("K\u00f6r allokering (Helpall \u2192 AutoStore \u2192 Huvudplock, FIFO)...")
         result, near = await loop.run_in_executor(None, lambda: allocate(orders_raw, buffer_raw, log=log))
 
         result = await loop.run_in_executor(None, lambda: _reclassify_skrymmande(result, saldo_norm))
 
-        # Sl? ihop item-fil
+        # Slå ihop item-fil
         if item_norm is not None and not item_norm.empty and not result.empty:
             try:
                 art_col_res = find_col(result, ORDER_SCHEMA["artikel"], required=True)
@@ -1610,7 +1610,7 @@ async def _job_allokering(session: SessionData):
         except Exception:
             pass
 
-        # Summering per K?lltyp
+        # Summering per Källtyp
         try:
             import json as _json
             qty_col_kt = find_col(result, ORDER_SCHEMA["qty"], required=False, default=None)
@@ -1669,18 +1669,18 @@ async def _job_hib_koppling(session: SessionData):
         overview_path = session.files.get("overview")
 
         if not orders_path or not overview_path:
-            log("FEL: V?lj b?de best?llningslinjer och order?versikt.")
+            log("FEL: Välj både beställningslinjer och orderöversikt.")
             log("__ERROR__")
             return
 
-        log("L?ser in filer f?r HIB-koppling...")
+        log("Läser in filer för HIB-koppling...")
         details_df = await loop.run_in_executor(None, lambda: read_csv_auto(orders_path))
         overview_df = await loop.run_in_executor(None, lambda: read_csv_auto(overview_path))
 
         details_df = apply_value_filters(details_df, session.active_filters)
         overview_df = apply_value_filters(overview_df, session.active_filters)
 
-        log("Ber?knar HIB-koppling...")
+        log("Beräknar HIB-koppling...")
         changes_df = await loop.run_in_executor(None, lambda: compute_hib_koppling(details_df, overview_df))
         missed_df = await loop.run_in_executor(None, lambda: compute_missed_departures(details_df, overview_df))
 
@@ -1688,49 +1688,49 @@ async def _job_hib_koppling(session: SessionData):
         has_missed = isinstance(missed_df, pd.DataFrame) and not missed_df.empty
 
         if not has_changes and not has_missed:
-            log("Inga HIB-ordrar beh?ver ?ndras eller har missat sin avg?ng.")
+            log("Inga HIB-ordrar behöver ändras eller har missat sin avgång.")
             log("__DONE__")
             return
 
         instr_lines = [
-            "?ndras i f?ljande ordning",
+            "Ändras i följande ordning",
             "1. Ordernummer",
-            "2. S?ndningsnummer",
-            "3. Zon F p? orderlinjerna",
-            "4. Samma multi p? alla Hibar till samma butik",
+            "2. Sändningsnummer",
+            "3. Zon F på orderlinjerna",
+            "4. Samma multi på alla HIB:ar till samma butik",
             "5. Generera",
-            "6. Frisl?pp",
+            "6. Frisläpp",
         ]
         instructions_df = pd.DataFrame({"Instruktioner": instr_lines})
 
         sheets: Dict[str, pd.DataFrame] = {}
         if has_changes:
-            sheets["?ndringar"] = changes_df
-            log(f"HIB-koppling: {len(changes_df)} ordrar att ?ndra.")
+            sheets["Ändringar"] = changes_df
+            log(f"HIB-koppling: {len(changes_df)} ordrar att ändra.")
             for _, r in changes_df.iterrows():
                 ordnr = str(r.get("ordernummer", "")).strip()
                 kundnamn = str(r.get("kundnamn", "")).strip()
                 fields = []
-                if str(r.get("s?ndningsnummer", "")).strip():
-                    fields.append(f"S?ndningsnr ? {str(r['s?ndningsnummer']).strip()}")
+                if str(r.get("sändningsnummer", "")).strip():
+                    fields.append(f"Sändningsnr -> {str(r['sändningsnummer']).strip()}")
                 if str(r.get("Orderdatum", "")).strip():
-                    fields.append(f"Orderdatum ? {str(r['Orderdatum']).strip()}")
+                    fields.append(f"Orderdatum -> {str(r['Orderdatum']).strip()}")
                 if str(r.get("Zon", "")).strip():
-                    fields.append(f"Zon ? {str(r['Zon']).strip()}")
+                    fields.append(f"Zon -> {str(r['Zon']).strip()}")
                 if str(r.get("Multi", "")).strip():
-                    fields.append(f"Multi ? {str(r['Multi']).strip()}")
+                    fields.append(f"Multi -> {str(r['Multi']).strip()}")
                 if fields:
                     name_part = f" ({kundnamn})" if kundnamn else ""
                     log(f"Order {ordnr}{name_part}: {', '.join(fields)}")
 
         if has_missed:
-            sheets["Missade avg?ngar"] = missed_df
-            log(f"Missade avg?ngar: {len(missed_df)} st.")
+            sheets["Missade avgångar"] = missed_df
+            log(f"Missade avgångar: {len(missed_df)} st.")
             for _, r in missed_df.iterrows():
                 ordnr = str(r.get("ordernummer", "")).strip()
                 kundnamn = str(r.get("kundnamn", "")).strip()
                 name_part = f" ({kundnamn})" if kundnamn else ""
-                log(f"Order {ordnr}{name_part}: MISSAT SIN AVG?NG")
+                log(f"Order {ordnr}{name_part}: MISSAT SIN AVGÅNG")
 
         sheets["Instruktion"] = instructions_df
 
@@ -1738,7 +1738,7 @@ async def _job_hib_koppling(session: SessionData):
         await loop.run_in_executor(None, lambda: save_df_to_excel(sheets, "hib_koppling", hib_path))
         session.results["hib-koppling"] = hib_path
         log("__RESULT:hib-koppling__")
-        log("HIB-kopplingen ?r ber?knad.")
+        log("HIB-kopplingen är beräknad.")
         log("__DONE__")
     except Exception as e:
         import traceback
@@ -1758,17 +1758,17 @@ async def _job_orderkontroll(session: SessionData):
     try:
         overview_path = session.files.get("overview")
         if not overview_path:
-            log("FEL: V?lj order?versikten f?rst.")
+            log("FEL: Välj orderöversikten först.")
             log("__ERROR__")
             return
 
-        log("L?ser in order?versikt...")
+        log("Läser in orderöversikt...")
         df = await loop.run_in_executor(None, lambda: read_csv_auto(overview_path))
         df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
         df = apply_value_filters(df, session.active_filters)
 
         if df.empty:
-            log("Inga rader kvar efter filter i order?versikten.")
+            log("Inga rader kvar efter filter i orderöversikten.")
             log("__DONE__")
             return
 
@@ -1786,7 +1786,7 @@ async def _job_orderkontroll(session: SessionData):
         )
 
         if not ship_col:
-            log("FEL: Kunde inte identifiera s?ndningsnummer-kolumnen.")
+            log("FEL: Kunde inte identifiera sändningsnummer-kolumnen.")
             log("__ERROR__")
             return
 
@@ -1844,7 +1844,7 @@ async def _job_orderkontroll(session: SessionData):
         df = df[df[ship_col].astype(str).str.len() > 0].copy()
 
         if df.empty:
-            log("Order?versikten inneh?ller inga s?ndningsnummer.")
+            log("Orderöversikten innehåller inga sändningsnummer.")
             log("__DONE__")
             return
 
@@ -1865,12 +1865,12 @@ async def _job_orderkontroll(session: SessionData):
                 orders_str = ", ".join(orders_list)
                 if len(customers) > 1 or len(carriers) > 1:
                     row: Dict[str, Any] = {
-                        "Avvikelsetyp": "S?ndningsnr med flera kunder/transport?rer",
-                        "S?ndningsnr": ship,
+                        "Avvikelsetyp": "Sändningsnr med flera kunder/transportörer",
+                        "Sändningsnr": ship,
                         "Unika kunder": len(customers),
                         "Kunder": ", ".join(customers),
-                        "Unika transport?rer": len(carriers),
-                        "Transport?rer": ", ".join(carriers),
+                        "Unika transportörer": len(carriers),
+                        "Transportörer": ", ".join(carriers),
                         "Antal orderrader": int(len(group)),
                     }
                     if orders_str:
@@ -1940,10 +1940,10 @@ async def _job_orderkontroll(session: SessionData):
                             kundnamn = kunder[0]
                     row2: Dict[str, Any] = {
                         "Ordernr": ordnr_str,
-                        "S?ndningsnr": ", ".join(hib_ships),
+                        "Sändningsnr": ", ".join(hib_ships),
                         "Ordertyp": "HIB",
                         "Status": int(max_status),
-                        "Anm?rkning": "HIB-order med status > 31 saknar matchande butikss?ndning",
+                        "Anmärkning": "HIB-order med status > 31 saknar matchande butikssändning",
                     }
                     if kundnamn:
                         row2["Kundnamn"] = kundnamn
@@ -1955,20 +1955,20 @@ async def _job_orderkontroll(session: SessionData):
 
         has_any = not result_df.empty or not hib_check_df.empty
         if not has_any:
-            msg = "Inga avvikelser hittades i order?versikten."
+            msg = "Inga avvikelser hittades i orderöversikten."
             if missing_hib_cols:
-                msg += " HIB-kontrollen kunde inte k?ras fullt ut (saknar: " + ", ".join(missing_hib_cols) + ")."
+                msg += " HIB-kontrollen kunde inte köras fullt ut (saknar: " + ", ".join(missing_hib_cols) + ")."
             log(msg)
             log("__DONE__")
             return
 
         # Logga resultat
         if not result_df.empty:
-            log(f"Order?versikt: {len(result_df)} s?ndningsnummer med flera kunder/transport?rer.")
+            log(f"Orderöversikt: {len(result_df)} sändningsnummer med flera kunder/transportörer.")
         if not hib_check_df.empty:
-            log(f"HIB-ordrar med status > 31 utan matchande butikss?ndning: {len(hib_check_df)} st.")
+            log(f"HIB-ordrar med status > 31 utan matchande butikssändning: {len(hib_check_df)} st.")
         if missing_hib_cols:
-            log("HIB-kontrollen kunde inte k?ras fullt ut (saknar: " + ", ".join(missing_hib_cols) + ").")
+            log("HIB-kontrollen kunde inte köras fullt ut (saknar: " + ", ".join(missing_hib_cols) + ").")
 
         # Bygg Excel
         sheets: Dict[str, pd.DataFrame] = {}
@@ -1976,14 +1976,14 @@ async def _job_orderkontroll(session: SessionData):
         if not result_df.empty:
             s_df = result_df.copy()
             if "Avvikelsetyp" not in s_df.columns:
-                s_df.insert(0, "Avvikelsetyp", "S?ndningsnr med flera kunder/transport?rer")
-            sheets["S?ndningskontroll"] = s_df
+                s_df.insert(0, "Avvikelsetyp", "Sändningsnr med flera kunder/transportörer")
+            sheets["Sändningskontroll"] = s_df
             combined_parts.append(s_df)
         if not hib_check_df.empty:
             h_df = hib_check_df.copy()
             if "Avvikelsetyp" not in h_df.columns:
-                h_df.insert(0, "Avvikelsetyp", "HIB ?ver status 31 utan butikss?ndning")
-            sheets["HIB utan butikss?ndning"] = h_df
+                h_df.insert(0, "Avvikelsetyp", "HIB över status 31 utan butikssändning")
+            sheets["HIB utan butikssändning"] = h_df
             combined_parts.append(h_df)
         if combined_parts:
             combined = pd.concat(combined_parts, ignore_index=True, sort=False)
@@ -1993,7 +1993,7 @@ async def _job_orderkontroll(session: SessionData):
         await loop.run_in_executor(None, lambda: save_df_to_excel(sheets, "orderkontroll", ok_path))
         session.results["orderkontroll"] = ok_path
         log("__RESULT:orderkontroll__")
-        log("Orderkontrollen ?r klar.")
+        log("Orderkontrollen är klar.")
         log("__DONE__")
     except Exception as e:
         import traceback
@@ -2015,11 +2015,11 @@ async def _job_dispatchkontroll(session: SessionData):
         dispatch_path = session.files.get("dispatch")
 
         if not overview_path or not dispatch_path:
-            log("FEL: V?lj b?de order?versikt och dispatchpallar.")
+            log("FEL: Välj både orderöversikt och dispatchpallar.")
             log("__ERROR__")
             return
 
-        log("L?ser in filer f?r dispatchkontroll...")
+        log("Läser in filer för dispatchkontroll...")
         ov_df = await loop.run_in_executor(None, lambda: read_csv_auto(overview_path))
         dp_df = await loop.run_in_executor(None, lambda: read_csv_auto(dispatch_path))
 
@@ -2041,7 +2041,7 @@ async def _job_dispatchkontroll(session: SessionData):
         ov_order_col = _find_col_by_keywords(ov_df, order_kws)
         ov_ship_col = _find_col_by_keywords(ov_df, ship_kws)
         if not ov_order_col or not ov_ship_col:
-            log("FEL: Kunde inte identifiera order- eller s?ndningskolumnen i order?versikten.")
+            log("FEL: Kunde inte identifiera order- eller sändningskolumnen i orderöversikten.")
             log("__ERROR__")
             return
 
@@ -2049,7 +2049,7 @@ async def _job_dispatchkontroll(session: SessionData):
         dp_ship_col = _find_col_by_keywords(dp_df, ship_kws)
         plock_col = _find_col_by_keywords(dp_df, plock_kws)
         if not dp_order_col or not dp_ship_col or not plock_col:
-            log("FEL: Kunde inte identifiera order-, s?ndnings- eller plockpallskolumnen i dispatchfilen.")
+            log("FEL: Kunde inte identifiera order-, sändnings- eller plockpallskolumnen i dispatchfilen.")
             log("__ERROR__")
             return
 
@@ -2087,7 +2087,7 @@ async def _job_dispatchkontroll(session: SessionData):
             except Exception:
                 pass
 
-        # Bygg order ? s?ndningsnr mapping fr?n order?versikten
+        # Bygg order -> sändningsnr-mapping från orderöversikten
         order_to_ship: Dict[str, str] = {}
         try:
             for ordnum, sub in ov_df.groupby(ov_order_col):
@@ -2106,8 +2106,8 @@ async def _job_dispatchkontroll(session: SessionData):
                 if expected and expected != dp_ship:
                     diff_row: Dict[str, Any] = {
                         "Ordernr": ordnr,
-                        "?versikt s?ndningsnr": expected,
-                        "Dispatch s?ndningsnr": dp_ship,
+                        "Översikt sändningsnr": expected,
+                        "Dispatch sändningsnr": dp_ship,
                         "Plockpallsnr": str(row[plock_col]).strip(),
                         "kundnamn": order_to_customer.get(ordnr, ""),
                     }
@@ -2116,7 +2116,7 @@ async def _job_dispatchkontroll(session: SessionData):
                 continue
 
         if not diff_rows:
-            log("Alla s?ndningsnummer st?mmer ?verens.")
+            log("Alla sändningsnummer stämmer överens.")
             log("__DONE__")
             return
 
@@ -2124,13 +2124,13 @@ async def _job_dispatchkontroll(session: SessionData):
         log(f"Dispatchkontrollen hittade {len(diff_df)} avvikelser.")
         for _, row in diff_df.iterrows():
             name_part = f" ({row['kundnamn']})" if str(row.get("kundnamn", "")).strip() else ""
-            log(f"Order {row['Ordernr']}{name_part}: s?ndningsnr {row['?versikt s?ndningsnr']} i ?versikten men {row['Dispatch s?ndningsnr']} i dispatch (plockpall {row['Plockpallsnr']})")
+            log(f"Order {row['Ordernr']}{name_part}: sändningsnr {row['Översikt sändningsnr']} i översikten men {row['Dispatch sändningsnr']} i dispatch (plockpall {row['Plockpallsnr']})")
 
         dk_path = os.path.join(session.temp_dir, "dispatchkontroll.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel({"Dispatchkontroll": diff_df}, "dispatchkontroll", dk_path))
         session.results["dispatchkontroll"] = dk_path
         log("__RESULT:dispatchkontroll__")
-        log("Dispatchkontrollen ?r klar.")
+        log("Dispatchkontrollen är klar.")
         log("__DONE__")
     except Exception as e:
         import traceback
@@ -2237,7 +2237,7 @@ async def api_run_allokering(sid: str, background_tasks: BackgroundTasks):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     if session.running:
-        raise HTTPException(status_code=409, detail="En k?rning p?g?r redan")
+        raise HTTPException(status_code=409, detail="En körning pågår redan")
     session.running = True
     background_tasks.add_task(_job_allokering, session)
     return {"job_id": "allokering", "status": "started"}
@@ -2249,7 +2249,7 @@ async def api_run_hib(sid: str, background_tasks: BackgroundTasks):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     if session.running:
-        raise HTTPException(status_code=409, detail="En k?rning p?g?r redan")
+        raise HTTPException(status_code=409, detail="En körning pågår redan")
     session.running = True
     background_tasks.add_task(_job_hib_koppling, session)
     return {"job_id": "hib-koppling", "status": "started"}
@@ -2261,7 +2261,7 @@ async def api_run_orderkontroll(sid: str, background_tasks: BackgroundTasks):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     if session.running:
-        raise HTTPException(status_code=409, detail="En k?rning p?g?r redan")
+        raise HTTPException(status_code=409, detail="En körning pågår redan")
     session.running = True
     background_tasks.add_task(_job_orderkontroll, session)
     return {"job_id": "orderkontroll", "status": "started"}
@@ -2273,7 +2273,7 @@ async def api_run_dispatchkontroll(sid: str, background_tasks: BackgroundTasks):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     if session.running:
-        raise HTTPException(status_code=409, detail="En k?rning p?g?r redan")
+        raise HTTPException(status_code=409, detail="En körning pågår redan")
     session.running = True
     background_tasks.add_task(_job_dispatchkontroll, session)
     return {"job_id": "dispatchkontroll", "status": "started"}
@@ -2285,7 +2285,7 @@ async def api_run_eftersok(sid: str, body: EftersokBody, background_tasks: Backg
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     if session.running:
-        raise HTTPException(status_code=409, detail="En k?rning p?g?r redan")
+        raise HTTPException(status_code=409, detail="En körning pågår redan")
     session.running = True
     background_tasks.add_task(_job_eftersok, session, body.purchase, body.article)
     return {"job_id": "eftersok", "status": "started"}
@@ -2302,7 +2302,7 @@ async def api_ordersaldo_refresh(sid: str):
         raise HTTPException(status_code=404, detail="Session saknas")
     orders_path = session.files.get("orders")
     if not orders_path or not os.path.exists(orders_path):
-        raise HTTPException(status_code=400, detail="Best?llningslinjer-filen saknas")
+        raise HTTPException(status_code=400, detail="Beställningslinjer-filen saknas")
     loop = asyncio.get_event_loop()
     list1, list2 = await loop.run_in_executor(
         None,
@@ -2360,7 +2360,7 @@ async def api_reset_results(sid: str):
     session = get_session(sid)
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
-    # Rensa resultatfiler fr?n disk
+    # Rensa resultatfiler från disk
     for path in session.results.values():
         try:
             if path and os.path.exists(path):
@@ -2371,7 +2371,7 @@ async def api_reset_results(sid: str):
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
     session.filter_scan_cache.clear()
-    # Rensa logg-k?n
+    # Rensa logg-kön
     while not session.log_queue.empty():
         try:
             session.log_queue.get_nowait()
@@ -2457,7 +2457,7 @@ def api_download(sid: str, result_key: str):
         raise HTTPException(status_code=404, detail="Session saknas")
     path = session.results.get(result_key)
     if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"Resultat '{result_key}' ej tillg?ngligt")
+        raise HTTPException(status_code=404, detail=f"Resultat '{result_key}' ej tillgängligt")
     filename = os.path.basename(path)
     return FileResponse(
         path,
@@ -2477,7 +2477,7 @@ async def api_chunked_excel(body: ChunkedExcelBody):
     chunk_size = max(1, body.chunk_size)
 
     if not values:
-        raise HTTPException(status_code=400, detail="Inga v?rden")
+        raise HTTPException(status_code=400, detail="Inga värden")
 
     def build_excel() -> str:
         chunks = [values[i:i + chunk_size] for i in range(0, len(values), chunk_size)]
@@ -2505,7 +2505,7 @@ async def api_chunked_excel(body: ChunkedExcelBody):
 
 
 # ---------------------------------------------------------------------------
-# Statiska filer ? montera SIST
+# Statiska filer - montera SIST
 # ---------------------------------------------------------------------------
 
 _frontend_dir = Path(__file__).parent.parent / "frontend"
