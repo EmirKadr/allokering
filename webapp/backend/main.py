@@ -1205,6 +1205,37 @@ async def _job_allokering(session: SessionData):
         except Exception:
             pass
 
+        # Summering per K?lltyp (samma som desktop-appen)
+        try:
+            import json as _json
+            qty_col_kt = find_col(result, ORDER_SCHEMA["qty"], required=False, default=None)
+            ktyp_series = result.get("K\u00e4lltyp", pd.Series([], dtype=object)).astype(str)
+            unique_types = [k for k in sorted(set(ktyp_series.dropna())) if k]
+            ordered_types = []
+            for prv in ("HELPALL", "AUTOSTORE"):
+                if prv in unique_types:
+                    ordered_types.append(prv)
+                    unique_types.remove(prv)
+            ordered_types.extend(unique_types)
+            kt_rows = []
+            log("\nSummering per K\u00e4lltyp:")
+            for ktyp in ordered_types:
+                sub = result[ktyp_series == ktyp]
+                row_count = int(len(sub))
+                kolli = 0.0
+                if qty_col_kt and not sub.empty:
+                    kolli = float(pd.to_numeric(sub[qty_col_kt], errors="coerce").sum())
+                if ktyp == "HELPALL":
+                    row_text = f"{row_count} pallar"
+                else:
+                    row_text = f"{row_count} rader"
+                kolli_int = int(round(kolli))
+                log(f"  {ktyp}: {row_text}, {kolli_int} kolli")
+                kt_rows.append({"kalltyp": ktyp, "antal_text": row_text, "kolli": kolli_int})
+            log(f"__KALLTYP_SUMMARY:{_json.dumps(kt_rows)}__")
+        except Exception:
+            pass
+
         # Ber?kna ordersaldo-listor (kompletta ordrar / p?fyllningsbehov)
         try:
             if orders_path:

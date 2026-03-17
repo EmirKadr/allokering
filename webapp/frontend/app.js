@@ -752,6 +752,15 @@ function connectSSE() {
   sseSource.onmessage = (e) => {
     const msg = e.data.replace(/\\n/g, "\n");
 
+    // Kalltyp-summering
+    if (msg.startsWith("__KALLTYP_SUMMARY:")) {
+      try {
+        const jsonStr = msg.replace("__KALLTYP_SUMMARY:", "").replace(/__$/, "");
+        renderKalltypSummary(JSON.parse(jsonStr));
+      } catch (_e) { /* ignore parse errors */ }
+      return;
+    }
+
     // Resultat-events
     if (msg.startsWith("__RESULT:")) {
       const key = msg.replace("__RESULT:", "").replace(/__/g, "").trim();
@@ -1302,6 +1311,44 @@ function bindResultPreviewControls() {
   btn.dataset.boundPreview = "1";
 }
 
+// ---------------------------------------------------------------------------
+// Summering per Kalltyp
+// ---------------------------------------------------------------------------
+
+const KALLTYP_COLORS = {
+  HELPALL: "#28a745",
+  AUTOSTORE: "#007bff",
+  HIB: "#6f42c1",
+  HUVUDPLOCK: "#dc3545",
+  SKRYMMANDE: "#fd7e14",
+  EHANDEL: "#20c997",
+};
+
+function renderKalltypSummary(rows) {
+  const card = document.getElementById("kalltyp-summary-card");
+  const tbody = document.querySelector("#kalltyp-summary-table tbody");
+  if (!card || !tbody) return;
+  tbody.innerHTML = "";
+  if (!Array.isArray(rows) || rows.length === 0) {
+    card.style.display = "none";
+    return;
+  }
+  for (const r of rows) {
+    const color = KALLTYP_COLORS[r.kalltyp] || "inherit";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td style="color:${color};font-weight:600">${r.kalltyp || ""}</td><td class="text-end">${r.antal_text || ""}</td><td class="text-end">${r.kolli ?? ""}</td>`;
+    tbody.appendChild(tr);
+  }
+  card.style.display = "";
+}
+
+function clearKalltypSummary() {
+  const card = document.getElementById("kalltyp-summary-card");
+  const tbody = document.querySelector("#kalltyp-summary-table tbody");
+  if (tbody) tbody.innerHTML = "";
+  if (card) card.style.display = "none";
+}
+
 function clearAllocationPreview() {
   const card = document.getElementById("allocation-preview-card");
   const meta = document.getElementById("allocation-preview-meta");
@@ -1445,6 +1492,7 @@ async function resetCache() {
     availableResults.clear();
     renderResultButtons();
     await refreshAllocationPreview(false);
+    clearKalltypSummary();
     document.getElementById("log-output").textContent = "";
     appendLog("Cache rensad (filer och resultat borttagna).");
     await refreshFilterOptions();
