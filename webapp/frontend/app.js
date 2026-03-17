@@ -34,6 +34,7 @@ const PROG_SLOTS = [
 
 const WMS_SLOTS = [
   { key: "wms_receive", label: "Varumottagningslogg",                    accept: ".csv,.txt" },
+  { key: "wms_buffer",  label: "Buffertpall",                            accept: ".csv,.txt" },
   { key: "wms_booking", label: "Ej inlagrade artiklar",                  accept: ".csv,.txt" },
   { key: "wms_trans",   label: "Translogg",                              accept: ".csv,.txt" },
   { key: "wms_pick",    label: "Plocklogg full",                         accept: ".csv,.txt" },
@@ -49,8 +50,9 @@ const ENABLE_ASK_CSV = false;
 const SHOW_ASK_FETCH_BUTTONS = false && ENABLE_ASK_CSV;
 
 const ASK_VIEW_OVERRIDES = {
-  overview: "Order\u00f6versikt",
-  buffer: "Buffertpallet",
+  overview: "Orderöversikt",
+  buffer: "Buffertpall",
+  wms_buffer: "Buffertpall",
 };
 
 const CLASSIFIER_DATA_SLOTS = [
@@ -62,37 +64,38 @@ const CLASSIFIER_DATA_SLOTS = [
 
 // Resultatnycklar -> visningsnamn
 const RESULT_LABELS = {
-  "allokerade":       "Oppna allokerade pallar",
-  "nearmiss":         "Oppna near-miss",
-  "pallplatser":      "Oppna pallplatser",
-  "refill":           "Oppna refill",
-  "hib-koppling":     "Oppna HIB-koppling",
-  "orderkontroll":    "Oppna orderkontroll",
-  "dispatchkontroll": "Oppna dispatchkontroll",
-  "eftersok":         "Oppna eftersok",
-  "prognos":          "Oppna prognos",
-  "sales":            "Oppna forsaljningsinsikter",
+  "allokerade":       "Öppna allokerade pallar",
+  "nearmiss":         "Öppna near-miss",
+  "pallplatser":      "Öppna pallplatser",
+  "refill":           "Öppna refill",
+  "hib-koppling":     "Öppna HIB-koppling",
+  "orderkontroll":    "Öppna orderkontroll",
+  "dispatchkontroll": "Öppna dispatchkontroll",
+  "eftersok":         "Öppna eftersök",
+  "prognos":          "Öppna prognos",
+  "sales":            "Öppna försäljningsinsikter",
 };
 
 const ACTION_REQUIREMENTS = {
   "allokering": [
-    { type: "file", key: "orders", label: "Bestallningslinjer (CSV)" },
+    { type: "file", key: "orders", label: "Beställningslinjer (CSV)" },
     { type: "file", key: "buffer", label: "Buffertpallar (CSV)" },
   ],
   "hib-koppling": [
-    { type: "file", key: "orders", label: "Bestallningslinjer (CSV)" },
-    { type: "file", key: "overview", label: "Orderoversikt (CSV)" },
+    { type: "file", key: "orders", label: "Beställningslinjer (CSV)" },
+    { type: "file", key: "overview", label: "Orderöversikt (CSV)" },
   ],
   "orderkontroll": [
-    { type: "file", key: "overview", label: "Orderoversikt (CSV)" },
+    { type: "file", key: "overview", label: "Orderöversikt (CSV)" },
   ],
   "dispatchkontroll": [
-    { type: "file", key: "overview", label: "Orderoversikt (CSV)" },
+    { type: "file", key: "overview", label: "Orderöversikt (CSV)" },
     { type: "file", key: "dispatch", label: "Dispatchpallar (CSV)" },
   ],
   "eftersok": [
-    { type: "file", key: "wms_receive", label: "Mottagningslogg (CSV)" },
-    { type: "input", key: "purchase-input", label: "Inkopsnummer" },
+    { type: "file", key: "wms_receive", label: "Varumottagningslogg (CSV)" },
+    { type: "file", key: "wms_buffer", label: "Buffertpall (CSV)" },
+    { type: "input", key: "purchase-input", label: "Inköpsnummer" },
     { type: "input", key: "article-input", label: "Artikelnummer" },
   ],
 };
@@ -110,15 +113,15 @@ const OPEN_RESULT_ORDER = [
 ];
 
 const OPEN_BUTTON_HINTS = {
-  "allokerade": "Tryck forst: Kor allokering",
-  "nearmiss": "Tryck forst: Kor allokering",
-  "pallplatser": "Tryck forst: Kor allokering",
-  "refill": "Tryck forst: Kor allokering",
-  "hib-koppling": "Tryck forst: Kor HIB-koppling",
-  "orderkontroll": "Tryck forst: Kontrollera orderoversikt",
-  "dispatchkontroll": "Tryck forst: Kontrollera dispatchpallar",
-  "eftersok": "Tryck forst: Eftersok",
-  "prognos": "Ladda upp Prognos eller Kampanjvolymer forst",
+  "allokerade": "Tryck först: Kör allokering",
+  "nearmiss": "Tryck först: Kör allokering",
+  "pallplatser": "Tryck först: Kör allokering",
+  "refill": "Tryck först: Kör allokering",
+  "hib-koppling": "Tryck först: Kör HIB-koppling",
+  "orderkontroll": "Tryck först: Kontrollera orderöversikt",
+  "dispatchkontroll": "Tryck först: Kontrollera dispatchpallar",
+  "eftersok": "Tryck först: Kör Eftersök",
+  "prognos": "Ladda upp Prognos eller Kampanjvolymer först",
 };
 
 // ---------------------------------------------------------------------------
@@ -227,7 +230,7 @@ function buildFileRow(slot) {
   badge.className = "file-status-badge";
   badge.id = `badge-${slot.key}`;
   badge.textContent = "Ej fil";
-  badge.title = "Klicka for att valja fil";
+  badge.title = "Klicka för att välja fil";
   badge.addEventListener("click", () => triggerFilePicker(slot.key, slot.accept));
 
   const removeBtn = document.createElement("button");
@@ -838,7 +841,8 @@ function setupMainTabs() {
       setMainPage(btn.dataset.page || "allokering-page");
     });
   });
-  setMainPage("allokering-page");
+  const activeButton = buttons.find(btn => btn.classList.contains("active"));
+  setMainPage(activeButton?.dataset.page || "allokering-page");
 }
 
 function setMainPage(pageId) {
@@ -848,6 +852,10 @@ function setMainPage(pageId) {
   document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
+}
+
+function getActiveMainPage() {
+  return document.querySelector(".main-page-pane.active")?.id || "allokering-page";
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,41 +1252,49 @@ async function refreshResultStatus() {
   }
 }
 
+function createResultButton(key, isReady) {
+  const label = RESULT_LABELS[key] || `Öppna ${key}`;
+  const btn = document.createElement("button");
+  btn.className = `btn btn-sm ${isReady ? "btn-success" : "btn-outline-secondary"}`;
+  btn.textContent = label;
+  btn.dataset.resultKey = key;
+  btn.setAttribute("data-bs-toggle", "tooltip");
+  btn.onclick = () => openResult(key);
+  if (isReady) {
+    btn.title = `Ladda ner och öppna ${label.replace(/^Öppna\\s+/i, "")} som Excel-fil`;
+    setButtonLockState(btn, false, "");
+  } else {
+    setButtonLockState(btn, true, OPEN_BUTTON_HINTS[key] || "Resultatet är inte tillgängligt än.");
+  }
+  return btn;
+}
+
+function resultContainerForKey(key) {
+  if (key === "eftersok") {
+    return document.getElementById("result-buttons-eftersok");
+  }
+  return document.getElementById("result-buttons-allokering");
+}
+
 function renderResultButtons() {
-  const container = document.getElementById("result-buttons");
-  if (!container) return;
-  container.innerHTML = "";
+  const allokeringContainer = document.getElementById("result-buttons-allokering");
+  const eftersokContainer = document.getElementById("result-buttons-eftersok");
+  if (allokeringContainer) allokeringContainer.innerHTML = "";
+  if (eftersokContainer) eftersokContainer.innerHTML = "";
 
   OPEN_RESULT_ORDER.forEach(key => {
-    const isReady = availableResults.has(key);
-    const label = RESULT_LABELS[key] || `Oppna ${key}`;
-    const btn = document.createElement("button");
-    btn.className = `btn btn-sm ${isReady ? "btn-success" : "btn-outline-secondary"}`;
-    btn.textContent = label;
-    btn.dataset.resultKey = key;
-    btn.setAttribute("data-bs-toggle", "tooltip");
-    btn.onclick = () => openResult(key);
-    if (isReady) {
-      btn.title = `Ladda ner och oppna ${label.replace(/^Oppna\\s+/i, "")} som Excel-fil`;
-      setButtonLockState(btn, false, "");
-    } else {
-      setButtonLockState(btn, true, OPEN_BUTTON_HINTS[key] || "Resultatet ar inte tillgangligt an.");
-    }
-    container.appendChild(btn);
+    const container = resultContainerForKey(key);
+    if (!container) return;
+    container.appendChild(createResultButton(key, availableResults.has(key)));
   });
 
-  // Visar ovantade/extra resultatycklar om backend returnerar fler.
+  // Visar oväntade/extra resultatnycklar om backend returnerar fler.
   Array.from(availableResults)
     .filter(key => !OPEN_RESULT_ORDER.includes(key))
     .forEach(key => {
-      const label = RESULT_LABELS[key] || `Oppna ${key}`;
-      const btn = document.createElement("button");
-      btn.className = "btn btn-success btn-sm";
-      btn.textContent = label;
-      btn.title = `Ladda ner och oppna ${label.replace(/^Oppna\\s+/i, "")} som Excel-fil`;
-      btn.setAttribute("data-bs-toggle", "tooltip");
-      btn.onclick = () => openResult(key);
-      container.appendChild(btn);
+      const container = resultContainerForKey(key) || allokeringContainer || eftersokContainer;
+      if (!container) return;
+      container.appendChild(createResultButton(key, true));
     });
 
   initTooltips();
@@ -1286,7 +1302,7 @@ function renderResultButtons() {
 
 function openResult(key) {
   if (!availableResults.has(key)) {
-    appendLog(OPEN_BUTTON_HINTS[key] || `Resultat '${key}' ar inte tillgangligt an.`);
+    appendLog(OPEN_BUTTON_HINTS[key] || `Resultat '${key}' är inte tillgängligt än.`);
     return;
   }
   downloadResult(key);
@@ -1349,7 +1365,7 @@ function setOrdersaldoCopyButtonState(buttonId, count, emptyHint) {
     btn.title = btn.dataset.baseTitle || "";
     btn.classList.remove("btn-soft-disabled");
   } else {
-    btn.title = emptyHint || "Listan ar tom.";
+    btn.title = emptyHint || "Listan är tom.";
     btn.classList.add("btn-soft-disabled");
   }
 }
@@ -1360,16 +1376,16 @@ async function refreshOrdersaldoButtonState() {
       fetch(`${API}/api/ordersaldo/list1/${sessionId}`),
       fetch(`${API}/api/ordersaldo/list2/${sessionId}`),
     ]);
-    if (!r1.ok || !r2.ok) throw new Error("kunde inte hamta listsaldo");
+    if (!r1.ok || !r2.ok) throw new Error("kunde inte hämta listsaldo");
     const d1 = await r1.json().catch(() => ({}));
     const d2 = await r2.json().catch(() => ({}));
     const c1 = Array.isArray(d1.values) ? d1.values.length : 0;
     const c2 = Array.isArray(d2.values) ? d2.values.length : 0;
-    setOrdersaldoCopyButtonState("btn-kompletta", c1, "Lista1 ar tom.");
-    setOrdersaldoCopyButtonState("btn-pafyllning", c2, "Lista2 ar tom.");
+    setOrdersaldoCopyButtonState("btn-kompletta", c1, "Lista 1 är tom.");
+    setOrdersaldoCopyButtonState("btn-pafyllning", c2, "Lista 2 är tom.");
   } catch (e) {
-    setOrdersaldoCopyButtonState("btn-kompletta", 0, "Lista1 ar tom.");
-    setOrdersaldoCopyButtonState("btn-pafyllning", 0, "Lista2 ar tom.");
+    setOrdersaldoCopyButtonState("btn-kompletta", 0, "Lista 1 är tom.");
+    setOrdersaldoCopyButtonState("btn-pafyllning", 0, "Lista 2 är tom.");
   }
   initTooltips();
 }
@@ -1384,7 +1400,7 @@ async function copyList(listId) {
     const data = await resp.json();
     const values = data.values || [];
     if (values.length === 0) {
-      appendLog(`${listId === "list1" ? "Kompletta ordrar" : "Pafyllningsbehov"}: listan ar tom.`);
+      appendLog(`${listId === "list1" ? "Kompletta ordrar" : "Påfyllningsbehov"}: listan är tom.`);
       return;
     }
     await navigator.clipboard.writeText(values.join("\n"));
@@ -1402,7 +1418,7 @@ async function copyList(listId) {
 async function resetCache() {
   try {
     await fetch(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" });
-    // Nollstall fil-status
+    // Nollställ fil-status
     fileStatuses = {};
     [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
       setBadge(slot.key, "Ej fil", false);
@@ -1411,6 +1427,10 @@ async function resetCache() {
     renderResultButtons();
     clearKalltypSummary();
     document.getElementById("log-output").textContent = "";
+    const purchaseInput = document.getElementById("purchase-input");
+    const articleInput = document.getElementById("article-input");
+    if (purchaseInput) purchaseInput.value = "";
+    if (articleInput) articleInput.value = "";
     appendLog("Cache rensad (filer och resultat borttagna).");
     await refreshFilterOptions();
     await refreshOrdersaldoButtonState();
@@ -1428,11 +1448,11 @@ async function openChunkedExcel() {
   const rawText = document.getElementById("paste-values").value.trim();
   const values = rawText.split("\n").map(v => v.trim()).filter(v => v);
   if (values.length === 0) {
-    appendLog("Inga varden att oppna.");
+    appendLog("Inga värden att öppna.");
     return;
   }
   const chunkSize = parseInt(document.getElementById("chunk-size").value) || 2000;
-  appendLog(`Skapar Excel med ${values.length} varden, ${chunkSize} per kolumn...`);
+  appendLog(`Skapar Excel med ${values.length} värden, ${chunkSize} per kolumn...`);
   try {
     const resp = await fetch(`${API}/api/chunked-excel`, {
       method: "POST",
@@ -1497,11 +1517,11 @@ async function copyChunkColumn(colIndex) {
   const start = colIndex * chunkSize;
   const chunk = values.slice(start, start + chunkSize);
   if (chunk.length === 0) {
-    appendLog(`Kolumn ${colIndex + 1} ar tom.`);
+    appendLog(`Kolumn ${colIndex + 1} är tom.`);
     return;
   }
   await navigator.clipboard.writeText(chunk.join("\n"));
-  appendLog(`${chunk.length} varden fran kolumn ${colIndex + 1} kopierade.`);
+  appendLog(`${chunk.length} värden från kolumn ${colIndex + 1} kopierade.`);
 }
 
 // Lyssna pa andringar i textarea och chunk-size
@@ -1567,16 +1587,19 @@ function setupDragDrop() {
 
 function matchFileToSlot(filename) {
   const lower = filename.toLowerCase();
+  const activePage = getActiveMainPage();
 
   // Exakta prefix-matchningar (speglar allokera11.py _detect_file_type)
   const exactMap = {
     "wms_receive": "v_ask_receive_log",
     "wms_booking": "v_ask_booking_putaway",
-    "buffer":      "v_ask_article_buffertpallet",
     "wms_trans":   "v_ask_trans_log",
     "wms_pick":    "v_ask_pick_log_full",
     "wms_correct": "v_ask_correct_log",
   };
+  if (lower.includes("v_ask_article_buffertpallet")) {
+    return activePage === "eftersok-page" ? "wms_buffer" : "buffer";
+  }
   for (const [slot, hint] of Object.entries(exactMap)) {
     if (lower.includes(hint)) return slot;
   }
@@ -1585,11 +1608,12 @@ function matchFileToSlot(filename) {
   if (lower.includes("prognos") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "prognos";
   if (lower.includes("kampanj") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "campaign";
   if (lower.includes("bestall") || lower.includes("best\u00e4ll") || (lower.includes("order") && lower.includes("detail"))) return "orders";
-  if (lower.includes("buffert") || lower.includes("buffer")) return "buffer";
+  if (lower.includes("buffert") || lower.includes("buffer")) {
+    return activePage === "eftersok-page" ? "wms_buffer" : "buffer";
+  }
   if (lower.includes("saldo") || lower.includes("automation")) return "automation";
   if (lower.includes("item") || lower.includes("artikel_option")) return "item";
   if (lower.includes("overview") || lower.includes("oversikt") || lower.includes("\u00f6versikt") || lower.includes("order_overview")) return "overview";
   if (lower.includes("dispatch")) return "dispatch";
   return null;
 }
-

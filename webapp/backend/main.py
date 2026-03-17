@@ -96,6 +96,7 @@ ASK_FETCHABLE_FILE_KEYS = {
     "overview",
     "dispatch",
     "wms_receive",
+    "wms_buffer",
     "wms_booking",
     "wms_trans",
     "wms_pick",
@@ -226,6 +227,7 @@ SLOT_FILENAME_HINTS: Dict[str, List[str]] = {
     "buffer": ["buffertpallet", "buffert", "buffer"],
     "dispatch": ["dispatch"],
     "wms_receive": ["receive_log", "receive"],
+    "wms_buffer": ["buffertpallet", "buffert", "buffer"],
     "wms_booking": ["booking_putaway", "booking", "putaway"],
     "wms_trans": ["trans_log", "translog"],
     "wms_pick": ["pick_log_full", "pick_log", "plocklogg"],
@@ -1781,27 +1783,42 @@ async def _job_eftersok(session: SessionData, purchase: str, article: str):
         article = article.strip()
 
         if not purchase or not article:
-            log("FEL: Ange b?de ink?psnummer och artikelnummer.")
+            log("FEL: Ange både inköpsnummer och artikelnummer.")
             log("__ERROR__")
             return
 
-        # Samla alla tillg?ngliga WMS-filer
+        wms_slot_labels = {
+            "wms_receive": "Varumottagningslogg",
+            "wms_buffer": "Buffertpall",
+            "wms_booking": "Ej inlagrade artiklar",
+            "wms_trans": "Translogg",
+            "wms_pick": "Plocklogg full",
+            "wms_correct": "Saldojusteringar & inventeringsavvikelser",
+        }
+
+        # Samla alla tillgängliga WMS-filer
         wms_files: Dict[str, str] = {}
-        for key in ["wms_receive", "wms_booking", "wms_buffert", "wms_trans", "wms_pick", "wms_correct"]:
+        for key in ["wms_receive", "wms_buffer", "wms_booking", "wms_trans", "wms_pick", "wms_correct"]:
             path = session.files.get(key)
+            if not path and key == "wms_buffer":
+                path = session.files.get("wms_buffert")
             if path and os.path.exists(path):
                 wms_files[key] = path
 
-        log(f"Efters?k: ink?psnummer={purchase}, artikelnummer={article}")
-        log(f"Tillg?ngliga WMS-filer: {list(wms_files.keys())}")
+        log(f"Eftersök: inköpsnummer={purchase}, artikelnummer={article}")
+        if wms_files:
+            readable_files = [wms_slot_labels.get(key, key) for key in wms_files.keys()]
+            log(f"Tillgängliga WMS-filer: {', '.join(readable_files)}")
+        else:
+            log("Inga WMS-filer uppladdade för Eftersök.")
 
         results_sheets: Dict[str, pd.DataFrame] = {}
 
-        # S?k igenom varje WMS-fil
+        # Sök igenom varje WMS-fil
         for key, path in wms_files.items():
             try:
                 df = await loop.run_in_executor(None, lambda p=path: read_csv_auto(p))
-                # S?k efter rader som matchar purchase eller article
+                # Sök efter rader som matchar purchase eller article
                 mask_purchase = pd.Series(False, index=df.index)
                 mask_article = pd.Series(False, index=df.index)
                 for col in df.columns:
@@ -1812,16 +1829,17 @@ async def _job_eftersok(session: SessionData, purchase: str, article: str):
                         mask_article = mask_article | col_str.str.contains(str(article), case=False, na=False)
                 mask = mask_purchase | mask_article
                 hits = df[mask].copy()
+                sheet_name = wms_slot_labels.get(key, key)
                 if not hits.empty:
-                    results_sheets[key] = hits
-                    log(f"  {key}: {len(hits)} tr?ff(ar)")
+                    results_sheets[sheet_name] = hits
+                    log(f"  {sheet_name}: {len(hits)} träff(ar)")
                 else:
-                    log(f"  {key}: inga tr?ffar")
+                    log(f"  {sheet_name}: inga träffar")
             except Exception as e:
-                log(f"  {key}: fel vid l?sning ? {e}")
+                log(f"  {wms_slot_labels.get(key, key)}: fel vid läsning - {e}")
 
         if not results_sheets:
-            log("Inga tr?ffar hittades i tillg?ngliga WMS-filer.")
+            log("Inga träffar hittades i tillgängliga WMS-filer.")
             log("__DONE__")
             return
 
@@ -1829,7 +1847,7 @@ async def _job_eftersok(session: SessionData, purchase: str, article: str):
         await loop.run_in_executor(None, lambda: save_df_to_excel(results_sheets, "eftersok", eftersok_path))
         session.results["eftersok"] = eftersok_path
         log("__RESULT:eftersok__")
-        log("Efters?ket ?r klart.")
+        log("Eftersöket är klart.")
         log("__DONE__")
     except Exception as e:
         import traceback
