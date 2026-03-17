@@ -56,7 +56,9 @@ from logic import (
     normalize_items,
     normalize_not_putaway,
     normalize_saldo,
+    read_campaign_xlsx,
     read_csv_auto,
+    read_prognos_xlsx,
     refresh_ordersaldo,
     save_df_to_excel,
     scan_filter_values,
@@ -400,6 +402,146 @@ def _pick_col_by_names(df: pd.DataFrame, names: List[str]) -> Optional[str]:
     return None
 
 
+def _detect_uploaded_file_type(path: str) -> Optional[str]:
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    base_name = os.path.basename(path).lower()
+    wms_name_hints = {
+        "v_ask_receive_log": "wms_receive",
+        "v_ask_booking_putaway": "wms_booking",
+        "v_ask_article_buffertpallet": "buffer",
+        "v_ask_trans_log": "wms_trans",
+        "v_ask_pick_log_full": "wms_pick",
+        "v_ask_correct_log": "wms_correct",
+    }
+    for hint, file_type in wms_name_hints.items():
+        if hint in base_name:
+            return file_type
+
+    generic_buffer_name_hints = (
+        "buffertpall",
+        "buffertpallet",
+        "buffert_pall",
+        "bufferpall",
+        "bufferpallet",
+        "buffer_pallet",
+    )
+    if any(hint in base_name for hint in generic_buffer_name_hints):
+        return "buffer"
+
+    if ext in ("xlsx", "xlsm", "xls"):
+        try:
+            df_campaign = read_campaign_xlsx(path)
+            if isinstance(df_campaign, pd.DataFrame) and not df_campaign.empty and list(df_campaign.columns) == ["Artikelnummer", "Antal styck"]:
+                return "campaign"
+        except Exception:
+            pass
+        try:
+            df_prognos = read_prognos_xlsx(path)
+            if (
+                isinstance(df_prognos, pd.DataFrame)
+                and not df_prognos.empty
+                and len(df_prognos.columns) >= 3
+                and any(str(c).strip().lower() in ("antal styck", "quantity", "qty") for c in df_prognos.columns)
+            ):
+                return "prognos"
+        except Exception:
+            pass
+        return None
+
+    try:
+        df = pd.read_csv(path, dtype=str, nrows=50, sep=None, engine="python", encoding="utf-8-sig")
+        if df.shape[1] == 1:
+            df = pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
+    except Exception:
+        try:
+            df = pd.read_csv(path, dtype=str, nrows=50, sep="\t", engine="python", encoding="utf-8-sig")
+        except Exception:
+            return None
+
+    df = _clean_columns(df)
+    cols = [_norm_col_key(c) for c in df.columns]
+
+    def has_exact(*candidates: str) -> bool:
+        normalized = {_norm_col_key(candidate) for candidate in candidates}
+        return any(col in normalized for col in cols)
+
+    def has_fragment(*candidates: str) -> bool:
+        normalized = [_norm_col_key(candidate) for candidate in candidates]
+        return any(candidate and candidate in col for col in cols for candidate in normalized)
+
+    has_art = has_exact("artikel", "artikelnummer", "artnr", "art.nr", "sku", "article")
+    has_qty = has_exact("beställt", "antal", "qty", "quantity", "bestalld", "order qty", "antal styck")
+    has_ord = has_exact("ordernr", "order nr", "order number", "kund", "kundnr", "order id")
+    has_rad = has_exact("radnr", "rad nr", "line id", "rad", "struktur", "radsnr")
+    if has_art and has_qty and (has_ord or has_rad):
+        return "orders"
+
+    has_lagerplats = has_fragment("lagerplats") or has_exact("plats", "location", "bin")
+    has_pallid = has_exact("pallid", "pall id", "id", "sscc", "etikett", "batch")
+    has_status = has_exact("status")
+    has_inkop = has_fragment("inköpsnr", "inkopsnr")
+    has_mottaget = has_fragment("mottaget")
+    has_pallnr = has_fragment("pall nr", "pallnr")
+    has_till = has_exact("till") or has_fragment(" till", "till ")
+    has_fran = has_fragment("från", "fran")
+    has_plockat = has_fragment("plockat")
+    has_anledning = has_fragment("anledning")
+
+    if has_inkop and has_art and has_pallid and has_mottaget:
+        return "wms_receive"
+    if has_inkop and (has_pallnr or has_pallid) and not has_mottaget and not has_plockat:
+        return "wms_booking"
+    if has_lagerplats and has_pallid and has_inkop:
+        return "buffer"
+    if has_pallid and has_till and has_fran:
+        return "wms_trans"
+    if has_pallid and has_plockat and has_ord:
+        return "wms_pick"
+    if has_anledning and has_qty:
+        return "wms_correct"
+
+    if has_art and has_qty and has_lagerplats:
+        return "buffer"
+
+    buffer_marker_count = sum(1 for flag in (has_lagerplats, has_pallid, has_status, has_inkop, has_mottaget, has_pallnr) if flag)
+    if has_art and (has_qty or has_pallid) and buffer_marker_count >= 2:
+        return "buffer"
+
+    has_pack = has_fragment("pack klass", "staplingsbar")
+    if has_pack:
+        has_plockpall = has_fragment("plockpall")
+        has_dispatch_order = has_exact("ordernr", "order nr", "order number", "ordernummer")
+        has_dispatch_ship = has_fragment("sändnings", "sandnings", "sändningsnr", "sandningsnr", "sändningsnr.", "sandningsnr.")
+        if has_plockpall and has_dispatch_order and has_dispatch_ship:
+            return "dispatch"
+        return "item"
+
+    has_ordernr = has_exact("ordernr", "order nr", "order number")
+    has_orderdatum = has_fragment("orderdatum")
+    has_sandning = has_fragment("sändningsnr", "sandningsnr", "sändningsnr.", "sandnr")
+    has_ordertyp = has_fragment("ordertyp")
+    if has_ordernr and has_orderdatum and has_sandning and has_ordertyp:
+        return "overview"
+
+    has_plockpall = has_fragment("plockpall")
+    has_dispatch_order = has_exact("ordernr", "order nr", "order number", "ordernummer")
+    has_dispatch_ship = has_fragment("sändnings", "sandnings", "sändningsnr", "sandningsnr", "sändningsnr.", "sandningsnr.")
+    if has_plockpall and has_dispatch_order and has_dispatch_ship:
+        return "dispatch"
+
+    return None
+
+
+def _resolve_upload_slot(requested_key: str, detected_type: Optional[str], page_id: str) -> str:
+    if not detected_type:
+        return requested_key
+    if detected_type == "buffer":
+        if requested_key in {"wms_buffer", "wms_buffert"} or page_id == "eftersok-page":
+            return "wms_buffer"
+        return "buffer"
+    return detected_type
+
+
 def _extract_rows_from_item_attribute(path: str) -> List[Dict[str, str]]:
     try:
         df = _read_csv_loose(path)
@@ -578,24 +720,39 @@ def api_delete_session(sid: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/upload/{sid}")
-async def api_upload(sid: str, file_key: str = Form(...), file: UploadFile = Form(...)):
+async def api_upload(sid: str, file_key: str = Form(...), page_id: str = Form(""), file: UploadFile = Form(...)):
     session = get_session(sid)
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     safe_name = re.sub(r"[^\w.\-]", "_", file.filename or "file")
-    dest = os.path.join(session.temp_dir, f"{file_key}_{safe_name}")
-    old_path = session.files.get(file_key)
+    upload_tmp = os.path.join(session.temp_dir, f"upload_{uuid.uuid4().hex}_{safe_name}")
     content = await file.read()
-    with open(dest, "wb") as f:
+    with open(upload_tmp, "wb") as f:
         f.write(content)
+    detected_type = _detect_uploaded_file_type(upload_tmp)
+    actual_file_key = _resolve_upload_slot(file_key, detected_type, page_id)
+    dest = os.path.join(session.temp_dir, f"{actual_file_key}_{safe_name}")
+    old_path = session.files.get(actual_file_key)
     if old_path and old_path != dest and os.path.exists(old_path):
         try:
             os.remove(old_path)
         except Exception:
             pass
-    session.files[file_key] = dest
-    _handle_session_file_change(session, file_key, old_path=old_path)
-    return {"ok": True, "file_key": file_key, "filename": safe_name}
+    if os.path.exists(dest) and dest != upload_tmp:
+        try:
+            os.remove(dest)
+        except Exception:
+            pass
+    shutil.move(upload_tmp, dest)
+    session.files[actual_file_key] = dest
+    _handle_session_file_change(session, actual_file_key, old_path=old_path)
+    return {
+        "ok": True,
+        "file_key": actual_file_key,
+        "requested_file_key": file_key,
+        "filename": safe_name,
+        "detected_type": detected_type,
+    }
 
 
 @app.delete("/api/upload/{sid}/{file_key}")

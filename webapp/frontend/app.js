@@ -330,10 +330,12 @@ async function refreshAfterFileChanges(changedKeys) {
 
 async function uploadFile(fileKey, file, options = {}) {
   const { skipPostRefresh = false } = options;
+  const previousStatus = fileStatuses[fileKey] || null;
   setBadge(fileKey, "Laddar...", false);
   try {
     const formData = new FormData();
     formData.append("file_key", fileKey);
+    formData.append("page_id", getActiveMainPage());
     formData.append("file", file);
     const resp = await fetch(`${API}/api/upload/${sessionId}`, {
       method: "POST",
@@ -341,13 +343,20 @@ async function uploadFile(fileKey, file, options = {}) {
     });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
-    fileStatuses[fileKey] = data.filename;
-    setBadge(fileKey, data.filename, true);
-    appendLog(`Fil uppladdad: [${fileKey}] ${data.filename}`);
-    if (!skipPostRefresh) {
-      await refreshAfterFileChanges(new Set([fileKey]));
+    const actualKey = data.file_key || fileKey;
+    if (actualKey !== fileKey) {
+      fileStatuses[fileKey] = previousStatus;
+      setBadge(fileKey, previousStatus || "Ej fil", !!previousStatus);
+      appendLog(`Fil uppladdad: [${actualKey}] ${data.filename} (innehållsdetekterad från ${fileKey})`);
+    } else {
+      appendLog(`Fil uppladdad: [${actualKey}] ${data.filename}`);
     }
-    return fileKey;
+    fileStatuses[actualKey] = data.filename;
+    setBadge(actualKey, data.filename, true);
+    if (!skipPostRefresh) {
+      await refreshAfterFileChanges(new Set([actualKey]));
+    }
+    return actualKey;
   } catch (e) {
     setBadge(fileKey, "FEL", false);
     appendLog(`Fel vid uppladdning av ${fileKey}: ${e}`);
