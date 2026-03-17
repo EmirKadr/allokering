@@ -1233,8 +1233,8 @@ async def _job_allokering(session: SessionData):
                 log(f"  {ktyp}: {row_text}, {kolli_int} kolli")
                 kt_rows.append({"kalltyp": ktyp, "antal_text": row_text, "kolli": kolli_int})
             log(f"__KALLTYP_SUMMARY:{_json.dumps(kt_rows)}__")
-        except Exception:
-            pass
+        except Exception as _e_kt:
+            log(f"Summering per K\u00e4lltyp kunde inte ber\u00e4knas: {_e_kt}")
 
         # Ber?kna ordersaldo-listor (kompletta ordrar / p?fyllningsbehov)
         try:
