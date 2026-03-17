@@ -3,7 +3,7 @@ import uuid
 import tempfile
 import shutil
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from datetime import datetime
 
 
@@ -19,6 +19,7 @@ class SessionData:
     running: bool = False
     ordersaldo_list1: list = field(default_factory=list)       # Kompletta ordernummer
     ordersaldo_list2: list = field(default_factory=list)       # Artiklar med påfyllningsbehov
+    filter_scan_cache: Dict[str, Tuple[Tuple[int, int], Dict[str, list]]] = field(default_factory=dict)
 
 
 _sessions: Dict[str, SessionData] = {}

@@ -236,6 +236,23 @@ def _safe_sheet_name(name: Any, used_names: set[str]) -> str:
     return candidate
 
 
+def _detect_csv_separator(path: str) -> Optional[str]:
+    """Snabb separator-detektering som gör att vi kan använda pandas C-engine i vanliga fall."""
+    try:
+        with open(path, "r", encoding="utf-8-sig", newline="") as handle:
+            first_line = handle.readline()
+    except Exception:
+        return None
+
+    if not first_line:
+        return None
+
+    candidates = ("\t", ";", ",", "|")
+    counts = {sep: first_line.count(sep) for sep in candidates}
+    best_sep, best_count = max(counts.items(), key=lambda item: item[1])
+    return best_sep if best_count > 0 else None
+
+
 def smart_to_datetime(s) -> pd.Series:
     """Robust datumtolkning."""
     try:
@@ -376,10 +393,10 @@ def _open_df_in_excel(df, label: str = "data") -> str:
 def save_df_to_excel(df, label: str = "data", out_path: str = None) -> str:
     """Spara DF (eller {blad: DF}) till xlsx utan att öppna. Returnerar sökvägen."""
     engine = None
-    if importlib.util.find_spec("openpyxl"):
-        engine = "openpyxl"
-    elif importlib.util.find_spec("xlsxwriter"):
+    if importlib.util.find_spec("xlsxwriter"):
         engine = "xlsxwriter"
+    elif importlib.util.find_spec("openpyxl"):
+        engine = "openpyxl"
     else:
         raise RuntimeError("Saknar Excel-skrivare.")
 
@@ -1411,6 +1428,13 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     else:
         _log("OBS: Ingen order-statuskolumn hittad; kan inte filtrera Status = 35.")
 
+    order_output_columns = list(orders_raw.columns)
+    base_order_records = orders[order_output_columns].to_dict(orient="records")
+    order_articles = orders["_artikel"].astype(str).tolist()
+    order_quantities = orders["_qty"].astype(float).tolist()
+    order_ids = orders["_order_id"].astype(str).tolist()
+    order_lines = orders["_order_line"].astype(str).tolist()
+
     buffer_df = buffer_raw.copy()
     buffer_df["_artikel"] = buffer_df[buff_article_col].astype(str).str.strip()
     buffer_df["_qty"] = buffer_df[buff_qty_col].map(to_num).astype(float)
@@ -1457,33 +1481,37 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     bins = buffer_df[buffer_df["_is_autostore"]].copy().sort_values(by=["_artikel", "_received_ord", "_source_id"])
 
     pallet_queues: Dict[str, Deque[dict]] = defaultdict(deque)
-    for _, r in pallets.iterrows():
-        pallet_queues[str(r["_artikel"]).strip()].append({
-            "source_id": r["_source_id"],
-            "qty": float(r["_qty"]),
-            "loc": r["_loc"],
-            "received": r["_received"],
-            "palltyp": (r.get("_palltyp", "") if pd.notna(r.get("_palltyp", "")) else "")
+    pallet_cols = ["_artikel", "_source_id", "_qty", "_loc", "_received", "_palltyp"]
+    for art, source_id, qty, loc, received, palltyp in pallets[pallet_cols].itertuples(index=False, name=None):
+        palltyp_val = palltyp if pd.notna(palltyp) else ""
+        pallet_queues[str(art).strip()].append({
+            "source_id": source_id,
+            "qty": float(qty),
+            "loc": loc,
+            "received": received,
+            "palltyp": palltyp_val,
         })
 
     bin_queues: Dict[str, Deque[dict]] = defaultdict(deque)
-    for _, r in bins.iterrows():
-        bin_queues[str(r["_artikel"]).strip()].append({
-            "source_id": r["_source_id"],
-            "qty": float(r["_qty"]),
-            "loc": r["_loc"],
-            "received": r["_received"],
-            "palltyp": (r.get("_palltyp", "") if pd.notna(r.get("_palltyp", "")) else "")
+    for art, source_id, qty, loc, received, palltyp in bins[pallet_cols].itertuples(index=False, name=None):
+        palltyp_val = palltyp if pd.notna(palltyp) else ""
+        bin_queues[str(art).strip()].append({
+            "source_id": source_id,
+            "qty": float(qty),
+            "loc": loc,
+            "received": received,
+            "palltyp": palltyp_val,
         })
 
     allocated_rows: List[dict] = []
     near_miss_rows: List[dict] = []
     near_miss_article_set: set = set()
+    near_miss_index_by_order: Dict[Tuple[str, str], int] = {}
 
-    def clone_row(orow: pd.Series) -> dict:
-        return orow.to_dict()
+    def clone_row(base_row: dict) -> dict:
+        return dict(base_row)
 
-    def record_near_miss(orow: pd.Series, pal: dict, need: float) -> None:
+    def record_near_miss(art_id: str, order_id: str, order_line: str, pal: dict, need: float) -> None:
         if need <= 0:
             return
         diff = pal["qty"] - need
@@ -1491,14 +1519,13 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             return
         pct = diff / need
         if pct <= NEAR_MISS_PCT:
-            art_id = str(orow["_artikel"]).strip()
             if art_id in near_miss_article_set:
                 return
             near_miss_article_set.add(art_id)
             near_miss_rows.append({
                 "Artikel": art_id,
-                "OrderID": str(orow["_order_id"]),
-                "OrderRad": str(orow["_order_line"]),
+                "OrderID": order_id,
+                "OrderRad": order_line,
                 "PallID": str(pal["source_id"]),
                 "Källplats": str(pal["loc"]),
                 "Mottagen": pal["received"],
@@ -1509,22 +1536,28 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
                 "Anledning": f"Pallen var ≤{int(NEAR_MISS_PCT * 100)}% större än återstående behov (kan ej brytas)",
                 "Gäller (INSTEAD R/A)": None
             })
+            near_miss_index_by_order[(order_id, order_line)] = len(near_miss_rows) - 1
 
-    for _, orow in orders.iterrows():
-        art = str(orow["_artikel"]).strip()
-        need = float(orow["_qty"])
+    for base_row, art, need, order_id, order_line in zip(
+        base_order_records,
+        order_articles,
+        order_quantities,
+        order_ids,
+        order_lines,
+    ):
         if need <= 0:
             continue
 
-        pq = pallet_queues.get(art, deque())
+        pq = pallet_queues.get(art)
+        if pq is None:
+            pq = deque()
         new_pq = deque()
-        tmp = deque(pq)
         any_helpall = False
-        while tmp and need > 0:
-            pal = tmp.popleft()
+        while pq and need > 0:
+            pal = pq.popleft()
             pal_qty = pal["qty"]
             if pal_qty <= need:
-                sub = clone_row(orow)
+                sub = clone_row(base_row)
                 sub[order_qty_col] = pal_qty
                 sub["Zon (beräknad)"] = "H"
                 sub["Källtyp"] = "HELPALL"
@@ -1538,20 +1571,22 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
                 need -= pal_qty
                 any_helpall = True
             else:
-                record_near_miss(orow, pal, need)
+                record_near_miss(art, order_id, order_line, pal, need)
                 new_pq.append(pal)
-        while tmp:
-            new_pq.append(tmp.popleft())
+        if pq:
+            new_pq.extend(pq)
         pallet_queues[art] = new_pq
 
         any_autostore = False
-        bq = bin_queues.get(art, deque())
+        bq = bin_queues.get(art)
+        if bq is None:
+            bq = deque()
         new_bq = deque()
         while bq and need > 0:
             binr = bq.popleft()
             take = min(binr["qty"], need)
             if take > 0:
-                sub = clone_row(orow)
+                sub = clone_row(base_row)
                 sub[order_qty_col] = take
                 sub["Zon (beräknad)"] = "R"
                 sub["Källtyp"] = "AUTOSTORE"
@@ -1573,7 +1608,7 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
 
         any_mainpick = False
         if need > 0:
-            sub = clone_row(orow)
+            sub = clone_row(base_row)
             sub[order_qty_col] = need
             sub["Zon (beräknad)"] = "A"
             sub["Källtyp"] = "HUVUDPLOCK"
@@ -1584,14 +1619,11 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
             any_mainpick = True
             need = 0.0
 
-        if not any_helpall and (any_autostore or any_mainpick):
-            for r in near_miss_rows:
-                if r["OrderID"] == str(orow["_order_id"]) and r["OrderRad"] == str(orow["_order_line"]):
-                    r["Gäller (INSTEAD R/A)"] = True
-        else:
-            for r in near_miss_rows:
-                if r["OrderID"] == str(orow["_order_id"]) and r["OrderRad"] == str(orow["_order_line"]):
-                    r["Gäller (INSTEAD R/A)"] = False
+        near_idx = near_miss_index_by_order.get((order_id, order_line))
+        if near_idx is not None:
+            near_miss_rows[near_idx]["Gäller (INSTEAD R/A)"] = bool(
+                not any_helpall and (any_autostore or any_mainpick)
+            )
 
     allocated_df = pd.DataFrame(allocated_rows)
     try:
@@ -1982,15 +2014,19 @@ def refresh_ordersaldo(orders_path: str, active_filters: Optional[Dict[str, List
 
 def read_csv_auto(path: str) -> pd.DataFrame:
     """Läs CSV med automatisk separator-detektering."""
+    sep = _detect_csv_separator(path)
     try:
-        df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
-        if df.shape[1] == 1 and len(df):
+        if sep:
+            df = pd.read_csv(path, dtype=str, sep=sep, engine="c", encoding="utf-8-sig")
+        else:
+            df = pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+        if df.shape[1] == 1 and len(df) and sep != "\t":
             first = str(df.iloc[0, 0]) if len(df) else ""
             if "\t" in first:
-                df = pd.read_csv(path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+                df = pd.read_csv(path, dtype=str, sep="\t", engine="c", encoding="utf-8-sig")
         return _clean_columns(df)
     except Exception:
         try:
-            return _clean_columns(pd.read_csv(path, dtype=str, sep="\t", engine="python", encoding="utf-8-sig"))
+            return _clean_columns(pd.read_csv(path, dtype=str, sep="\t", engine="c", encoding="utf-8-sig"))
         except Exception:
-            return pd.read_csv(path, dtype=str, encoding="utf-8-sig")
+            return _clean_columns(pd.read_csv(path, dtype=str, encoding="utf-8-sig"))

@@ -45,6 +45,11 @@ const ASK_FETCHABLE_KEYS = new Set([
   ...FILE_SLOTS.map(s => s.key),
   ...WMS_SLOTS.map(s => s.key),
 ]);
+const FILTER_REFRESH_KEYS = new Set([
+  ...FILE_SLOTS.map(s => s.key),
+  ...WMS_SLOTS.map(s => s.key),
+]);
+const ORDERSALDO_REFRESH_KEYS = new Set(["orders"]);
 const ENABLE_ASK_CSV = false;
 // UI-toggle: hide ASK "Hämta CSV" buttons but keep backend/frontend logic intact.
 const SHOW_ASK_FETCH_BUTTONS = false && ENABLE_ASK_CSV;
@@ -257,9 +262,16 @@ function buildFileRow(slot) {
   input.id = `input-${slot.key}`;
   input.addEventListener("change", async (e) => {
     const files = Array.from(e.target.files);
+    const changedKeys = new Set();
     for (const file of files) {
       const detectedKey = matchFileToSlot(file.name) || slot.key;
-      await uploadFile(detectedKey, file);
+      const uploadedKey = await uploadFile(detectedKey, file, { skipPostRefresh: true });
+      if (uploadedKey) {
+        changedKeys.add(uploadedKey);
+      }
+    }
+    if (changedKeys.size > 0) {
+      await refreshAfterFileChanges(changedKeys);
     }
     input.value = "";
   });
@@ -297,7 +309,27 @@ function triggerFilePicker(key, accept) {
 // Upload / Remove
 // ---------------------------------------------------------------------------
 
-async function uploadFile(fileKey, file) {
+function hasTrackedKey(changedKeys, trackedKeys) {
+  for (const key of changedKeys || []) {
+    if (trackedKeys.has(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function refreshAfterFileChanges(changedKeys) {
+  if (hasTrackedKey(changedKeys, FILTER_REFRESH_KEYS)) {
+    await refreshFilterOptions();
+  }
+  if (hasTrackedKey(changedKeys, ORDERSALDO_REFRESH_KEYS)) {
+    await refreshOrdersaldoButtonState();
+  }
+  syncActionButtonsState();
+}
+
+async function uploadFile(fileKey, file, options = {}) {
+  const { skipPostRefresh = false } = options;
   setBadge(fileKey, "Laddar...", false);
   try {
     const formData = new FormData();
@@ -312,13 +344,15 @@ async function uploadFile(fileKey, file) {
     fileStatuses[fileKey] = data.filename;
     setBadge(fileKey, data.filename, true);
     appendLog(`Fil uppladdad: [${fileKey}] ${data.filename}`);
-    await refreshFilterOptions();
-    await refreshOrdersaldoButtonState();
-    syncActionButtonsState();
+    if (!skipPostRefresh) {
+      await refreshAfterFileChanges(new Set([fileKey]));
+    }
+    return fileKey;
   } catch (e) {
     setBadge(fileKey, "FEL", false);
     appendLog(`Fel vid uppladdning av ${fileKey}: ${e}`);
     syncActionButtonsState();
+    return null;
   }
 }
 
@@ -328,9 +362,7 @@ async function removeFile(fileKey) {
     fileStatuses[fileKey] = null;
     setBadge(fileKey, "Ej fil", false);
     appendLog(`Fil borttagen: [${fileKey}]`);
-    await refreshFilterOptions();
-    await refreshOrdersaldoButtonState();
-    syncActionButtonsState();
+    await refreshAfterFileChanges(new Set([fileKey]));
   } catch (e) {
     appendLog(`Fel vid borttagning av ${fileKey}: ${e}`);
   }
@@ -489,7 +521,7 @@ async function fetchAskCsvToSlot(fileKey, slotLabel) {
     fileStatuses[fileKey] = data.filename;
     setBadge(fileKey, data.filename, true);
     appendLog(`CSV hämtad och kopplad till [${fileKey}]: ${data.filename} (${data.bytes} bytes)`);
-    await refreshFilterOptions();
+    await refreshAfterFileChanges(new Set([fileKey]));
   } catch (e) {
     appendLog(`FEL vid CSV-hämtning: ${e}`);
   } finally {
@@ -580,7 +612,7 @@ function buildFilterGroup(key, title, values) {
   return group;
 }
 
-function saveFilters() {
+async function saveFilters() {
   // Preserve hidden groups (e.g. if Ordertyp group is temporarily unavailable
   // after file refresh) so we don't accidentally reset those selections.
   const filters = {
@@ -612,11 +644,16 @@ function saveFilters() {
   }
 
   selectedFilters = filters;
-  fetch(`${API}/api/filters/${sessionId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(filters),
-  }).catch(() => {});
+  try {
+    await fetch(`${API}/api/filters/${sessionId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(filters),
+    });
+  } catch (_e) {
+    // Tyst fel
+  }
+  await refreshOrdersaldoButtonState();
   appendLog(`Filter uppdaterat: bolag=[${filters.bolag.join(",")}], ordertyp=[${filters.ordertyp.join(",")}]`);
 }
 
@@ -774,12 +811,13 @@ function connectSSE() {
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
       refreshResultStatus().catch(() => {});
-      refreshOrdersaldoButtonState().catch(() => {});
       if (msg === "__DONE__") {
         // Uppdatera ordersaldo-listor efter avslutad korning
         fetch(`${API}/api/ordersaldo/refresh/${sessionId}`, { method: "POST" })
           .then(() => refreshOrdersaldoButtonState().catch(() => {}))
           .catch(() => {});
+      } else {
+        refreshOrdersaldoButtonState().catch(() => {});
       }
       return;
     }
@@ -1573,14 +1611,21 @@ function setupDragDrop() {
     e.preventDefault();
     body.classList.remove("drag-over");
     const files = Array.from(e.dataTransfer.files);
+    const changedKeys = new Set();
     for (const file of files) {
       const matched = matchFileToSlot(file.name);
       if (matched) {
         appendLog(`Drag & drop: ${file.name} -> [${matched}]`);
-        await uploadFile(matched, file);
+        const uploadedKey = await uploadFile(matched, file, { skipPostRefresh: true });
+        if (uploadedKey) {
+          changedKeys.add(uploadedKey);
+        }
       } else {
         appendLog(`Kunde inte matcha "${file.name}" till en fil-slot. Ladda upp manuellt.`);
       }
+    }
+    if (changedKeys.size > 0) {
+      await refreshAfterFileChanges(changedKeys);
     }
   });
 }

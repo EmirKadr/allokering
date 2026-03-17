@@ -54,6 +54,7 @@ from logic import (
     compute_pallet_spaces,
     find_col,
     normalize_items,
+    normalize_not_putaway,
     normalize_saldo,
     read_csv_auto,
     refresh_ordersaldo,
@@ -116,6 +117,8 @@ CLASSIFIER_DEFAULT_OUTPUT_DIR = os.environ.get(
 ).strip()
 CLASSIFIER_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"}
 CLASSIFIER_DATA_FILE_KEYS = {"item", "item_alias", "item_attribute", "main_category"}
+FILTER_SCAN_TEXT_EXTENSIONS = {".csv", ".txt", ".tsv"}
+ORDERSALDO_INVALIDATION_KEYS = {"orders"}
 CLASSIFIER_WEB_DATA_DIR = Path(
     os.environ.get(
         "CLASSIFIER_WEB_DATA_DIR",
@@ -145,6 +148,65 @@ _web_classifier_lock = threading.Lock()
 _web_classifier_sessions: Dict[str, WebClassifierSession] = {}
 _classifier_data_lock = threading.Lock()
 _classifier_data_files: Dict[str, str] = {}
+
+
+def _file_cache_signature(path: str) -> tuple[int, int]:
+    stat_result = os.stat(path)
+    mtime_ns = getattr(stat_result, "st_mtime_ns", int(stat_result.st_mtime * 1_000_000_000))
+    return int(stat_result.st_size), int(mtime_ns)
+
+
+def _clear_filter_cache_entry(session: SessionData, path: Optional[str]) -> None:
+    if path:
+        session.filter_scan_cache.pop(path, None)
+
+
+def _invalidate_ordersaldo_cache(session: SessionData) -> None:
+    session.ordersaldo_list1 = []
+    session.ordersaldo_list2 = []
+
+
+def _handle_session_file_change(session: SessionData, file_key: str, old_path: Optional[str] = None) -> None:
+    _clear_filter_cache_entry(session, old_path)
+    _clear_filter_cache_entry(session, session.files.get(file_key))
+    if file_key in ORDERSALDO_INVALIDATION_KEYS:
+        _invalidate_ordersaldo_cache(session)
+
+
+def _scan_filter_values_for_path(session: SessionData, path: str) -> Dict[str, List[str]]:
+    cached = session.filter_scan_cache.get(path)
+    signature = _file_cache_signature(path)
+    if cached and cached[0] == signature:
+        return cached[1]
+    df = read_csv_auto(path)
+    values = scan_filter_values(df)
+    session.filter_scan_cache[path] = (signature, values)
+    return values
+
+
+def _collect_filter_options(session: SessionData) -> Dict[str, List[str]]:
+    combined: Dict[str, List[str]] = {}
+    active_paths: set[str] = set()
+    for path in session.files.values():
+        if not path or not os.path.exists(path):
+            continue
+        active_paths.add(path)
+        if Path(path).suffix.lower() not in FILTER_SCAN_TEXT_EXTENSIONS:
+            continue
+        try:
+            vals = _scan_filter_values_for_path(session, path)
+            for fk, fvals in vals.items():
+                existing = set(combined.get(fk, []))
+                existing.update(fvals)
+                combined[fk] = sorted(existing)
+        except Exception as e:
+            print(f"WARN filter-scan misslyckades för '{path}': {e}")
+
+    for cached_path in list(session.filter_scan_cache.keys()):
+        if cached_path not in active_paths or not os.path.exists(cached_path):
+            session.filter_scan_cache.pop(cached_path, None)
+
+    return combined
 
 # ---------------------------------------------------------------------------
 # Pydantic modeller
@@ -522,10 +584,17 @@ async def api_upload(sid: str, file_key: str = Form(...), file: UploadFile = For
         raise HTTPException(status_code=404, detail="Session saknas")
     safe_name = re.sub(r"[^\w.\-]", "_", file.filename or "file")
     dest = os.path.join(session.temp_dir, f"{file_key}_{safe_name}")
+    old_path = session.files.get(file_key)
     content = await file.read()
     with open(dest, "wb") as f:
         f.write(content)
+    if old_path and old_path != dest and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
     session.files[file_key] = dest
+    _handle_session_file_change(session, file_key, old_path=old_path)
     return {"ok": True, "file_key": file_key, "filename": safe_name}
 
 
@@ -535,6 +604,7 @@ def api_remove_file(sid: str, file_key: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     path = session.files.pop(file_key, None)
+    _handle_session_file_change(session, file_key, old_path=path)
     if path and os.path.exists(path):
         os.remove(path)
     return {"ok": True}
@@ -551,6 +621,7 @@ def api_list_files(sid: str):
             result[k] = os.path.basename(v)
         else:
             # Avoid stale "loaded" state in frontend when temp files were removed.
+            _clear_filter_cache_entry(session, v)
             session.files[k] = None
             result[k] = None
     return {"files": result}
@@ -565,20 +636,7 @@ def api_get_filter_options(sid: str):
     session = get_session(sid)
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
-    combined: Dict[str, List[str]] = {}
-    for path in session.files.values():
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            df = read_csv_auto(path)
-            vals = scan_filter_values(df)
-            for fk, fvals in vals.items():
-                existing = set(combined.get(fk, []))
-                existing.update(fvals)
-                combined[fk] = sorted(existing)
-        except Exception as e:
-            print(f"WARN filter-scan misslyckades för '{path}': {e}")
-    return combined
+    return _collect_filter_options(session)
 
 
 @app.post("/api/filters/{sid}")
@@ -587,6 +645,7 @@ def api_set_filters(sid: str, body: FilterBody):
     if not session:
         raise HTTPException(status_code=404, detail="Session saknas")
     session.active_filters = {"bolag": body.bolag, "ordertyp": body.ordertyp}
+    _invalidate_ordersaldo_cache(session)
     return {"ok": True}
 
 
@@ -676,11 +735,19 @@ def api_ask_csv_fetch(sid: str, body: AskCsvFetchBody):
         )
     safe_name = _safe_csv_name(body.output_name or header_name or f"{body.target_file_key}.csv")
     dest = os.path.join(session.temp_dir, f"{body.target_file_key}_{safe_name}")
+    old_path = session.files.get(body.target_file_key)
 
     with open(dest, "wb") as f:
         f.write(resp.content)
 
+    if old_path and old_path != dest and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+
     session.files[body.target_file_key] = dest
+    _handle_session_file_change(session, body.target_file_key, old_path=old_path)
     return {
         "ok": True,
         "file_key": body.target_file_key,
@@ -1075,7 +1142,7 @@ def _start_job(session: SessionData, coro):
     return True
 
 
-async def _generate_excel_files(session: SessionData, result, near, buffer_raw, saldo_norm, orders_path):
+async def _generate_excel_files(session: SessionData, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path):
     """Generera Excel-filer i bakgrunden efter att allokeringen ?r klar."""
     loop = asyncio.get_event_loop()
 
@@ -1111,7 +1178,7 @@ async def _generate_excel_files(session: SessionData, result, near, buffer_raw, 
         async def _gen_refill():
             try:
                 hp_df, as_df = await loop.run_in_executor(None, lambda: calculate_refill(
-                    result, buffer_raw, saldo_df=saldo_norm, not_putaway_df=None
+                    result, buffer_raw, saldo_df=saldo_norm, not_putaway_df=not_putaway_norm
                 ))
                 has_refill = (hp_df is not None and not hp_df.empty) or (as_df is not None and not as_df.empty)
                 if has_refill:
@@ -1158,6 +1225,7 @@ async def _job_allokering(session: SessionData):
         buffer_path = session.files.get("buffer")
         automation_path = session.files.get("automation")
         item_path = session.files.get("item")
+        booking_path = session.files.get("wms_booking")
 
         if not orders_path or not buffer_path:
             log("FEL: orders och buffer m\u00e5ste vara uppladdade.")
@@ -1173,6 +1241,8 @@ async def _job_allokering(session: SessionData):
             read_tasks["automation"] = loop.run_in_executor(None, lambda p=automation_path: read_csv_auto(p))
         if item_path and os.path.exists(item_path):
             read_tasks["item"] = loop.run_in_executor(None, lambda p=item_path: read_csv_auto(p))
+        if booking_path and os.path.exists(booking_path):
+            read_tasks["wms_booking"] = loop.run_in_executor(None, lambda p=booking_path: read_csv_auto(p))
 
         keys = list(read_tasks.keys())
         read_results = await asyncio.gather(*read_tasks.values())
@@ -1194,6 +1264,14 @@ async def _job_allokering(session: SessionData):
                 item_norm = await loop.run_in_executor(None, lambda: normalize_items(raw_data["item"]))
             except Exception as ie:
                 log(f"Varning: Kunde inte l\u00e4sa item-fil: {ie}")
+
+        not_putaway_norm = None
+        if "wms_booking" in raw_data:
+            try:
+                booking_raw = apply_value_filters(_clean_columns(raw_data["wms_booking"].copy()), session.active_filters)
+                not_putaway_norm = await loop.run_in_executor(None, lambda: normalize_not_putaway(booking_raw))
+            except Exception as npe:
+                log(f"Varning: Kunde inte l\u00e4sa ej inlagrade artiklar: {npe}")
 
         # Applicera filter
         orders_raw = apply_value_filters(orders_raw, session.active_filters)
@@ -1278,7 +1356,7 @@ async def _job_allokering(session: SessionData):
 
         # --- Fas 4: Excel-generering i bakgrunden ---
         asyncio.ensure_future(_generate_excel_files(
-            session, result, near, buffer_raw, saldo_norm, orders_path
+            session, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path
         ))
 
     except Exception as e:
@@ -2001,6 +2079,7 @@ async def api_reset_results(sid: str):
     session.results.clear()
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
+    session.filter_scan_cache.clear()
     # Rensa logg-k?n
     while not session.log_queue.empty():
         try:
@@ -2034,6 +2113,7 @@ async def api_reset_all(sid: str):
     session.results.clear()
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
+    session.filter_scan_cache.clear()
     while not session.log_queue.empty():
         try:
             session.log_queue.get_nowait()
