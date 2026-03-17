@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests as req
-from fastapi import BackgroundTasks, FastAPI, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,7 +36,14 @@ from pydantic import BaseModel
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
+from db import init_db
 from session_store import SessionData, create_session, delete_session, get_session
+from job_queue import (
+    clear_session_logs,
+    enqueue_job,
+    fetch_session_logs_since,
+    get_session_status,
+)
 from auth import (
     VALID_LISTS,
     create_auth_session,
@@ -93,6 +100,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    init_db()
 
 # v2 classifier router (kept isolated from legacy v1 endpoints)
 if classifier_v2_router is not None:
@@ -737,6 +749,23 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _current_user(request: Request) -> dict:
+    user = getattr(request.state, "auth_user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Ej inloggad")
+    return user
+
+
+def _get_owned_session(request: Request, sid: str) -> SessionData:
+    session = get_session(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session saknas")
+    user = _current_user(request)
+    if user.get("role") != "admin" and session.owner_username != user.get("username"):
+        raise HTTPException(status_code=403, detail="Du har inte åtkomst till denna session")
+    return session
+
+
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
@@ -838,13 +867,15 @@ def api_admin_delete_user(list_key: str, username: str, authorization: str = Hea
 # ---------------------------------------------------------------------------
 
 @app.post("/api/session")
-def api_create_session():
-    s = create_session()
+def api_create_session(request: Request):
+    user = _current_user(request)
+    s = create_session(user["username"])
     return {"session_id": s.session_id}
 
 
 @app.delete("/api/session/{sid}")
-def api_delete_session(sid: str):
+def api_delete_session(request: Request, sid: str):
+    _get_owned_session(request, sid)
     delete_session(sid)
     return {"ok": True}
 
@@ -854,18 +885,16 @@ def api_delete_session(sid: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/upload/{sid}")
-async def api_upload(sid: str, file_key: str = Form(...), page_id: str = Form(""), file: UploadFile = Form(...)):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+async def api_upload(request: Request, sid: str, file_key: str = Form(...), page_id: str = Form(""), file: UploadFile = Form(...)):
+    session = _get_owned_session(request, sid)
     safe_name = re.sub(r"[^\w.\-]", "_", file.filename or "file")
-    upload_tmp = os.path.join(session.temp_dir, f"upload_{uuid.uuid4().hex}_{safe_name}")
+    upload_tmp = os.path.join(session.uploads_dir, f"upload_{uuid.uuid4().hex}_{safe_name}")
     content = await file.read()
     with open(upload_tmp, "wb") as f:
         f.write(content)
     detected_type = _detect_uploaded_file_type(upload_tmp)
     actual_file_key = _resolve_upload_slot(file_key, detected_type, page_id)
-    dest = os.path.join(session.temp_dir, f"{actual_file_key}_{safe_name}")
+    dest = os.path.join(session.uploads_dir, f"{actual_file_key}_{safe_name}")
     old_path = session.files.get(actual_file_key)
     if old_path and old_path != dest and os.path.exists(old_path):
         try:
@@ -890,10 +919,8 @@ async def api_upload(sid: str, file_key: str = Form(...), page_id: str = Form(""
 
 
 @app.delete("/api/upload/{sid}/{file_key}")
-def api_remove_file(sid: str, file_key: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_remove_file(request: Request, sid: str, file_key: str):
+    session = _get_owned_session(request, sid)
     path = session.files.pop(file_key, None)
     _handle_session_file_change(session, file_key, old_path=path)
     if path and os.path.exists(path):
@@ -902,10 +929,8 @@ def api_remove_file(sid: str, file_key: str):
 
 
 @app.get("/api/upload/{sid}")
-def api_list_files(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_list_files(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
     result: Dict[str, Optional[str]] = {}
     for k, v in list(session.files.items()):
         if v and os.path.exists(v):
@@ -913,7 +938,7 @@ def api_list_files(sid: str):
         else:
             # Avoid stale "loaded" state in frontend when temp files were removed.
             _clear_filter_cache_entry(session, v)
-            session.files[k] = None
+            session.files.pop(k, None)
             result[k] = None
     return {"files": result}
 
@@ -923,18 +948,14 @@ def api_list_files(sid: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/filters/{sid}")
-def api_get_filter_options(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_get_filter_options(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
     return _collect_filter_options(session)
 
 
 @app.post("/api/filters/{sid}")
-def api_set_filters(sid: str, body: FilterBody):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_set_filters(request: Request, sid: str, body: FilterBody):
+    session = _get_owned_session(request, sid)
     session.active_filters = {"bolag": body.bolag, "ordertyp": body.ordertyp}
     _invalidate_ordersaldo_cache(session)
     return {"ok": True}
@@ -980,10 +1001,8 @@ def api_ask_csv_init(body: AskCsvInitBody):
 
 
 @app.post("/api/ask-csv/fetch/{sid}")
-def api_ask_csv_fetch(sid: str, body: AskCsvFetchBody):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_ask_csv_fetch(request: Request, sid: str, body: AskCsvFetchBody):
+    session = _get_owned_session(request, sid)
 
     if body.target_file_key not in ASK_FETCHABLE_FILE_KEYS:
         raise HTTPException(status_code=400, detail=f"Ogiltig target_file_key: {body.target_file_key}")
@@ -1025,7 +1044,7 @@ def api_ask_csv_fetch(sid: str, body: AskCsvFetchBody):
             ),
         )
     safe_name = _safe_csv_name(body.output_name or header_name or f"{body.target_file_key}.csv")
-    dest = os.path.join(session.temp_dir, f"{body.target_file_key}_{safe_name}")
+    dest = os.path.join(session.uploads_dir, f"{body.target_file_key}_{safe_name}")
     old_path = session.files.get(body.target_file_key)
 
     with open(dest, "wb") as f:
@@ -1410,14 +1429,12 @@ def api_classifier_web_finish(cls_id: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/run/status/{sid}")
-def api_run_status(sid: str):
-    session = get_session(sid)
-    if not session:
+def api_run_status(request: Request, sid: str):
+    _get_owned_session(request, sid)
+    try:
+        return get_session_status(sid)
+    except RuntimeError:
         raise HTTPException(status_code=404, detail="Session saknas")
-    return {
-        "running": session.running,
-        "results": list(session.results.keys())
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1442,14 +1459,14 @@ async def _generate_excel_files(session: SessionData, result, near, buffer_raw, 
 
     try:
         # Allokerade (viktigast - genereras först)
-        allok_path = os.path.join(session.temp_dir, "allokerade.xlsx")
+        allok_path = os.path.join(session.results_dir, "allokerade.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel(result, "allokerade", allok_path))
         session.results["allokerade"] = allok_path
         log("__RESULT:allokerade__")
 
         # Near-miss
         if not near.empty:
-            nearmiss_path = os.path.join(session.temp_dir, "nearmiss.xlsx")
+            nearmiss_path = os.path.join(session.results_dir, "nearmiss.xlsx")
             await loop.run_in_executor(None, lambda: save_df_to_excel(near, "nearmiss", nearmiss_path))
             session.results["nearmiss"] = nearmiss_path
             log("__RESULT:nearmiss__")
@@ -1459,7 +1476,7 @@ async def _generate_excel_files(session: SessionData, result, near, buffer_raw, 
             try:
                 ps = await loop.run_in_executor(None, lambda: compute_pallet_spaces(result))
                 if ps is not None and not ps.empty:
-                    ps_path = os.path.join(session.temp_dir, "pallplatser.xlsx")
+                    ps_path = os.path.join(session.results_dir, "pallplatser.xlsx")
                     await loop.run_in_executor(None, lambda: save_df_to_excel(ps, "pallplatser", ps_path))
                     session.results["pallplatser"] = ps_path
                     log("__RESULT:pallplatser__")
@@ -1478,7 +1495,7 @@ async def _generate_excel_files(session: SessionData, result, near, buffer_raw, 
                         refill_sheets["P\u00e5fyllning HP"] = hp_df
                     if as_df is not None and not as_df.empty:
                         refill_sheets["P\u00e5fyllning AutoStore"] = as_df
-                    refill_path = os.path.join(session.temp_dir, "refill.xlsx")
+                    refill_path = os.path.join(session.results_dir, "refill.xlsx")
                     await loop.run_in_executor(None, lambda: save_df_to_excel(refill_sheets, "refill", refill_path))
                     session.results["refill"] = refill_path
                     log("__RESULT:refill__")
@@ -1642,13 +1659,11 @@ async def _job_allokering(session: SessionData):
             log(f"Summering per K\u00e4lltyp kunde inte ber\u00e4knas: {_e_kt}")
 
         log("Allokeringen \u00e4r klar.")
+        await _generate_excel_files(
+            session, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path
+        )
         log("__DONE__")
         session.running = False
-
-        # --- Fas 4: Excel-generering i bakgrunden ---
-        asyncio.ensure_future(_generate_excel_files(
-            session, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path
-        ))
 
     except Exception as e:
         import traceback
@@ -1734,7 +1749,7 @@ async def _job_hib_koppling(session: SessionData):
 
         sheets["Instruktion"] = instructions_df
 
-        hib_path = os.path.join(session.temp_dir, "hib_koppling.xlsx")
+        hib_path = os.path.join(session.results_dir, "hib_koppling.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel(sheets, "hib_koppling", hib_path))
         session.results["hib-koppling"] = hib_path
         log("__RESULT:hib-koppling__")
@@ -1989,7 +2004,7 @@ async def _job_orderkontroll(session: SessionData):
             combined = pd.concat(combined_parts, ignore_index=True, sort=False)
             sheets = {"Orderkontroll": combined, **sheets}
 
-        ok_path = os.path.join(session.temp_dir, "orderkontroll.xlsx")
+        ok_path = os.path.join(session.results_dir, "orderkontroll.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel(sheets, "orderkontroll", ok_path))
         session.results["orderkontroll"] = ok_path
         log("__RESULT:orderkontroll__")
@@ -2126,7 +2141,7 @@ async def _job_dispatchkontroll(session: SessionData):
             name_part = f" ({row['kundnamn']})" if str(row.get("kundnamn", "")).strip() else ""
             log(f"Order {row['Ordernr']}{name_part}: sändningsnr {row['Översikt sändningsnr']} i översikten men {row['Dispatch sändningsnr']} i dispatch (plockpall {row['Plockpallsnr']})")
 
-        dk_path = os.path.join(session.temp_dir, "dispatchkontroll.xlsx")
+        dk_path = os.path.join(session.results_dir, "dispatchkontroll.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel({"Dispatchkontroll": diff_df}, "dispatchkontroll", dk_path))
         session.results["dispatchkontroll"] = dk_path
         log("__RESULT:dispatchkontroll__")
@@ -2212,7 +2227,7 @@ async def _job_eftersok(session: SessionData, purchase: str, article: str):
             log("__DONE__")
             return
 
-        eftersok_path = os.path.join(session.temp_dir, "eftersok.xlsx")
+        eftersok_path = os.path.join(session.results_dir, "eftersok.xlsx")
         await loop.run_in_executor(None, lambda: save_df_to_excel(results_sheets, "eftersok", eftersok_path))
         session.results["eftersok"] = eftersok_path
         log("__RESULT:eftersok__")
@@ -2232,63 +2247,55 @@ async def _job_eftersok(session: SessionData, purchase: str, article: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/run/allokering/{sid}")
-async def api_run_allokering(sid: str, background_tasks: BackgroundTasks):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
-    if session.running:
-        raise HTTPException(status_code=409, detail="En körning pågår redan")
-    session.running = True
-    background_tasks.add_task(_job_allokering, session)
-    return {"job_id": "allokering", "status": "started"}
+async def api_run_allokering(request: Request, sid: str):
+    _get_owned_session(request, sid)
+    try:
+        return JSONResponse(status_code=202, content=enqueue_job(sid, "allokering"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.post("/api/run/hib-koppling/{sid}")
-async def api_run_hib(sid: str, background_tasks: BackgroundTasks):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
-    if session.running:
-        raise HTTPException(status_code=409, detail="En körning pågår redan")
-    session.running = True
-    background_tasks.add_task(_job_hib_koppling, session)
-    return {"job_id": "hib-koppling", "status": "started"}
+async def api_run_hib(request: Request, sid: str):
+    _get_owned_session(request, sid)
+    try:
+        return JSONResponse(status_code=202, content=enqueue_job(sid, "hib-koppling"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.post("/api/run/orderkontroll/{sid}")
-async def api_run_orderkontroll(sid: str, background_tasks: BackgroundTasks):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
-    if session.running:
-        raise HTTPException(status_code=409, detail="En körning pågår redan")
-    session.running = True
-    background_tasks.add_task(_job_orderkontroll, session)
-    return {"job_id": "orderkontroll", "status": "started"}
+async def api_run_orderkontroll(request: Request, sid: str):
+    _get_owned_session(request, sid)
+    try:
+        return JSONResponse(status_code=202, content=enqueue_job(sid, "orderkontroll"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.post("/api/run/dispatchkontroll/{sid}")
-async def api_run_dispatchkontroll(sid: str, background_tasks: BackgroundTasks):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
-    if session.running:
-        raise HTTPException(status_code=409, detail="En körning pågår redan")
-    session.running = True
-    background_tasks.add_task(_job_dispatchkontroll, session)
-    return {"job_id": "dispatchkontroll", "status": "started"}
+async def api_run_dispatchkontroll(request: Request, sid: str):
+    _get_owned_session(request, sid)
+    try:
+        return JSONResponse(status_code=202, content=enqueue_job(sid, "dispatchkontroll"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.post("/api/run/eftersok/{sid}")
-async def api_run_eftersok(sid: str, body: EftersokBody, background_tasks: BackgroundTasks):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
-    if session.running:
-        raise HTTPException(status_code=409, detail="En körning pågår redan")
-    session.running = True
-    background_tasks.add_task(_job_eftersok, session, body.purchase, body.article)
-    return {"job_id": "eftersok", "status": "started"}
+async def api_run_eftersok(request: Request, sid: str, body: EftersokBody):
+    _get_owned_session(request, sid)
+    try:
+        return JSONResponse(
+            status_code=202,
+            content=enqueue_job(
+                sid,
+                "eftersok",
+                {"purchase": body.purchase, "article": body.article},
+            ),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -2296,10 +2303,8 @@ async def api_run_eftersok(sid: str, body: EftersokBody, background_tasks: Backg
 # ---------------------------------------------------------------------------
 
 @app.post("/api/ordersaldo/refresh/{sid}")
-async def api_ordersaldo_refresh(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+async def api_ordersaldo_refresh(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
     orders_path = session.files.get("orders")
     if not orders_path or not os.path.exists(orders_path):
         raise HTTPException(status_code=400, detail="Beställningslinjer-filen saknas")
@@ -2317,18 +2322,14 @@ async def api_ordersaldo_refresh(sid: str):
 
 
 @app.get("/api/ordersaldo/list1/{sid}")
-def api_ordersaldo_list1(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_ordersaldo_list1(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
     return {"values": session.ordersaldo_list1}
 
 
 @app.get("/api/ordersaldo/list2/{sid}")
-def api_ordersaldo_list2(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_ordersaldo_list2(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
     return {"values": session.ordersaldo_list2}
 
 
@@ -2337,10 +2338,8 @@ def api_ordersaldo_list2(sid: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/debug/columns/{sid}/{file_key}")
-def api_debug_columns(sid: str, file_key: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_debug_columns(request: Request, sid: str, file_key: str):
+    session = _get_owned_session(request, sid)
     path = session.files.get(file_key)
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Fil saknas")
@@ -2356,10 +2355,8 @@ def api_debug_columns(sid: str, file_key: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/session/reset-results/{sid}")
-async def api_reset_results(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+async def api_reset_results(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
     # Rensa resultatfiler från disk
     for path in session.results.values():
         try:
@@ -2371,21 +2368,14 @@ async def api_reset_results(sid: str):
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
     session.filter_scan_cache.clear()
-    # Rensa logg-kön
-    while not session.log_queue.empty():
-        try:
-            session.log_queue.get_nowait()
-        except Exception:
-            break
+    clear_session_logs(sid)
     return {"ok": True}
 
 
 @app.post("/api/session/reset-all/{sid}")
-async def api_reset_all(sid: str):
+async def api_reset_all(request: Request, sid: str):
     """Rensa alla uppladdade filer OCH alla resultat för sessionen."""
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+    session = _get_owned_session(request, sid)
     # Rensa uppladdade filer
     for path in list(session.files.values()):
         try:
@@ -2405,11 +2395,7 @@ async def api_reset_all(sid: str):
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
     session.filter_scan_cache.clear()
-    while not session.log_queue.empty():
-        try:
-            session.log_queue.get_nowait()
-        except Exception:
-            break
+    clear_session_logs(sid)
     return {"ok": True}
 
 
@@ -2418,21 +2404,35 @@ async def api_reset_all(sid: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/log/stream/{sid}")
-async def api_log_stream(sid: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+async def api_log_stream(request: Request, sid: str):
+    _get_owned_session(request, sid)
+    last_event_id = 0
+    try:
+        header_value = request.headers.get("last-event-id", "") or request.headers.get("Last-Event-ID", "")
+        if header_value:
+            last_event_id = int(header_value)
+        elif request.query_params.get("last_event_id"):
+            last_event_id = int(request.query_params.get("last_event_id", "0"))
+    except Exception:
+        last_event_id = 0
 
     async def event_generator():
+        nonlocal last_event_id
         while True:
             try:
-                msg = await asyncio.wait_for(session.log_queue.get(), timeout=30.0)
-                safe = msg.replace("\n", "\\n").replace("\r", "")
-                yield f"data: {safe}\n\n"
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
+                rows = await asyncio.to_thread(fetch_session_logs_since, sid, last_event_id)
+                if rows:
+                    for row in rows:
+                        last_event_id = int(row["id"])
+                        safe = str(row["message"]).replace("\n", "\\n").replace("\r", "")
+                        yield f"id: {last_event_id}\ndata: {safe}\n\n"
+                else:
+                    await asyncio.sleep(1.0)
+                    yield ": keepalive\n\n"
             except asyncio.CancelledError:
                 break
+            except ValueError:
+                yield ": keepalive\n\n"
             except Exception:
                 break
 
@@ -2451,10 +2451,8 @@ async def api_log_stream(sid: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/download/{sid}/{result_key}")
-def api_download(sid: str, result_key: str):
-    session = get_session(sid)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session saknas")
+def api_download(request: Request, sid: str, result_key: str):
+    session = _get_owned_session(request, sid)
     path = session.results.get(result_key)
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail=f"Resultat '{result_key}' ej tillgängligt")

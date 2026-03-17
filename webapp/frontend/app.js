@@ -14,6 +14,7 @@ const API = (() => {
 // Global fetch interceptor – bifoga auth-token på alla anrop
 // ---------------------------------------------------------------------------
 const _origFetch = window.fetch;
+let _authRedirectInFlight = false;
 window.fetch = function (url, opts) {
   opts = opts || {};
   const token = localStorage.getItem("allok_auth_token");
@@ -25,8 +26,27 @@ window.fetch = function (url, opts) {
       if (!opts.headers["Authorization"]) opts.headers["Authorization"] = "Bearer " + token;
     }
   }
-  return _origFetch.call(window, url, opts);
+  return _origFetch.call(window, url, opts).then((resp) => {
+    if (resp.status === 401) {
+      triggerAuthRedirect();
+    }
+    return resp;
+  });
 };
+
+function triggerAuthRedirect() {
+  if (_authRedirectInFlight) {
+    return;
+  }
+  _authRedirectInFlight = true;
+  try {
+    localStorage.removeItem("allok_auth_token");
+    localStorage.removeItem("allok_user");
+  } catch (_e) {
+    // Ignorera
+  }
+  window.location.href = "/login.html";
+}
 
 const ASK_URL = "https://noeffectui-frey.nowastelogistics.com/desktop";
 const ASK_LOGIN_WAIT_SECONDS = 60 * 60; // 60 min
@@ -176,6 +196,10 @@ let availableResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
 let selectedFilters = { bolag: [], ordertyp: [] };
 let actionMissingByJob = {}; // { jobId: [missing labels] }
+let currentJobId = null;
+let currentJobType = null;
+let currentJobState = null;
+let lastLogEventId = 0;
 
 // Per-tab session state
 const TAB_PAGE_IDS = ["allokering-page", "eftersok-page", "dela-page"];
@@ -189,6 +213,10 @@ function _initTabStates() {
       availableResults: new Set(),
       cachedFilterOptions: {},
       selectedFilters: { bolag: [], ordertyp: [] },
+      currentJobId: null,
+      currentJobType: null,
+      currentJobState: null,
+      lastLogEventId: 0,
     };
   });
 }
@@ -201,6 +229,10 @@ function _saveTabState(pageId) {
     availableResults: new Set(availableResults),
     cachedFilterOptions: { ...cachedFilterOptions },
     selectedFilters: { bolag: [...selectedFilters.bolag], ordertyp: [...selectedFilters.ordertyp] },
+    currentJobId,
+    currentJobType,
+    currentJobState,
+    lastLogEventId,
   };
 }
 
@@ -211,6 +243,10 @@ function _loadTabState(pageId) {
   availableResults = new Set(s.availableResults);
   cachedFilterOptions = { ...s.cachedFilterOptions };
   selectedFilters = { bolag: [...s.selectedFilters.bolag], ordertyp: [...s.selectedFilters.ordertyp] };
+  currentJobId = s.currentJobId || null;
+  currentJobType = s.currentJobType || null;
+  currentJobState = s.currentJobState || null;
+  lastLogEventId = Number(s.lastLogEventId || 0);
 }
 
 let _activePageId = "allokering-page";
@@ -252,6 +288,10 @@ function resetFrontendState(options = {}) {
   cachedFilterOptions = {};
   selectedFilters = { bolag: [], ordertyp: [] };
   availableResults.clear();
+  currentJobId = null;
+  currentJobType = null;
+  currentJobState = null;
+  lastLogEventId = 0;
 
   [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
     setBadge(slot.key, "Ej fil", false);
@@ -943,6 +983,7 @@ function getMissingRequirements(job) {
 }
 
 function syncActionButtonsState() {
+  const jobInFlight = currentJobState === "queued" || currentJobState === "running";
   actionMissingByJob = {};
   Object.keys(ACTION_REQUIREMENTS).forEach(job => {
     const btn = document.getElementById(`btn-${job}`);
@@ -950,7 +991,10 @@ function syncActionButtonsState() {
     const missing = getMissingRequirements(job);
     const readyTitle = buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", getRequiredLabelsForJob(job));
     actionMissingByJob[job] = missing;
-    if (missing.length > 0) {
+    if (jobInFlight) {
+      const currentLabel = currentJobType || "ett jobb";
+      setButtonLockState(btn, true, `En körning pågår redan (${currentLabel}). Vänta tills den är klar.`);
+    } else if (missing.length > 0) {
       setButtonLockState(btn, true, `För att aktivera krävs: ${missing.join(", ")}`);
     } else {
       setButtonLockState(btn, false, "");
@@ -1002,8 +1046,14 @@ async function runJob(job) {
       headers["Content-Type"] = "application/json";
     }
 
-    await fetchWithSessionRecovery(url, { method, body, headers }, `start av ${job}`);
-    appendLog(`Startade jobb: ${job}`);
+    const resp = await fetchWithSessionRecovery(url, { method, body, headers }, `start av ${job}`);
+    const data = await resp.json().catch(() => ({}));
+    currentJobId = data.job_id || currentJobId;
+    currentJobType = data.job_type || job;
+    currentJobState = data.status || "queued";
+    _saveTabState(_activePageId);
+    appendLog(currentJobState === "queued" ? `Köade jobb: ${job}` : `Startade jobb: ${job}`);
+    syncActionButtonsState();
   } catch (e) {
     appendLog(`FEL vid start av ${job}: ${e}`);
     if (btn) {
@@ -1038,8 +1088,16 @@ function connectSSE() {
     sseReconnectTimer = null;
   }
   const _sseToken = localStorage.getItem("allok_auth_token") || "";
-  sseSource = new EventSource(`${API}/api/log/stream/${sessionId}?token=${encodeURIComponent(_sseToken)}`);
+  const params = new URLSearchParams({
+    token: _sseToken,
+    last_event_id: String(lastLogEventId || 0),
+  });
+  sseSource = new EventSource(`${API}/api/log/stream/${sessionId}?${params.toString()}`);
   sseSource.onmessage = (e) => {
+    if (e.lastEventId) {
+      lastLogEventId = Number(e.lastEventId || 0);
+      _saveTabState(_activePageId);
+    }
     const msg = e.data.replace(/\\n/g, "\n");
 
     // Kalltyp-summering
@@ -1062,6 +1120,7 @@ function connectSSE() {
     if (msg === "__DONE__" || msg === "__ERROR__") {
       // Aterstall alla korningsknappar
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
+      currentJobState = msg === "__DONE__" ? "completed" : "failed";
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
       refreshResultStatus().catch(() => {});
       if (msg === "__DONE__") {
@@ -1072,6 +1131,7 @@ function connectSSE() {
       } else {
         refreshOrdersaldoButtonState().catch(() => {});
       }
+      _saveTabState(_activePageId);
       return;
     }
 
@@ -1559,7 +1619,15 @@ async function refreshResultStatus() {
     const resp = await fetchWithSessionRecovery(`${API}/api/run/status/${sessionId}`, {}, "hämtning av resultatstatus");
     const data = await resp.json();
     availableResults = new Set(data.results || []);
+    currentJobId = data.current_job_id || null;
+    currentJobType = data.current_job_type || null;
+    currentJobState = data.current_job_state || null;
     renderResultButtons();
+    syncActionButtonsState();
+    if (!(data.running || currentJobState === "queued" || currentJobState === "running")) {
+      ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
+    }
+    _saveTabState(_activePageId);
   } catch (e) {
     // Tyst fel
   }
@@ -1638,7 +1706,9 @@ function openResult(key) {
 }
 
 function downloadResult(key) {
-  window.open(`${API}/api/download/${sessionId}/${key}`, "_blank");
+  const token = localStorage.getItem("allok_auth_token") || "";
+  const params = new URLSearchParams({ token });
+  window.open(`${API}/api/download/${sessionId}/${key}?${params.toString()}`, "_blank");
 }
 
 // ---------------------------------------------------------------------------
