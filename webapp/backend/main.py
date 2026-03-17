@@ -1073,6 +1073,78 @@ def _start_job(session: SessionData, coro):
     return True
 
 
+async def _generate_excel_files(session: SessionData, result, near, buffer_raw, saldo_norm, orders_path):
+    """Generera Excel-filer i bakgrunden efter att allokeringen ?r klar."""
+    loop = asyncio.get_event_loop()
+
+    def log(msg: str):
+        session.log_queue.put_nowait(msg)
+
+    try:
+        # Allokerade (viktigast ? genereras f?rst)
+        allok_path = os.path.join(session.temp_dir, "allokerade.xlsx")
+        await loop.run_in_executor(None, lambda: save_df_to_excel(result, "allokerade", allok_path))
+        session.results["allokerade"] = allok_path
+        log("__RESULT:allokerade__")
+
+        # Near-miss
+        if not near.empty:
+            nearmiss_path = os.path.join(session.temp_dir, "nearmiss.xlsx")
+            await loop.run_in_executor(None, lambda: save_df_to_excel(near, "nearmiss", nearmiss_path))
+            session.results["nearmiss"] = nearmiss_path
+            log("__RESULT:nearmiss__")
+
+        # Pallplatser + Refill parallellt (oberoende ber?kningar)
+        async def _gen_pallplatser():
+            try:
+                ps = await loop.run_in_executor(None, lambda: compute_pallet_spaces(result))
+                if ps is not None and not ps.empty:
+                    ps_path = os.path.join(session.temp_dir, "pallplatser.xlsx")
+                    await loop.run_in_executor(None, lambda: save_df_to_excel(ps, "pallplatser", ps_path))
+                    session.results["pallplatser"] = ps_path
+                    log("__RESULT:pallplatser__")
+            except Exception as e:
+                log(f"Pallplatser kunde inte ber\u00e4knas: {e}")
+
+        async def _gen_refill():
+            try:
+                hp_df, as_df = await loop.run_in_executor(None, lambda: calculate_refill(
+                    result, buffer_raw, saldo_df=saldo_norm, not_putaway_df=None
+                ))
+                has_refill = (hp_df is not None and not hp_df.empty) or (as_df is not None and not as_df.empty)
+                if has_refill:
+                    refill_sheets = {}
+                    if hp_df is not None and not hp_df.empty:
+                        refill_sheets["P\u00e5fyllning HP"] = hp_df
+                    if as_df is not None and not as_df.empty:
+                        refill_sheets["P\u00e5fyllning AutoStore"] = as_df
+                    refill_path = os.path.join(session.temp_dir, "refill.xlsx")
+                    await loop.run_in_executor(None, lambda: save_df_to_excel(refill_sheets, "refill", refill_path))
+                    session.results["refill"] = refill_path
+                    log("__RESULT:refill__")
+                    log(f"Auto-refill klar: HP {len(hp_df)} rader, AUTOSTORE {len(as_df)} rader.")
+            except Exception as e:
+                log(f"Refill misslyckades: {e}")
+
+        await asyncio.gather(_gen_pallplatser(), _gen_refill())
+
+        # Ordersaldo
+        try:
+            if orders_path:
+                list1, list2 = await loop.run_in_executor(
+                    None, lambda: refresh_ordersaldo(orders_path, session.active_filters),
+                )
+                session.ordersaldo_list1 = list1
+                session.ordersaldo_list2 = list2
+                if list1 or list2:
+                    log(f"Ordersaldo: {len(list1)} kompletta ordrar, {len(list2)} artiklar med p\u00e5fyllningsbehov.")
+        except Exception as e:
+            log(f"Varning: Ordersaldo-ber\u00e4kning misslyckades: {e}")
+
+    except Exception as e:
+        log(f"Varning: Excel-generering misslyckades delvis: {e}")
+
+
 async def _job_allokering(session: SessionData):
     loop = asyncio.get_event_loop()
 
@@ -1086,32 +1158,40 @@ async def _job_allokering(session: SessionData):
         item_path = session.files.get("item")
 
         if not orders_path or not buffer_path:
-            log("FEL: orders och buffer m?ste vara uppladdade.")
+            log("FEL: orders och buffer m\u00e5ste vara uppladdade.")
             log("__ERROR__")
             return
 
-        log("L?ser in filer...")
-        orders_raw = await loop.run_in_executor(None, lambda: read_csv_auto(orders_path))
-        buffer_raw = await loop.run_in_executor(None, lambda: read_csv_auto(buffer_path))
+        # --- Fas 1: L?s alla filer parallellt ---
+        log("L\u00e4ser in filer...")
+        read_tasks: Dict[str, Any] = {}
+        read_tasks["orders"] = loop.run_in_executor(None, lambda p=orders_path: read_csv_auto(p))
+        read_tasks["buffer"] = loop.run_in_executor(None, lambda p=buffer_path: read_csv_auto(p))
+        if automation_path and os.path.exists(automation_path):
+            read_tasks["automation"] = loop.run_in_executor(None, lambda p=automation_path: read_csv_auto(p))
+        if item_path and os.path.exists(item_path):
+            read_tasks["item"] = loop.run_in_executor(None, lambda p=item_path: read_csv_auto(p))
+
+        keys = list(read_tasks.keys())
+        read_results = await asyncio.gather(*read_tasks.values())
+        raw_data = dict(zip(keys, read_results))
+
+        orders_raw = _clean_columns(raw_data["orders"])
+        buffer_raw = _clean_columns(raw_data["buffer"])
 
         saldo_norm = None
         saldo_raw = None
-        if automation_path and os.path.exists(automation_path):
-            auto_raw = await loop.run_in_executor(None, lambda: read_csv_auto(automation_path))
-            auto_raw = _clean_columns(auto_raw.copy())
+        if "automation" in raw_data:
+            auto_raw = _clean_columns(raw_data["automation"].copy())
             saldo_raw = auto_raw.copy()
             saldo_norm = await loop.run_in_executor(None, lambda: normalize_saldo(auto_raw))
 
         item_norm = None
-        if item_path and os.path.exists(item_path):
+        if "item" in raw_data:
             try:
-                item_raw = await loop.run_in_executor(None, lambda: read_csv_auto(item_path))
-                item_norm = await loop.run_in_executor(None, lambda: normalize_items(item_raw))
+                item_norm = await loop.run_in_executor(None, lambda: normalize_items(raw_data["item"]))
             except Exception as ie:
-                log(f"Varning: Kunde inte l?sa item-fil: {ie}")
-
-        orders_raw = _clean_columns(orders_raw)
-        buffer_raw = _clean_columns(buffer_raw)
+                log(f"Varning: Kunde inte l\u00e4sa item-fil: {ie}")
 
         # Applicera filter
         orders_raw = apply_value_filters(orders_raw, session.active_filters)
@@ -1120,7 +1200,8 @@ async def _job_allokering(session: SessionData):
             saldo_raw = apply_value_filters(saldo_raw, session.active_filters)
             saldo_norm = await loop.run_in_executor(None, lambda: normalize_saldo(saldo_raw))
 
-        log("K?r allokering (Helpall ? AutoStore ? Huvudplock, FIFO)...")
+        # --- Fas 2: K?r allokering ---
+        log("K\u00f6r allokering (Helpall \u2192 AutoStore \u2192 Huvudplock, FIFO)...")
         result, near = await loop.run_in_executor(None, lambda: allocate(orders_raw, buffer_raw, log=log))
 
         result = await loop.run_in_executor(None, lambda: _reclassify_skrymmande(result, saldo_norm))
@@ -1140,62 +1221,15 @@ async def _job_allokering(session: SessionData):
                     temp_merge["Ej Staplingsbar"] = ""
                 result = temp_merge
             except Exception as e:
-                log(f"Kunde inte sl? ihop item-fil: {e}")
+                log(f"Kunde inte sl\u00e5 ihop item-fil: {e}")
 
         if "Ej Staplingsbar" not in result.columns:
             result["Ej Staplingsbar"] = ""
 
-        log("Skapar Excel-filer...")
-
-        # Spara allokerade
-        allok_path = os.path.join(session.temp_dir, "allokerade.xlsx")
-        await loop.run_in_executor(None, lambda: save_df_to_excel(result, "allokerade", allok_path))
-        session.results["allokerade"] = allok_path
-        log("__RESULT:allokerade__")
-
-        # Spara near-miss
-        if not near.empty:
-            nearmiss_path = os.path.join(session.temp_dir, "nearmiss.xlsx")
-            await loop.run_in_executor(None, lambda: save_df_to_excel(near, "nearmiss", nearmiss_path))
-            session.results["nearmiss"] = nearmiss_path
-            log("__RESULT:nearmiss__")
-
-        # Pallplatser
-        try:
-            pallet_spaces = await loop.run_in_executor(None, lambda: compute_pallet_spaces(result))
-            if pallet_spaces is not None and not pallet_spaces.empty:
-                ps_path = os.path.join(session.temp_dir, "pallplatser.xlsx")
-                await loop.run_in_executor(None, lambda: save_df_to_excel(pallet_spaces, "pallplatser", ps_path))
-                session.results["pallplatser"] = ps_path
-                log("__RESULT:pallplatser__")
-        except Exception as e:
-            log(f"Pallplatser kunde inte ber?knas: {e}")
-
-        # Refill
-        try:
-            hp_df, as_df = await loop.run_in_executor(None, lambda: calculate_refill(
-                result, buffer_raw,
-                saldo_df=saldo_norm,
-                not_putaway_df=None
-            ))
-            has_refill = (hp_df is not None and not hp_df.empty) or (as_df is not None and not as_df.empty)
-            if has_refill:
-                refill_sheets = {}
-                if hp_df is not None and not hp_df.empty:
-                    refill_sheets["P?fyllning HP"] = hp_df
-                if as_df is not None and not as_df.empty:
-                    refill_sheets["P?fyllning AutoStore"] = as_df
-                refill_path = os.path.join(session.temp_dir, "refill.xlsx")
-                await loop.run_in_executor(None, lambda: save_df_to_excel(refill_sheets, "refill", refill_path))
-                session.results["refill"] = refill_path
-                log("__RESULT:refill__")
-                log(f"Auto-refill klar: HP {len(hp_df)} rader, AUTOSTORE {len(as_df)} rader.")
-        except Exception as e:
-            log(f"Refill misslyckades: {e}")
-
+        # --- Fas 3: Summeringar + Klar ---
         # Summering per zon
         try:
-            zon_col = "Zon (ber?knad)"
+            zon_col = "Zon (ber\u00e4knad)"
             qty_col = find_col(result, ORDER_SCHEMA["qty"], required=True)
             summary = result.groupby(zon_col)[qty_col].apply(
                 lambda s: pd.to_numeric(s, errors="coerce").sum()).reset_index(name="Totalt antal")
@@ -1205,7 +1239,7 @@ async def _job_allokering(session: SessionData):
         except Exception:
             pass
 
-        # Summering per K?lltyp (samma som desktop-appen)
+        # Summering per K?lltyp
         try:
             import json as _json
             qty_col_kt = find_col(result, ORDER_SCHEMA["qty"], required=False, default=None)
@@ -1236,28 +1270,20 @@ async def _job_allokering(session: SessionData):
         except Exception as _e_kt:
             log(f"Summering per K\u00e4lltyp kunde inte ber\u00e4knas: {_e_kt}")
 
-        # Ber?kna ordersaldo-listor (kompletta ordrar / p?fyllningsbehov)
-        try:
-            if orders_path:
-                list1, list2 = await loop.run_in_executor(
-                    None,
-                    lambda: refresh_ordersaldo(orders_path, session.active_filters),
-                )
-                session.ordersaldo_list1 = list1
-                session.ordersaldo_list2 = list2
-                if list1 or list2:
-                    log(f"Ordersaldo: {len(list1)} kompletta ordrar, {len(list2)} artiklar med p?fyllningsbehov.")
-        except Exception as e:
-            log(f"Varning: Ordersaldo-ber?kning misslyckades: {e}")
-
-        log("Allokeringen ?r klar.")
+        log("Allokeringen \u00e4r klar.")
         log("__DONE__")
+        session.running = False
+
+        # --- Fas 4: Excel-generering i bakgrunden ---
+        asyncio.ensure_future(_generate_excel_files(
+            session, result, near, buffer_raw, saldo_norm, orders_path
+        ))
+
     except Exception as e:
         import traceback
         log(f"FEL: {e}")
         log(traceback.format_exc())
         log("__ERROR__")
-    finally:
         session.running = False
 
 
