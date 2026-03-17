@@ -178,6 +178,21 @@ body {
   color: #1f2328;
 }
 
+.action-btn-copy.btn-soft-disabled,
+.action-btn-copy[aria-disabled="true"] {
+  background: #e3a321;
+  color: #5b3a00;
+  opacity: 1;
+}
+
+.action-btn-copy.btn-soft-disabled:hover,
+.action-btn-copy.btn-soft-disabled:focus,
+.action-btn-copy[aria-disabled="true"]:hover,
+.action-btn-copy[aria-disabled="true"]:focus {
+  background: #e3a321;
+  color: #5b3a00;
+}
+
 .action-btn-open {
   background: #5c7c8a;
 }
