@@ -105,6 +105,19 @@ const ACTION_REQUIREMENTS = {
   ],
 };
 
+const COPY_BUTTON_REQUIREMENTS = {
+  list1: {
+    buttonId: "btn-kompletta",
+    requiredLabels: ["Beställningslinjer (CSV)"],
+    lockedHint: "För att aktivera krävs: Beställningslinjer (CSV), och att listan innehåller värden.",
+  },
+  list2: {
+    buttonId: "btn-pafyllning",
+    requiredLabels: ["Beställningslinjer (CSV)"],
+    lockedHint: "För att aktivera krävs: Beställningslinjer (CSV), och att listan innehåller värden.",
+  },
+};
+
 const OPEN_RESULT_ORDER = [
   "allokerade",
   "nearmiss",
@@ -139,6 +152,7 @@ let sessionId = null;
 let sseSource = null;
 let sseReconnectTimer = null;
 let sseReconnectLogAt = 0;
+let sessionRecoveryPromise = null;
 let fileStatuses = {};  // key -> filename | null
 let availableResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
@@ -176,6 +190,106 @@ function toggleTheme() {
   initTooltips();
 }
 
+function resetFrontendState(options = {}) {
+  const clearInputs = !!options.clearInputs;
+  fileStatuses = {};
+  cachedFilterOptions = {};
+  selectedFilters = { bolag: [], ordertyp: [] };
+  availableResults.clear();
+
+  [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
+    setBadge(slot.key, "Ej fil", false);
+  });
+
+  renderResultButtons();
+  renderFilterCard({});
+  clearKalltypSummary();
+
+  if (clearInputs) {
+    const purchaseInput = document.getElementById("purchase-input");
+    const articleInput = document.getElementById("article-input");
+    if (purchaseInput) purchaseInput.value = "";
+    if (articleInput) articleInput.value = "";
+  }
+
+  ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
+}
+
+async function readErrorDetail(resp) {
+  try {
+    const data = await resp.clone().json();
+    const detail = String(data?.detail || data?.message || "").trim();
+    if (detail) {
+      return detail;
+    }
+  } catch (_e) {
+    // Faller tillbaka till text
+  }
+
+  try {
+    const text = String(await resp.text()).trim();
+    if (text) {
+      return text;
+    }
+  } catch (_e) {
+    // Ignorera
+  }
+
+  return resp.statusText || `HTTP ${resp.status}`;
+}
+
+function isSessionMissingDetail(detail) {
+  return /Session saknas/i.test(String(detail || ""));
+}
+
+async function recoverExpiredSession(reason) {
+  if (sessionRecoveryPromise) {
+    return sessionRecoveryPromise;
+  }
+
+  sessionRecoveryPromise = (async () => {
+    const previousSessionId = sessionId;
+    sessionId = null;
+    try {
+      sessionStorage.removeItem("allok_session_id");
+    } catch (_e) {
+      // Tyst fel
+    }
+
+    resetFrontendState();
+    await ensureSession();
+    connectSSE();
+    await refreshFileStatus();
+    await refreshFilterOptions();
+    await refreshResultStatus();
+    await refreshOrdersaldoButtonState();
+    syncActionButtonsState();
+
+    const reasonText = reason ? ` (${reason})` : "";
+    appendLog(`Sessionen återställdes${reasonText}. Ladda upp filerna igen.`);
+    return previousSessionId !== sessionId;
+  })().finally(() => {
+    sessionRecoveryPromise = null;
+  });
+
+  return sessionRecoveryPromise;
+}
+
+async function fetchWithSessionRecovery(url, options = {}, context = "") {
+  const resp = await fetch(url, options);
+  if (resp.ok) {
+    return resp;
+  }
+
+  const detail = await readErrorDetail(resp);
+  if (resp.status === 404 && isSessionMissingDetail(detail)) {
+    await recoverExpiredSession(context || "servern tappade sessionen");
+    throw new Error("Sessionen återställdes. Ladda upp filerna igen.");
+  }
+
+  throw new Error(detail || resp.statusText || `HTTP ${resp.status}`);
+}
+
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
@@ -207,6 +321,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderFileRows();
   renderProgRows();
   renderWmsRows();
+  renderResultButtons();
   connectSSE();
   setupDragDrop();
 
@@ -367,11 +482,10 @@ async function uploadFile(fileKey, file, options = {}) {
     formData.append("file_key", fileKey);
     formData.append("page_id", getActiveMainPage());
     formData.append("file", file);
-    const resp = await fetch(`${API}/api/upload/${sessionId}`, {
+    const resp = await fetchWithSessionRecovery(`${API}/api/upload/${sessionId}`, {
       method: "POST",
       body: formData,
-    });
-    if (!resp.ok) throw new Error(await resp.text());
+    }, "uppladdning");
     const data = await resp.json();
     const actualKey = data.file_key || fileKey;
     if (actualKey !== fileKey) {
@@ -397,7 +511,7 @@ async function uploadFile(fileKey, file, options = {}) {
 
 async function removeFile(fileKey) {
   try {
-    await fetch(`${API}/api/upload/${sessionId}/${fileKey}`, { method: "DELETE" });
+    await fetchWithSessionRecovery(`${API}/api/upload/${sessionId}/${fileKey}`, { method: "DELETE" }, "borttagning av fil");
     fileStatuses[fileKey] = null;
     setBadge(fileKey, "Ej fil", false);
     appendLog(`Fil borttagen: [${fileKey}]`);
@@ -409,8 +523,13 @@ async function removeFile(fileKey) {
 
 async function refreshFileStatus() {
   try {
-    const resp = await fetch(`${API}/api/upload/${sessionId}`);
+    const resp = await fetchWithSessionRecovery(`${API}/api/upload/${sessionId}`, {}, "hämtning av filstatus");
     const data = await resp.json();
+    [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
+      const filename = data.files?.[slot.key] || null;
+      fileStatuses[slot.key] = filename;
+      setBadge(slot.key, filename || "Ej fil", !!filename);
+    });
     for (const [key, filename] of Object.entries(data.files || {})) {
       fileStatuses[key] = filename;
       setBadge(key, filename || "Ej fil", !!filename);
@@ -538,7 +657,7 @@ async function fetchAskCsvToSlot(fileKey, slotLabel) {
     const viewName = askViewNameForSlot(fileKey, slotLabel);
 
     appendLog(`Hämtar CSV från ASK: vy='${viewName}' -> slot='${fileKey}'...`);
-    const resp = await fetch(`${API}/api/ask-csv/fetch/${sessionId}`, {
+    const resp = await fetchWithSessionRecovery(`${API}/api/ask-csv/fetch/${sessionId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -550,11 +669,7 @@ async function fetchAskCsvToSlot(fileKey, slotLabel) {
         grid_wait: 30,
         download_timeout: 120,
       }),
-    });
-    if (!resp.ok) {
-      const errData = await resp.json().catch(() => ({}));
-      throw new Error(errData.detail || resp.statusText);
-    }
+    }, "ASK CSV-hämtning");
     const data = await resp.json();
 
     fileStatuses[fileKey] = data.filename;
@@ -576,7 +691,7 @@ async function fetchAskCsvToSlot(fileKey, slotLabel) {
 
 async function refreshFilterOptions() {
   try {
-    const resp = await fetch(`${API}/api/filters/${sessionId}`);
+    const resp = await fetchWithSessionRecovery(`${API}/api/filters/${sessionId}`, {}, "hämtning av filter");
     const data = await resp.json();
     cachedFilterOptions = data;
     renderFilterCard(data);
@@ -684,11 +799,11 @@ async function saveFilters() {
 
   selectedFilters = filters;
   try {
-    await fetch(`${API}/api/filters/${sessionId}`, {
+    await fetchWithSessionRecovery(`${API}/api/filters/${sessionId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(filters),
-    });
+    }, "sparning av filter");
   } catch (_e) {
     // Tyst fel
   }
@@ -709,6 +824,20 @@ function setButtonLockState(btn, locked, hintText) {
   } else {
     btn.title = btn.dataset.baseTitle || "";
   }
+}
+
+function getRequiredLabelsForJob(job) {
+  return (ACTION_REQUIREMENTS[job] || [])
+    .map(req => req.label)
+    .filter(Boolean);
+}
+
+function buildRequirementTitle(baseTitle, requiredLabels) {
+  const base = String(baseTitle || "").trim();
+  const requirementText = (requiredLabels || []).length > 0
+    ? `Kräver: ${(requiredLabels || []).join(", ")}.`
+    : "";
+  return [base, requirementText].filter(Boolean).join(" ");
 }
 
 function getMissingRequirements(job) {
@@ -733,11 +862,13 @@ function syncActionButtonsState() {
     const btn = document.getElementById(`btn-${job}`);
     if (!btn) return;
     const missing = getMissingRequirements(job);
+    const readyTitle = buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", getRequiredLabelsForJob(job));
     actionMissingByJob[job] = missing;
     if (missing.length > 0) {
-      setButtonLockState(btn, true, `Saknar filer: ${missing.join(", ")}`);
+      setButtonLockState(btn, true, `För att aktivera krävs: ${missing.join(", ")}`);
     } else {
       setButtonLockState(btn, false, "");
+      btn.title = readyTitle || btn.title;
     }
   });
   initTooltips();
@@ -785,11 +916,7 @@ async function runJob(job) {
       headers["Content-Type"] = "application/json";
     }
 
-    const resp = await fetch(url, { method, body, headers });
-    if (!resp.ok) {
-      const errData = await resp.json().catch(() => ({}));
-      throw new Error(errData.detail || resp.statusText);
-    }
+    await fetchWithSessionRecovery(url, { method, body, headers }, `start av ${job}`);
     appendLog(`Startade jobb: ${job}`);
   } catch (e) {
     appendLog(`FEL vid start av ${job}: ${e}`);
@@ -1320,7 +1447,7 @@ function activateResultButton(key) {
 
 async function refreshResultStatus() {
   try {
-    const resp = await fetch(`${API}/api/run/status/${sessionId}`);
+    const resp = await fetchWithSessionRecovery(`${API}/api/run/status/${sessionId}`, {}, "hämtning av resultatstatus");
     const data = await resp.json();
     availableResults = new Set(data.results || []);
     renderResultButtons();
@@ -1353,6 +1480,17 @@ function resultContainerForKey(key) {
   return document.getElementById("result-buttons-allokering");
 }
 
+function updateResultContainerVisibility(container) {
+  if (!container) return;
+  const hasButtons = container.childElementCount > 0;
+  const actionGroup = container.closest(".action-group");
+  if (actionGroup) {
+    actionGroup.style.display = hasButtons ? "" : "none";
+    return;
+  }
+  container.style.display = hasButtons ? "" : "none";
+}
+
 function renderResultButtons() {
   const allokeringContainer = document.getElementById("result-buttons-allokering");
   const eftersokContainer = document.getElementById("result-buttons-eftersok");
@@ -1360,9 +1498,12 @@ function renderResultButtons() {
   if (eftersokContainer) eftersokContainer.innerHTML = "";
 
   OPEN_RESULT_ORDER.forEach(key => {
+    if (!availableResults.has(key)) {
+      return;
+    }
     const container = resultContainerForKey(key);
     if (!container) return;
-    container.appendChild(createResultButton(key, availableResults.has(key)));
+    container.appendChild(createResultButton(key, true));
   });
 
   // Visar oväntade/extra resultatnycklar om backend returnerar fler.
@@ -1374,6 +1515,8 @@ function renderResultButtons() {
       container.appendChild(createResultButton(key, true));
     });
 
+  updateResultContainerVisibility(allokeringContainer);
+  updateResultContainerVisibility(eftersokContainer);
   initTooltips();
 }
 
@@ -1434,26 +1577,22 @@ function clearKalltypSummary() {
 function setOrdersaldoCopyButtonState(buttonId, count, emptyHint) {
   const btn = document.getElementById(buttonId);
   if (!btn) return;
-  btn.disabled = !(count > 0);
-  if (!btn.dataset.baseTitle) {
-    btn.dataset.baseTitle = btn.title || "";
-  }
+  const copyConfig = Object.values(COPY_BUTTON_REQUIREMENTS).find(cfg => cfg.buttonId === buttonId) || null;
+  const readyTitle = buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", copyConfig?.requiredLabels || []);
   if (count > 0) {
-    btn.title = btn.dataset.baseTitle || "";
-    btn.classList.remove("btn-soft-disabled");
+    setButtonLockState(btn, false, "");
+    btn.title = readyTitle || btn.title;
   } else {
-    btn.title = emptyHint || "Listan är tom.";
-    btn.classList.add("btn-soft-disabled");
+    setButtonLockState(btn, true, emptyHint || copyConfig?.lockedHint || "Listan är tom.");
   }
 }
 
 async function refreshOrdersaldoButtonState() {
   try {
     const [r1, r2] = await Promise.all([
-      fetch(`${API}/api/ordersaldo/list1/${sessionId}`),
-      fetch(`${API}/api/ordersaldo/list2/${sessionId}`),
+      fetchWithSessionRecovery(`${API}/api/ordersaldo/list1/${sessionId}`, {}, "hämtning av kompletta ordrar"),
+      fetchWithSessionRecovery(`${API}/api/ordersaldo/list2/${sessionId}`, {}, "hämtning av påfyllningsbehov"),
     ]);
-    if (!r1.ok || !r2.ok) throw new Error("kunde inte hämta listsaldo");
     const d1 = await r1.json().catch(() => ({}));
     const d2 = await r2.json().catch(() => ({}));
     const c1 = Array.isArray(d1.values) ? d1.values.length : 0;
@@ -1468,12 +1607,14 @@ async function refreshOrdersaldoButtonState() {
 }
 
 async function copyList(listId) {
+  const copyConfig = COPY_BUTTON_REQUIREMENTS[listId];
+  const btn = copyConfig ? document.getElementById(copyConfig.buttonId) : null;
+  if (btn && btn.dataset.locked === "1") {
+    appendLog(btn.title || "Listan är inte tillgänglig ännu.");
+    return;
+  }
   try {
-    const resp = await fetch(`${API}/api/ordersaldo/${listId}/${sessionId}`);
-    if (!resp.ok) {
-      const errData = await resp.json().catch(() => ({}));
-      throw new Error(errData.detail || resp.statusText);
-    }
+    const resp = await fetchWithSessionRecovery(`${API}/api/ordersaldo/${listId}/${sessionId}`, {}, `kopiering av ${listId}`);
     const data = await resp.json();
     const values = data.values || [];
     if (values.length === 0) {
@@ -1494,20 +1635,9 @@ async function copyList(listId) {
 
 async function resetCache() {
   try {
-    await fetch(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" });
-    // Nollställ fil-status
-    fileStatuses = {};
-    [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
-      setBadge(slot.key, "Ej fil", false);
-    });
-    availableResults.clear();
-    renderResultButtons();
-    clearKalltypSummary();
+    await fetchWithSessionRecovery(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" }, "rensning av cache");
+    resetFrontendState({ clearInputs: true });
     document.getElementById("log-output").textContent = "";
-    const purchaseInput = document.getElementById("purchase-input");
-    const articleInput = document.getElementById("article-input");
-    if (purchaseInput) purchaseInput.value = "";
-    if (articleInput) articleInput.value = "";
     appendLog("Cache rensad (filer och resultat borttagna).");
     await refreshFilterOptions();
     await refreshOrdersaldoButtonState();
