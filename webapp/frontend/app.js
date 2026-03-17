@@ -1650,8 +1650,8 @@ function matchFileToSlot(filename) {
   }
 
   // Generiska matchningar
-  if (lower.includes("prognos") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "prognos";
   if (lower.includes("kampanj") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "campaign";
+  if (lower.includes("prognos") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "prognos";
   if (lower.includes("bestall") || lower.includes("best\u00e4ll") || (lower.includes("order") && lower.includes("detail"))) return "orders";
   if (lower.includes("buffert") || lower.includes("buffer")) {
     return activePage === "eftersok-page" ? "wms_buffer" : "buffer";
