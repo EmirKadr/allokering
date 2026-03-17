@@ -42,6 +42,15 @@ body {
   padding: 0.35rem 0.45rem;
 }
 
+.utility-panels {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.share-card {
+  width: min(100%, 560px);
+}
+
 .action-groups {
   display: flex;
   flex-wrap: wrap;

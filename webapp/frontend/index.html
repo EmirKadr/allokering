@@ -76,28 +76,6 @@
         </div>
       </div>
 
-      <!-- Höger: Dela -->
-      <div class="col-auto">
-        <div class="card mb-2">
-          <div class="card-header fw-bold">Dela</div>
-          <div class="card-body py-2">
-            <label class="form-label mb-1">Värden (en per rad):</label>
-            <textarea class="form-control form-control-sm" id="paste-values" rows="10"
-                      placeholder="Klistra in dina värden här..."></textarea>
-            <div class="d-flex align-items-center mt-2 gap-2 flex-wrap">
-              <label class="mb-0 text-nowrap">Antal per kolumn:</label>
-              <input type="number" class="form-control form-control-sm" style="width:90px"
-                     id="chunk-size" value="2000" min="1">
-              <button class="btn btn-secondary btn-sm" onclick="openChunkedExcel()"
-                      data-bs-toggle="tooltip" title="Exportera värdena uppdelade i kolumner till en Excel-fil">
-                Öppna i Excel direkt
-              </button>
-            </div>
-            <div class="d-flex gap-1 flex-wrap mt-2" id="chunk-col-buttons" style="display:none!important"></div>
-          </div>
-        </div>
-      </div>
-
     </div><!-- /row -->
 
     <div class="action-groups mb-2 mt-1">
@@ -185,6 +163,27 @@
 
     <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons-eftersok">
       <!-- Genereras av app.js efter körning -->
+    </div>
+  </div>
+
+  <div class="utility-panels mb-2">
+    <div class="card share-card">
+      <div class="card-header fw-bold">Dela</div>
+      <div class="card-body py-2">
+        <label class="form-label mb-1">Värden (en per rad):</label>
+        <textarea class="form-control form-control-sm" id="paste-values" rows="8"
+                  placeholder="Klistra in dina värden här..."></textarea>
+        <div class="d-flex align-items-center mt-2 gap-2 flex-wrap">
+          <label class="mb-0 text-nowrap">Antal per kolumn:</label>
+          <input type="number" class="form-control form-control-sm" style="width:90px"
+                 id="chunk-size" value="2000" min="1">
+          <button class="btn btn-secondary btn-sm" onclick="openChunkedExcel()"
+                  data-bs-toggle="tooltip" title="Exportera värdena uppdelade i kolumner till en Excel-fil">
+            Öppna i Excel direkt
+          </button>
+        </div>
+        <div class="d-flex gap-1 flex-wrap mt-2" id="chunk-col-buttons" style="display:none!important"></div>
+      </div>
     </div>
   </div>
 
