@@ -64,15 +64,15 @@ const CLASSIFIER_DATA_SLOTS = [
 
 // Resultatnycklar -> visningsnamn
 const RESULT_LABELS = {
-  "allokerade":       "Öppna allokerade pallar",
-  "nearmiss":         "Öppna near-miss",
-  "pallplatser":      "Öppna pallplatser",
-  "refill":           "Öppna refill",
-  "hib-koppling":     "Öppna HIB-koppling",
-  "orderkontroll":    "Öppna orderkontroll",
-  "dispatchkontroll": "Öppna dispatchkontroll",
+  "allokerade":       "Allokering",
+  "nearmiss":         "Near-Miss",
+  "pallplatser":      "Preliminärbokning",
+  "refill":           "Refill",
+  "hib-koppling":     "HIB Kontroll",
+  "orderkontroll":    "Order Kontroll",
+  "dispatchkontroll": "Dispatch Kontroll",
   "eftersok":         "Öppna eftersök",
-  "prognos":          "Öppna prognos",
+  "prognos":          "Prognos",
   "sales":            "Öppna försäljningsinsikter",
 };
 
@@ -1255,7 +1255,7 @@ async function refreshResultStatus() {
 function createResultButton(key, isReady) {
   const label = RESULT_LABELS[key] || `Öppna ${key}`;
   const btn = document.createElement("button");
-  btn.className = `btn btn-sm ${isReady ? "btn-success" : "btn-outline-secondary"}`;
+  btn.className = "btn btn-sm action-btn action-btn-open";
   btn.textContent = label;
   btn.dataset.resultKey = key;
   btn.setAttribute("data-bs-toggle", "tooltip");

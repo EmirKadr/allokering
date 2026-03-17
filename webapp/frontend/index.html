@@ -100,41 +100,55 @@
 
     </div><!-- /row -->
 
-    <!-- Kor-knappar -->
-    <div class="d-flex gap-2 flex-wrap mb-1 mt-1">
-      <button class="btn btn-primary btn-sm" id="btn-allokering" onclick="runJob('allokering')"
-              data-bs-toggle="tooltip" title="Kör FIFO-allokering av kundorder mot buffertpallar">
-        Allokering
-      </button>
-      <button class="btn btn-primary btn-sm" id="btn-hib-koppling" onclick="runJob('hib-koppling')"
-              data-bs-toggle="tooltip" title="Koppla e-handelsorder mot lagerorder (HIB)">
-        HIB-koppling
-      </button>
-      <button class="btn btn-primary btn-sm" id="btn-orderkontroll" onclick="runJob('orderkontroll')"
-              data-bs-toggle="tooltip" title="Kontrollera dataintegritet och status i orderöversikten">
-        Orderöversikt
-      </button>
-      <button class="btn btn-primary btn-sm" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')"
-              data-bs-toggle="tooltip" title="Verifiera att dispatchpallar är korrekt tilldelade">
-        Dispatchkontroll
-      </button>
-    </div>
+    <div class="action-groups mb-2 mt-1">
+      <div class="action-group">
+        <div class="action-group-heading">Funktioner</div>
+        <div class="action-group-buttons">
+          <button class="btn btn-sm action-btn action-btn-function" id="btn-allokering" onclick="runJob('allokering')"
+                  data-bs-toggle="tooltip" title="Kör FIFO-allokering av kundorder mot buffertpallar">
+            Allokering
+          </button>
+        </div>
+      </div>
 
-    <!-- Kopiera-knappar (gula) + Rensa cache -->
-    <div class="d-flex gap-2 flex-wrap mb-2">
-      <button class="btn btn-warning btn-sm" id="btn-kompletta" onclick="copyList('list1')"
-              data-bs-toggle="tooltip" title="Kopiera ordernummer för alla kompletta (fullt allokerade) ordrar">
-        Kompletta ordrar
-      </button>
-      <button class="btn btn-warning btn-sm" id="btn-pafyllning" onclick="copyList('list2')"
-              data-bs-toggle="tooltip" title="Kopiera artikelnummer som behöver påfyllning från lager">
-        Påfyllningsbehov
-      </button>
-    </div>
+      <div class="action-group">
+        <div class="action-group-heading">Kontroller</div>
+        <div class="action-group-buttons">
+          <button class="btn btn-sm action-btn action-btn-control" id="btn-hib-koppling" onclick="runJob('hib-koppling')"
+                  data-bs-toggle="tooltip" title="Koppla e-handelsorder mot lagerorder (HIB)">
+            HIB
+          </button>
+          <button class="btn btn-sm action-btn action-btn-control" id="btn-orderkontroll" onclick="runJob('orderkontroll')"
+                  data-bs-toggle="tooltip" title="Kontrollera dataintegritet och status i orderöversikten">
+            Orderöversikt
+          </button>
+          <button class="btn btn-sm action-btn action-btn-control" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')"
+                  data-bs-toggle="tooltip" title="Verifiera att dispatchpallar är korrekt tilldelade">
+            Dispatchpallar
+          </button>
+        </div>
+      </div>
 
-    <!-- Öppna resultat-knappar (aktiveras dynamiskt) -->
-    <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons-allokering">
-      <!-- Genereras av app.js efter körning -->
+      <div class="action-group">
+        <div class="action-group-heading">Kopiera</div>
+        <div class="action-group-buttons">
+          <button class="btn btn-sm action-btn action-btn-copy" id="btn-kompletta" onclick="copyList('list1')"
+                  data-bs-toggle="tooltip" title="Kopiera ordernummer för alla kompletta (fullt allokerade) ordrar">
+            Kompletta ordrar
+          </button>
+          <button class="btn btn-sm action-btn action-btn-copy" id="btn-pafyllning" onclick="copyList('list2')"
+                  data-bs-toggle="tooltip" title="Kopiera artikelnummer som behöver påfyllning från lager">
+            Påfyllningsbehov
+          </button>
+        </div>
+      </div>
+
+      <div class="action-group action-group-open">
+        <div class="action-group-heading">Öppna Excel</div>
+        <div class="action-group-buttons" id="result-buttons-allokering">
+          <!-- Genereras av app.js efter körning -->
+        </div>
+      </div>
     </div>
   </div>
 

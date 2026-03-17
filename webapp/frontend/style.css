@@ -42,6 +42,88 @@ body {
   padding: 0.35rem 0.45rem;
 }
 
+.action-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 20px;
+  align-items: flex-start;
+}
+
+.action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.action-group-open {
+  flex: 1 1 420px;
+}
+
+.action-group-heading {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #495057;
+}
+
+.action-group-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action-btn {
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0.42rem 0.8rem;
+  color: #fff;
+}
+
+.action-btn:hover,
+.action-btn:focus {
+  color: #fff;
+}
+
+.action-btn-function {
+  background: #1f8f55;
+}
+
+.action-btn-function:hover,
+.action-btn-function:focus {
+  background: #197347;
+}
+
+.action-btn-control {
+  background: #2d6cdf;
+}
+
+.action-btn-control:hover,
+.action-btn-control:focus {
+  background: #2255b3;
+}
+
+.action-btn-copy {
+  background: #d89b13;
+  color: #1f2328;
+}
+
+.action-btn-copy:hover,
+.action-btn-copy:focus {
+  background: #bf870f;
+  color: #1f2328;
+}
+
+.action-btn-open {
+  background: #5c7c8a;
+}
+
+.action-btn-open:hover,
+.action-btn-open:focus {
+  background: #49636e;
+}
+
 #main-tabs .nav-link {
   font-size: 13px;
   padding-top: 0.35rem;
@@ -137,12 +219,6 @@ body {
 
 .btn-sm {
   font-size: 12px;
-}
-
-/* Result-knappar */
-#result-buttons .btn {
-  font-size: 12px;
-  text-decoration: none;
 }
 
 .btn-soft-disabled {
