@@ -114,8 +114,23 @@ body {
   text-decoration: none;
 }
 
+.btn-soft-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .btn {
   text-decoration: none !important;
+}
+
+.allocation-preview-wrap {
+  max-height: 320px;
+}
+
+#allocation-preview-table th,
+#allocation-preview-table td {
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* Filter-checkboxar */
@@ -129,4 +144,70 @@ body {
   width: 0.85rem;
   height: 0.85rem;
   border-width: 0.15em;
+}
+
+/* classifier v2 */
+.cls2-kanban-board {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.cls2-kanban-col {
+  min-width: 220px;
+  max-width: 260px;
+  background: #f5f7fb;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+}
+
+.cls2-kanban-col-header {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+  border-bottom: 1px solid #d8deea;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cls2-kanban-col-body {
+  padding: 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cls2-card {
+  background: #ffffff;
+  border: 1px solid #cfd7e6;
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cls2-card:hover {
+  border-color: #7aa2f7;
+}
+
+.cls2-card.selected {
+  background: #e7f0ff;
+  border-color: #2d7ff9;
+}
+
+.cls2-knowledge-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #28a745;
+  margin-left: 8px;
 }

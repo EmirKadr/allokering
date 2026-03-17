@@ -37,6 +37,9 @@ const ASK_FETCHABLE_KEYS = new Set([
   ...FILE_SLOTS.map(s => s.key),
   ...WMS_SLOTS.map(s => s.key),
 ]);
+const ENABLE_ASK_CSV = false;
+// UI-toggle: hide ASK "Hämta CSV" buttons but keep backend/frontend logic intact.
+const SHOW_ASK_FETCH_BUTTONS = false && ENABLE_ASK_CSV;
 
 const ASK_VIEW_OVERRIDES = {
   overview: "Order\u00f6versikt",
@@ -52,16 +55,63 @@ const CLASSIFIER_DATA_SLOTS = [
 
 // Resultatnycklar -> visningsnamn
 const RESULT_LABELS = {
-  "allokerade":       "Oppna allokerade",
+  "allokerade":       "Oppna allokerade pallar",
   "nearmiss":         "Oppna near-miss",
   "pallplatser":      "Oppna pallplatser",
-  "refill":           "Oppna pafyllning",
+  "refill":           "Oppna refill",
   "hib-koppling":     "Oppna HIB-koppling",
   "orderkontroll":    "Oppna orderkontroll",
   "dispatchkontroll": "Oppna dispatchkontroll",
   "eftersok":         "Oppna eftersok",
-  "prognos":          "Oppna prognos vs autoplock",
+  "prognos":          "Oppna prognos",
   "sales":            "Oppna forsaljningsinsikter",
+};
+
+const ACTION_REQUIREMENTS = {
+  "allokering": [
+    { type: "file", key: "orders", label: "Bestallningslinjer (CSV)" },
+    { type: "file", key: "buffer", label: "Buffertpallar (CSV)" },
+  ],
+  "hib-koppling": [
+    { type: "file", key: "orders", label: "Bestallningslinjer (CSV)" },
+    { type: "file", key: "overview", label: "Orderoversikt (CSV)" },
+  ],
+  "orderkontroll": [
+    { type: "file", key: "overview", label: "Orderoversikt (CSV)" },
+  ],
+  "dispatchkontroll": [
+    { type: "file", key: "overview", label: "Orderoversikt (CSV)" },
+    { type: "file", key: "dispatch", label: "Dispatchpallar (CSV)" },
+  ],
+  "eftersok": [
+    { type: "file", key: "wms_receive", label: "Mottagningslogg (CSV)" },
+    { type: "input", key: "purchase-input", label: "Inkopsnummer" },
+    { type: "input", key: "article-input", label: "Artikelnummer" },
+  ],
+};
+
+const OPEN_RESULT_ORDER = [
+  "allokerade",
+  "nearmiss",
+  "pallplatser",
+  "prognos",
+  "refill",
+  "hib-koppling",
+  "orderkontroll",
+  "dispatchkontroll",
+  "eftersok",
+];
+
+const OPEN_BUTTON_HINTS = {
+  "allokerade": "Tryck forst: Kor allokering",
+  "nearmiss": "Tryck forst: Kor allokering",
+  "pallplatser": "Tryck forst: Kor allokering",
+  "refill": "Tryck forst: Kor allokering",
+  "hib-koppling": "Tryck forst: Kor HIB-koppling",
+  "orderkontroll": "Tryck forst: Kontrollera orderoversikt",
+  "dispatchkontroll": "Tryck forst: Kontrollera dispatchpallar",
+  "eftersok": "Tryck forst: Eftersok",
+  "prognos": "Ladda upp Prognos eller Kampanjvolymer forst",
 };
 
 // ---------------------------------------------------------------------------
@@ -71,10 +121,12 @@ const RESULT_LABELS = {
 let sessionId = null;
 let sseSource = null;
 let sseReconnectTimer = null;
+let sseReconnectLogAt = 0;
 let fileStatuses = {};  // key -> filename | null
 let availableResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
 let selectedFilters = { bolag: [], ordertyp: [] };
+let actionMissingByJob = {}; // { jobId: [missing labels] }
 let classifierStatusPoll = null;
 let classifierConfig = null;
 let classifierSessionId = null;
@@ -116,15 +168,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   await refreshFileStatus();
   await refreshFilterOptions();
   await refreshResultStatus();
-  await checkAskCsvAgentHealth();
-  await initClassifierWeb();
-
-  if (classifierStatusPoll) {
-    clearInterval(classifierStatusPoll);
+  await refreshOrdersaldoButtonState();
+  if (ENABLE_ASK_CSV) {
+    await checkAskCsvAgentHealth();
   }
-  classifierStatusPoll = setInterval(() => {
-    refreshClassifierSessionState(false).catch(() => {});
-  }, 15000);
+  syncActionButtonsState();
+  bindActionInputWatchers();
+  bindResultPreviewControls();
+  await refreshAllocationPreview(false);
 
   // Initialisera Bootstrap-tooltips
   initTooltips();
@@ -217,7 +268,7 @@ function buildFileRow(slot) {
 }
 
 function isAskFetchableSlot(fileKey) {
-  return ASK_FETCHABLE_KEYS.has(fileKey);
+  return SHOW_ASK_FETCH_BUTTONS && ASK_FETCHABLE_KEYS.has(fileKey);
 }
 
 function viewNameFromSlotLabel(label) {
@@ -255,9 +306,12 @@ async function uploadFile(fileKey, file) {
     setBadge(fileKey, data.filename, true);
     appendLog(`Fil uppladdad: [${fileKey}] ${data.filename}`);
     await refreshFilterOptions();
+    await refreshOrdersaldoButtonState();
+    syncActionButtonsState();
   } catch (e) {
     setBadge(fileKey, "FEL", false);
     appendLog(`Fel vid uppladdning av ${fileKey}: ${e}`);
+    syncActionButtonsState();
   }
 }
 
@@ -268,6 +322,8 @@ async function removeFile(fileKey) {
     setBadge(fileKey, "Ej fil", false);
     appendLog(`Fil borttagen: [${fileKey}]`);
     await refreshFilterOptions();
+    await refreshOrdersaldoButtonState();
+    syncActionButtonsState();
   } catch (e) {
     appendLog(`Fel vid borttagning av ${fileKey}: ${e}`);
   }
@@ -281,6 +337,7 @@ async function refreshFileStatus() {
       fileStatuses[key] = filename;
       setBadge(key, filename || "Ej fil", !!filename);
     }
+    syncActionButtonsState();
   } catch (e) {
     // Tyst fel
   }
@@ -307,6 +364,7 @@ function setBadge(key, text, loaded) {
 let askInitPromise = null;
 
 async function checkAskCsvAgentHealth() {
+  if (!ENABLE_ASK_CSV) return;
   try {
     const resp = await fetch(`${API}/api/ask-csv/health`);
     if (!resp.ok) throw new Error("agent ej nåbar");
@@ -322,6 +380,7 @@ async function checkAskCsvAgentHealth() {
 }
 
 async function initAskCsvAgent(options = {}) {
+  if (!ENABLE_ASK_CSV) return false;
   const silent = !!options.silent;
   if (askInitPromise) return askInitPromise;
 
@@ -366,6 +425,10 @@ async function initAskCsvAgent(options = {}) {
 }
 
 async function fetchAskCsvToSlot(fileKey, slotLabel) {
+  if (!ENABLE_ASK_CSV) {
+    appendLog("ASK CSV ar avstangt i denna build.");
+    return;
+  }
   const btn = document.getElementById(`btn-ask-fetch-${fileKey}`);
   const original = btn ? btn.textContent : "Hämta CSV";
   if (btn) {
@@ -550,11 +613,74 @@ function saveFilters() {
   appendLog(`Filter uppdaterat: bolag=[${filters.bolag.join(",")}], ordertyp=[${filters.ordertyp.join(",")}]`);
 }
 
+function setButtonLockState(btn, locked, hintText) {
+  if (!btn) return;
+  if (!btn.dataset.baseTitle) {
+    btn.dataset.baseTitle = btn.title || "";
+  }
+  btn.dataset.locked = locked ? "1" : "0";
+  btn.classList.toggle("btn-soft-disabled", !!locked);
+  btn.setAttribute("aria-disabled", locked ? "true" : "false");
+  if (locked) {
+    btn.title = hintText || "Saknar indata";
+  } else {
+    btn.title = btn.dataset.baseTitle || "";
+  }
+}
+
+function getMissingRequirements(job) {
+  const reqs = ACTION_REQUIREMENTS[job] || [];
+  const missing = [];
+  reqs.forEach(req => {
+    if (req.type === "file") {
+      if (!fileStatuses[req.key]) missing.push(req.label);
+      return;
+    }
+    if (req.type === "input") {
+      const el = document.getElementById(req.key);
+      if (!el || !String(el.value || "").trim()) missing.push(req.label);
+    }
+  });
+  return missing;
+}
+
+function syncActionButtonsState() {
+  actionMissingByJob = {};
+  Object.keys(ACTION_REQUIREMENTS).forEach(job => {
+    const btn = document.getElementById(`btn-${job}`);
+    if (!btn) return;
+    const missing = getMissingRequirements(job);
+    actionMissingByJob[job] = missing;
+    if (missing.length > 0) {
+      setButtonLockState(btn, true, `Saknar filer: ${missing.join(", ")}`);
+    } else {
+      setButtonLockState(btn, false, "");
+    }
+  });
+  initTooltips();
+}
+
+function bindActionInputWatchers() {
+  ["purchase-input", "article-input"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.boundActionWatcher === "1") return;
+    el.addEventListener("input", () => syncActionButtonsState());
+    el.dataset.boundActionWatcher = "1";
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Korning
 // ---------------------------------------------------------------------------
 
 async function runJob(job) {
+  const missing = getMissingRequirements(job);
+  if (missing.length > 0) {
+    appendLog(`Saknar filer: ${missing.join(", ")}`);
+    syncActionButtonsState();
+    return;
+  }
+
   const btn = document.getElementById(`btn-${job}`);
   if (btn) {
     btn.disabled = true;
@@ -598,6 +724,7 @@ function resetJobButton(job) {
     btn.textContent = btn.dataset.originalText || btn.textContent;
     initTooltips();
   }
+  syncActionButtonsState();
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +749,9 @@ function connectSSE() {
     if (msg.startsWith("__RESULT:")) {
       const key = msg.replace("__RESULT:", "").replace(/__/g, "").trim();
       activateResultButton(key);
+      if (key === "allokerade") {
+        refreshAllocationPreview(true).catch(() => {});
+      }
       return;
     }
 
@@ -630,10 +760,13 @@ function connectSSE() {
       // Aterstall alla korningsknappar
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
-      refreshResultStatus();
+      refreshResultStatus().then(() => refreshAllocationPreview(false)).catch(() => {});
+      refreshOrdersaldoButtonState().catch(() => {});
       if (msg === "__DONE__") {
         // Uppdatera ordersaldo-listor efter avslutad korning
-        fetch(`${API}/api/ordersaldo/refresh/${sessionId}`, { method: "POST" }).catch(() => {});
+        fetch(`${API}/api/ordersaldo/refresh/${sessionId}`, { method: "POST" })
+          .then(() => refreshOrdersaldoButtonState().catch(() => {}))
+          .catch(() => {});
       }
       return;
     }
@@ -654,7 +787,11 @@ function connectSSE() {
       try {
         await ensureSession();
       } catch (e) {
-        appendLog(`SSE reconnect misslyckades: ${e}`);
+        const now = Date.now();
+        if (now - sseReconnectLogAt > 30000) {
+          appendLog(`SSE reconnect misslyckades: ${e}`);
+          sseReconnectLogAt = now;
+        }
       }
       connectSSE();
     }, 3000);
@@ -701,9 +838,6 @@ function setMainPage(pageId) {
   document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
-  if (pageId === "classifier-page") {
-    refreshClassifierSessionState(false).catch(() => {});
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,7 +1227,7 @@ async function refreshResultStatus() {
   try {
     const resp = await fetch(`${API}/api/run/status/${sessionId}`);
     const data = await resp.json();
-    (data.results || []).forEach(k => availableResults.add(k));
+    availableResults = new Set(data.results || []);
     renderResultButtons();
   } catch (e) {
     // Tyst fel
@@ -1102,27 +1236,171 @@ async function refreshResultStatus() {
 
 function renderResultButtons() {
   const container = document.getElementById("result-buttons");
+  if (!container) return;
   container.innerHTML = "";
-  availableResults.forEach(key => {
+
+  OPEN_RESULT_ORDER.forEach(key => {
+    const isReady = availableResults.has(key);
     const label = RESULT_LABELS[key] || `Oppna ${key}`;
     const btn = document.createElement("button");
-    btn.className = "btn btn-success btn-sm";
+    btn.className = `btn btn-sm ${isReady ? "btn-success" : "btn-outline-secondary"}`;
     btn.textContent = label;
-    btn.title = `Ladda ner och öppna ${label.replace(/^Oppna\s+/i, "")} som Excel-fil`;
+    btn.dataset.resultKey = key;
     btn.setAttribute("data-bs-toggle", "tooltip");
-    btn.onclick = () => downloadResult(key);
+    btn.onclick = () => openResult(key);
+    if (isReady) {
+      btn.title = `Ladda ner och oppna ${label.replace(/^Oppna\\s+/i, "")} som Excel-fil`;
+      setButtonLockState(btn, false, "");
+    } else {
+      setButtonLockState(btn, true, OPEN_BUTTON_HINTS[key] || "Resultatet ar inte tillgangligt an.");
+    }
     container.appendChild(btn);
   });
+
+  // Visar ovantade/extra resultatycklar om backend returnerar fler.
+  Array.from(availableResults)
+    .filter(key => !OPEN_RESULT_ORDER.includes(key))
+    .forEach(key => {
+      const label = RESULT_LABELS[key] || `Oppna ${key}`;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-success btn-sm";
+      btn.textContent = label;
+      btn.title = `Ladda ner och oppna ${label.replace(/^Oppna\\s+/i, "")} som Excel-fil`;
+      btn.setAttribute("data-bs-toggle", "tooltip");
+      btn.onclick = () => openResult(key);
+      container.appendChild(btn);
+    });
+
   initTooltips();
+}
+
+function openResult(key) {
+  if (!availableResults.has(key)) {
+    appendLog(OPEN_BUTTON_HINTS[key] || `Resultat '${key}' ar inte tillgangligt an.`);
+    return;
+  }
+  downloadResult(key);
 }
 
 function downloadResult(key) {
   window.open(`${API}/api/download/${sessionId}/${key}`, "_blank");
 }
 
+function bindResultPreviewControls() {
+  const btn = document.getElementById("btn-preview-refresh");
+  if (!btn || btn.dataset.boundPreview === "1") return;
+  btn.addEventListener("click", () => {
+    refreshAllocationPreview(true).catch((e) => appendLog(`Kunde inte hamta preview: ${e}`));
+  });
+  btn.dataset.boundPreview = "1";
+}
+
+function clearAllocationPreview() {
+  const card = document.getElementById("allocation-preview-card");
+  const meta = document.getElementById("allocation-preview-meta");
+  const table = document.getElementById("allocation-preview-table");
+  if (meta) meta.textContent = "";
+  if (table) table.innerHTML = "";
+  if (card) {
+    card.style.display = "none";
+    card.dataset.previewLoaded = "0";
+  }
+}
+
+function renderAllocationPreview(payload) {
+  const card = document.getElementById("allocation-preview-card");
+  const meta = document.getElementById("allocation-preview-meta");
+  const table = document.getElementById("allocation-preview-table");
+  if (!card || !meta || !table) return;
+
+  const columns = Array.isArray(payload.columns) ? payload.columns : [];
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const rowCount = Number(payload.row_count || 0);
+  const totalRows = Number(payload.total_rows || rowCount);
+  const sheetName = payload.sheet_name || "Sheet1";
+
+  card.style.display = "";
+
+  if (columns.length === 0) {
+    meta.textContent = "Resultat finns men preview saknar kolumner.";
+    table.innerHTML = "";
+    return;
+  }
+
+  meta.textContent = `Visar ${rowCount} av ${totalRows} rader (sheet: ${sheetName}).`;
+
+  const theadCells = columns.map(c => `<th scope="col">${String(c)}</th>`).join("");
+  const bodyRows = rows.map(r => {
+    const cells = columns.map(c => `<td>${String((r && r[c]) ?? "")}</td>`).join("");
+    return `<tr>${cells}</tr>`;
+  }).join("");
+
+  table.innerHTML = `
+    <thead><tr>${theadCells}</tr></thead>
+    <tbody>${bodyRows}</tbody>
+  `;
+}
+
+async function refreshAllocationPreview(forceFetch = false) {
+  if (!availableResults.has("allokerade")) {
+    clearAllocationPreview();
+    return;
+  }
+  const card = document.getElementById("allocation-preview-card");
+  if (!card) return;
+  if (!forceFetch && card.dataset.previewLoaded === "1") return;
+
+  try {
+    const resp = await fetch(`${API}/api/result/preview/${sessionId}/allokerade?limit=120`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+    renderAllocationPreview(data);
+    card.dataset.previewLoaded = "1";
+  } catch (e) {
+    clearAllocationPreview();
+    appendLog(`Kunde inte lasa allokeringsresultat i webben: ${e}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Kopiera listor
 // ---------------------------------------------------------------------------
+
+function setOrdersaldoCopyButtonState(buttonId, count, emptyHint) {
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  btn.disabled = !(count > 0);
+  if (!btn.dataset.baseTitle) {
+    btn.dataset.baseTitle = btn.title || "";
+  }
+  if (count > 0) {
+    btn.title = btn.dataset.baseTitle || "";
+    btn.classList.remove("btn-soft-disabled");
+  } else {
+    btn.title = emptyHint || "Listan ar tom.";
+    btn.classList.add("btn-soft-disabled");
+  }
+}
+
+async function refreshOrdersaldoButtonState() {
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(`${API}/api/ordersaldo/list1/${sessionId}`),
+      fetch(`${API}/api/ordersaldo/list2/${sessionId}`),
+    ]);
+    if (!r1.ok || !r2.ok) throw new Error("kunde inte hamta listsaldo");
+    const d1 = await r1.json().catch(() => ({}));
+    const d2 = await r2.json().catch(() => ({}));
+    const c1 = Array.isArray(d1.values) ? d1.values.length : 0;
+    const c2 = Array.isArray(d2.values) ? d2.values.length : 0;
+    setOrdersaldoCopyButtonState("btn-kompletta", c1, "Lista1 ar tom.");
+    setOrdersaldoCopyButtonState("btn-pafyllning", c2, "Lista2 ar tom.");
+  } catch (e) {
+    setOrdersaldoCopyButtonState("btn-kompletta", 0, "Lista1 ar tom.");
+    setOrdersaldoCopyButtonState("btn-pafyllning", 0, "Lista2 ar tom.");
+  }
+  initTooltips();
+}
 
 async function copyList(listId) {
   try {
@@ -1159,9 +1437,12 @@ async function resetCache() {
     });
     availableResults.clear();
     renderResultButtons();
+    await refreshAllocationPreview(false);
     document.getElementById("log-output").textContent = "";
     appendLog("Cache rensad (filer och resultat borttagna).");
     await refreshFilterOptions();
+    await refreshOrdersaldoButtonState();
+    syncActionButtonsState();
   } catch (e) {
     appendLog(`FEL vid rensning: ${e}`);
   }
