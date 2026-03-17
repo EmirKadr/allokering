@@ -1,0 +1,7 @@
+{
+  "lists": {
+    "gg":   { "label": "Granngården LKON",    "users": [] },
+    "mg":   { "label": "Mestergruppen LKON",  "users": [] },
+    "both": { "label": "Båda",                "users": [] }
+  }
+}

@@ -15,7 +15,7 @@
     })();
   </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260317d">
+  <link rel="stylesheet" href="style.css?v=20260317e">
 </head>
 <body>
 <div class="container-fluid p-3">
@@ -30,8 +30,12 @@
       <li class="nav-item">
         <button class="nav-link" type="button" data-page="dela-page">Dela</button>
       </li>
+      <li class="nav-item" id="admin-tab-item" style="display:none">
+        <button class="nav-link" type="button" data-page="admin-page">Admin</button>
+      </li>
     </ul>
     <div class="top-controls">
+      <span id="user-display" class="text-muted small me-2"></span>
       <button class="btn btn-outline-secondary btn-sm theme-toggle-btn" id="theme-toggle-btn" onclick="toggleTheme()"
               data-bs-toggle="tooltip" title="Växla mellan ljust och mörkt läge">
         Mörkt läge
@@ -39,6 +43,9 @@
       <button class="btn btn-outline-secondary btn-sm top-cache-btn" onclick="resetCache()"
               data-bs-toggle="tooltip" title="Rensa alla uppladdade filer, resultat och loggar">
         Rensa cache
+      </button>
+      <button class="btn btn-outline-danger btn-sm" id="logout-btn" onclick="doLogout()">
+        Logga ut
       </button>
     </div>
   </div>
@@ -210,6 +217,12 @@
     </div>
   </div>
 
+  <div id="admin-page" class="main-page-pane">
+    <div class="row g-3" id="admin-lists-container">
+      <!-- Genereras av app.js -->
+    </div>
+  </div>
+
   <!-- Delad loggruta -->
   <pre id="log-output" class="bg-dark text-light p-2 mb-0"
        style="height:220px;overflow-y:auto;font-size:12px;border-radius:4px;"></pre>
@@ -217,6 +230,6 @@
 </div><!-- /container -->
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="app.js?v=20260317d"></script>
+<script src="app.js?v=20260317e"></script>
 </body>
 </html>

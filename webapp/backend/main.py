@@ -27,9 +27,9 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests as req
-from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -37,6 +37,21 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from session_store import SessionData, create_session, delete_session, get_session
+from auth import (
+    VALID_LISTS,
+    create_auth_session,
+    delete_auth_session,
+    extract_token,
+    find_user,
+    get_auth_session,
+    load_users,
+    require_admin,
+    require_auth,
+    save_users,
+    ADMIN_CODE,
+    ADMIN_EMAIL,
+    ADMIN_USERNAME,
+)
 try:
     from classifier_v2 import router as classifier_v2_router
     _classifier_v2_import_error: Optional[Exception] = None
@@ -697,6 +712,125 @@ def _build_web_classifier_state(session: WebClassifierSession) -> Dict[str, Any]
 def _find_web_classifier_session(session_id: str) -> Optional[WebClassifierSession]:
     with _web_classifier_lock:
         return _web_classifier_sessions.get(session_id)
+
+
+# ---------------------------------------------------------------------------
+# Auth middleware
+# ---------------------------------------------------------------------------
+
+_AUTH_EXEMPT = {"/api/auth/login"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Tillåt inloggning och icke-API-anrop (statiska filer, login.html etc.)
+    if path in _AUTH_EXEMPT or not path.startswith("/api/"):
+        return await call_next(request)
+    # Extrahera token
+    auth_header = request.headers.get("authorization")
+    token_param = request.query_params.get("token")
+    token = extract_token(auth_header, token_param)
+    if not token or not get_auth_session(token):
+        return JSONResponse(status_code=401, content={"detail": "Ej inloggad"})
+    request.state.auth_user = get_auth_session(token)
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    identifier: str
+    code: str = ""
+
+
+@app.post("/api/auth/login")
+def api_auth_login(body: LoginRequest):
+    ident = body.identifier.strip()
+    if not ident:
+        raise HTTPException(400, "Ange e-post eller användarnamn")
+
+    # Kolla om admin
+    ident_lower = ident.lower()
+    if ident_lower in (ADMIN_EMAIL.lower(), ADMIN_USERNAME.lower()):
+        if not body.code:
+            return {"needs_code": True}
+        if body.code != ADMIN_CODE:
+            raise HTTPException(401, "Fel kod")
+        user_info = find_user(ident)
+        token = create_auth_session(user_info)
+        return {"token": token, "role": "admin", "lists": list(VALID_LISTS), "username": ADMIN_USERNAME}
+
+    user_info = find_user(ident)
+    if not user_info:
+        return {"not_authorized": True}
+
+    token = create_auth_session(user_info)
+    return {
+        "token": token,
+        "role": user_info["role"],
+        "lists": user_info["lists"],
+        "username": user_info["username"],
+    }
+
+
+@app.get("/api/auth/me")
+def api_auth_me(authorization: str = Header(None), token: str = Query(None)):
+    t = extract_token(authorization, token)
+    user = require_auth(t)
+    return {"username": user["username"], "email": user.get("email", ""), "role": user["role"], "lists": user["lists"]}
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(authorization: str = Header(None)):
+    t = extract_token(authorization)
+    if t:
+        delete_auth_session(t)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints – användarlista
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/admin/users")
+def api_admin_get_users(authorization: str = Header(None)):
+    require_admin(extract_token(authorization))
+    return load_users()["lists"]
+
+
+@app.post("/api/admin/users/{list_key}")
+def api_admin_add_user(list_key: str, authorization: str = Header(None), username: str = Form(...), email: str = Form("")):
+    require_admin(extract_token(authorization))
+    if list_key not in VALID_LISTS:
+        raise HTTPException(400, f"Ogiltig lista: {list_key}")
+    data = load_users()
+    users = data["lists"][list_key]["users"]
+    # Kolla dubbletter
+    uname_lower = username.strip().lower()
+    for u in users:
+        if u["username"].lower() == uname_lower:
+            raise HTTPException(409, f"Användaren '{username}' finns redan i listan")
+    users.append({"username": username.strip(), "email": email.strip()})
+    save_users(data)
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{list_key}/{username}")
+def api_admin_delete_user(list_key: str, username: str, authorization: str = Header(None)):
+    require_admin(extract_token(authorization))
+    if list_key not in VALID_LISTS:
+        raise HTTPException(400, f"Ogiltig lista: {list_key}")
+    data = load_users()
+    users = data["lists"][list_key]["users"]
+    uname_lower = username.strip().lower()
+    data["lists"][list_key]["users"] = [u for u in users if u["username"].lower() != uname_lower]
+    save_users(data)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

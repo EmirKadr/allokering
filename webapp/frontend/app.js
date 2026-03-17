@@ -10,6 +10,24 @@ const API = (() => {
   // Fallback if frontend is opened as file://
   return "http://localhost:8000";
 })();
+// ---------------------------------------------------------------------------
+// Global fetch interceptor – bifoga auth-token på alla anrop
+// ---------------------------------------------------------------------------
+const _origFetch = window.fetch;
+window.fetch = function (url, opts) {
+  opts = opts || {};
+  const token = localStorage.getItem("allok_auth_token");
+  if (token) {
+    if (opts.headers instanceof Headers) {
+      if (!opts.headers.has("Authorization")) opts.headers.set("Authorization", "Bearer " + token);
+    } else {
+      opts.headers = Object.assign({}, opts.headers || {});
+      if (!opts.headers["Authorization"]) opts.headers["Authorization"] = "Bearer " + token;
+    }
+  }
+  return _origFetch.call(window, url, opts);
+};
+
 const ASK_URL = "https://noeffectui-frey.nowastelogistics.com/desktop";
 const ASK_LOGIN_WAIT_SECONDS = 60 * 60; // 60 min
 const ASK_OPEN_VIA = "shortcut";        // alltid v+o
@@ -314,10 +332,27 @@ async function ensureSession() {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
+  // --- Auth gate ---
+  const authToken = localStorage.getItem("allok_auth_token");
+  if (!authToken) { window.location.href = "/login.html"; return; }
+  try {
+    const meResp = await _origFetch(`${API}/api/auth/me`, {
+      headers: { "Authorization": "Bearer " + authToken }
+    });
+    if (!meResp.ok) throw new Error();
+    window._currentUser = await meResp.json();
+  } catch {
+    localStorage.removeItem("allok_auth_token");
+    localStorage.removeItem("allok_user");
+    window.location.href = "/login.html";
+    return;
+  }
+
   await ensureSession();
 
   applyTheme(getCurrentTheme());
   setupMainTabs();
+  setupAuth();
   renderFileRows();
   renderProgRows();
   renderWmsRows();
@@ -952,7 +987,8 @@ function connectSSE() {
     clearTimeout(sseReconnectTimer);
     sseReconnectTimer = null;
   }
-  sseSource = new EventSource(`${API}/api/log/stream/${sessionId}`);
+  const _sseToken = localStorage.getItem("allok_auth_token") || "";
+  sseSource = new EventSource(`${API}/api/log/stream/${sessionId}?token=${encodeURIComponent(_sseToken)}`);
   sseSource.onmessage = (e) => {
     const msg = e.data.replace(/\\n/g, "\n");
 
@@ -1057,6 +1093,7 @@ function setMainPage(pageId) {
   document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
+  if (pageId === "admin-page") renderAdminPanel();
 }
 
 function getActiveMainPage() {
@@ -1832,4 +1869,133 @@ function matchFileToSlot(filename) {
   if (lower.includes("overview") || lower.includes("oversikt") || lower.includes("\u00f6versikt") || lower.includes("order_overview")) return "overview";
   if (lower.includes("dispatch")) return "dispatch";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Auth: setup, admin panel, logout
+// ---------------------------------------------------------------------------
+
+function setupAuth() {
+  const user = window._currentUser;
+  if (!user) return;
+
+  // Visa användarnamn
+  const disp = document.getElementById("user-display");
+  if (disp) disp.textContent = user.username || user.email || "";
+
+  // Visa admin-flik om admin
+  if (user.role === "admin") {
+    const tab = document.getElementById("admin-tab-item");
+    if (tab) tab.style.display = "";
+  }
+}
+
+async function renderAdminPanel() {
+  const container = document.getElementById("admin-lists-container");
+  if (!container) return;
+  container.innerHTML = '<div class="col-12"><p class="text-muted">Laddar...</p></div>';
+
+  try {
+    const resp = await fetch(`${API}/api/admin/users`);
+    if (!resp.ok) throw new Error("Kunde inte hämta användare");
+    const lists = await resp.json();
+
+    container.innerHTML = "";
+    const listKeys = ["gg", "mg", "both"];
+    for (const key of listKeys) {
+      const info = lists[key];
+      if (!info) continue;
+      const col = document.createElement("div");
+      col.className = "col-12 col-md-4";
+      col.innerHTML = `
+        <div class="card mb-3">
+          <div class="card-header fw-bold">${esc(info.label)}</div>
+          <div class="card-body py-2">
+            <table class="table table-sm table-bordered mb-2">
+              <thead><tr><th>Användarnamn</th><th>E-post</th><th></th></tr></thead>
+              <tbody id="admin-list-${key}"></tbody>
+            </table>
+            <div class="d-flex gap-2 align-items-end">
+              <div>
+                <label class="form-label mb-0 small">Användarnamn</label>
+                <input type="text" class="form-control form-control-sm" id="admin-add-user-${key}" placeholder="ex. johand"
+                       style="background:var(--input-bg);color:var(--input-text);border-color:var(--input-border);">
+              </div>
+              <div>
+                <label class="form-label mb-0 small">E-post</label>
+                <input type="text" class="form-control form-control-sm" id="admin-add-email-${key}" placeholder="ex. johan@example.com"
+                       style="background:var(--input-bg);color:var(--input-text);border-color:var(--input-border);">
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="adminAddUser('${key}')">Lägg till</button>
+            </div>
+          </div>
+        </div>`;
+      container.appendChild(col);
+
+      // Fyll tabellen
+      const tbody = col.querySelector(`#admin-list-${key}`);
+      for (const u of (info.users || [])) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${esc(u.username)}</td><td>${esc(u.email || "")}</td>
+          <td style="width:40px"><button class="btn btn-outline-danger btn-sm py-0 px-1"
+            onclick="adminDeleteUser('${key}','${esc(u.username)}')">X</button></td>`;
+        tbody.appendChild(tr);
+      }
+    }
+  } catch (err) {
+    container.innerHTML = `<div class="col-12"><p class="text-danger">${esc(String(err))}</p></div>`;
+  }
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function adminAddUser(listKey) {
+  const uEl = document.getElementById(`admin-add-user-${listKey}`);
+  const eEl = document.getElementById(`admin-add-email-${listKey}`);
+  const username = (uEl ? uEl.value : "").trim();
+  const email = (eEl ? eEl.value : "").trim();
+  if (!username) { alert("Ange ett användarnamn"); return; }
+
+  const form = new FormData();
+  form.append("username", username);
+  form.append("email", email);
+
+  try {
+    const resp = await fetch(`${API}/api/admin/users/${listKey}`, { method: "POST", body: form });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      alert(d.detail || "Kunde inte lägga till användaren");
+      return;
+    }
+    if (uEl) uEl.value = "";
+    if (eEl) eEl.value = "";
+    await renderAdminPanel();
+  } catch (err) {
+    alert("Fel: " + err);
+  }
+}
+
+async function adminDeleteUser(listKey, username) {
+  try {
+    const resp = await fetch(`${API}/api/admin/users/${listKey}/${encodeURIComponent(username)}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      alert(d.detail || "Kunde inte ta bort användaren");
+      return;
+    }
+    await renderAdminPanel();
+  } catch (err) {
+    alert("Fel: " + err);
+  }
+}
+
+function doLogout() {
+  fetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
+  localStorage.removeItem("allok_auth_token");
+  localStorage.removeItem("allok_user");
+  window.location.href = "/login.html";
 }
