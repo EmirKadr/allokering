@@ -9,14 +9,20 @@
 </head>
 <body>
 <div class="container-fluid p-3">
-  <ul class="nav nav-tabs mb-3" id="main-tabs">
-    <li class="nav-item">
-      <button class="nav-link active" type="button" data-page="allokering-page">Allokering</button>
-    </li>
-    <li class="nav-item">
-      <button class="nav-link" type="button" data-page="eftersok-page">Eftersök</button>
-    </li>
-  </ul>
+  <div class="top-bar mb-3">
+    <ul class="nav nav-tabs mb-0" id="main-tabs">
+      <li class="nav-item">
+        <button class="nav-link active" type="button" data-page="allokering-page">Allokering</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" type="button" data-page="eftersok-page">Eftersök</button>
+      </li>
+    </ul>
+    <button class="btn btn-outline-secondary btn-sm top-cache-btn" onclick="resetCache()"
+            data-bs-toggle="tooltip" title="Rensa alla uppladdade filer, resultat och loggar">
+      Rensa cache
+    </button>
+  </div>
 
   <div id="allokering-page" class="main-page-pane active">
     <div class="row g-3">
@@ -48,6 +54,26 @@
           </div>
         </div>
 
+      </div>
+
+      <div class="col-auto">
+        <div class="card mb-2 kalltyp-sidebar-card" id="kalltyp-summary-card" style="display:none">
+          <div class="card-header">
+            <span class="fw-bold">Summering per Källtyp</span>
+          </div>
+          <div class="card-body py-2">
+            <table class="table table-sm table-bordered mb-0" id="kalltyp-summary-table">
+              <thead>
+                <tr>
+                  <th scope="col">Källtyp</th>
+                  <th scope="col" class="text-end">antal rader</th>
+                  <th scope="col" class="text-end">antal kolli</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- Höger: Dela -->
@@ -104,33 +130,11 @@
               data-bs-toggle="tooltip" title="Kopiera artikelnummer som behöver påfyllning från lager">
         Påfyllningsbehov
       </button>
-      <button class="btn btn-outline-secondary btn-sm ms-3" onclick="resetCache()"
-              data-bs-toggle="tooltip" title="Rensa alla uppladdade filer, resultat och loggar">
-        Rensa cache
-      </button>
     </div>
 
     <!-- Öppna resultat-knappar (aktiveras dynamiskt) -->
     <div class="d-flex gap-2 flex-wrap mb-2" id="result-buttons-allokering">
       <!-- Genereras av app.js efter körning -->
-    </div>
-
-    <div class="card mb-2" id="kalltyp-summary-card" style="display:none">
-      <div class="card-header">
-        <span class="fw-bold">Summering per Källtyp</span>
-      </div>
-      <div class="card-body py-2">
-        <table class="table table-sm table-bordered mb-0" id="kalltyp-summary-table">
-          <thead>
-            <tr>
-              <th scope="col">Källtyp</th>
-              <th scope="col" class="text-end">antal rader</th>
-              <th scope="col" class="text-end">antal kolli</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
     </div>
   </div>
 

@@ -11,6 +11,37 @@ body {
   display: block;
 }
 
+.top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#main-tabs {
+  flex: 1 1 auto;
+}
+
+.top-cache-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.kalltyp-sidebar-card {
+  min-width: 280px;
+  max-width: 320px;
+}
+
+.kalltyp-sidebar-card .table {
+  font-size: 12px;
+}
+
+.kalltyp-sidebar-card th,
+.kalltyp-sidebar-card td {
+  padding: 0.35rem 0.45rem;
+}
+
 #main-tabs .nav-link {
   font-size: 13px;
   padding-top: 0.35rem;
