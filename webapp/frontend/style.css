@@ -123,16 +123,6 @@ body {
   text-decoration: none !important;
 }
 
-.allocation-preview-wrap {
-  max-height: 320px;
-}
-
-#allocation-preview-table th,
-#allocation-preview-table td {
-  font-size: 11px;
-  white-space: nowrap;
-}
-
 /* Filter-checkboxar */
 .form-check-sm .form-check-input {
   width: 0.85em;

@@ -181,9 +181,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   syncActionButtonsState();
   bindActionInputWatchers();
-  bindResultPreviewControls();
-  await refreshAllocationPreview(false);
-
   // Initialisera Bootstrap-tooltips
   initTooltips();
 });
@@ -765,9 +762,6 @@ function connectSSE() {
     if (msg.startsWith("__RESULT:")) {
       const key = msg.replace("__RESULT:", "").replace(/__/g, "").trim();
       activateResultButton(key);
-      if (key === "allokerade") {
-        refreshAllocationPreview(true).catch(() => {});
-      }
       return;
     }
 
@@ -776,7 +770,7 @@ function connectSSE() {
       // Aterstall alla korningsknappar
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
-      refreshResultStatus().then(() => refreshAllocationPreview(false)).catch(() => {});
+      refreshResultStatus().catch(() => {});
       refreshOrdersaldoButtonState().catch(() => {});
       if (msg === "__DONE__") {
         // Uppdatera ordersaldo-listor efter avslutad korning
@@ -1302,15 +1296,6 @@ function downloadResult(key) {
   window.open(`${API}/api/download/${sessionId}/${key}`, "_blank");
 }
 
-function bindResultPreviewControls() {
-  const btn = document.getElementById("btn-preview-refresh");
-  if (!btn || btn.dataset.boundPreview === "1") return;
-  btn.addEventListener("click", () => {
-    refreshAllocationPreview(true).catch((e) => appendLog(`Kunde inte hamta preview: ${e}`));
-  });
-  btn.dataset.boundPreview = "1";
-}
-
 // ---------------------------------------------------------------------------
 // Summering per Kalltyp
 // ---------------------------------------------------------------------------
@@ -1347,73 +1332,6 @@ function clearKalltypSummary() {
   const tbody = document.querySelector("#kalltyp-summary-table tbody");
   if (tbody) tbody.innerHTML = "";
   if (card) card.style.display = "none";
-}
-
-function clearAllocationPreview() {
-  const card = document.getElementById("allocation-preview-card");
-  const meta = document.getElementById("allocation-preview-meta");
-  const table = document.getElementById("allocation-preview-table");
-  if (meta) meta.textContent = "";
-  if (table) table.innerHTML = "";
-  if (card) {
-    card.style.display = "none";
-    card.dataset.previewLoaded = "0";
-  }
-}
-
-function renderAllocationPreview(payload) {
-  const card = document.getElementById("allocation-preview-card");
-  const meta = document.getElementById("allocation-preview-meta");
-  const table = document.getElementById("allocation-preview-table");
-  if (!card || !meta || !table) return;
-
-  const columns = Array.isArray(payload.columns) ? payload.columns : [];
-  const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const rowCount = Number(payload.row_count || 0);
-  const totalRows = Number(payload.total_rows || rowCount);
-  const sheetName = payload.sheet_name || "Sheet1";
-
-  card.style.display = "";
-
-  if (columns.length === 0) {
-    meta.textContent = "Resultat finns men preview saknar kolumner.";
-    table.innerHTML = "";
-    return;
-  }
-
-  meta.textContent = `Visar ${rowCount} av ${totalRows} rader (sheet: ${sheetName}).`;
-
-  const theadCells = columns.map(c => `<th scope="col">${String(c)}</th>`).join("");
-  const bodyRows = rows.map(r => {
-    const cells = columns.map(c => `<td>${String((r && r[c]) ?? "")}</td>`).join("");
-    return `<tr>${cells}</tr>`;
-  }).join("");
-
-  table.innerHTML = `
-    <thead><tr>${theadCells}</tr></thead>
-    <tbody>${bodyRows}</tbody>
-  `;
-}
-
-async function refreshAllocationPreview(forceFetch = false) {
-  if (!availableResults.has("allokerade")) {
-    clearAllocationPreview();
-    return;
-  }
-  const card = document.getElementById("allocation-preview-card");
-  if (!card) return;
-  if (!forceFetch && card.dataset.previewLoaded === "1") return;
-
-  try {
-    const resp = await fetch(`${API}/api/result/preview/${sessionId}/allokerade?limit=120`);
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data.detail || resp.statusText);
-    renderAllocationPreview(data);
-    card.dataset.previewLoaded = "1";
-  } catch (e) {
-    clearAllocationPreview();
-    appendLog(`Kunde inte lasa allokeringsresultat i webben: ${e}`);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1491,7 +1409,6 @@ async function resetCache() {
     });
     availableResults.clear();
     renderResultButtons();
-    await refreshAllocationPreview(false);
     clearKalltypSummary();
     document.getElementById("log-output").textContent = "";
     appendLog("Cache rensad (filer och resultat borttagna).");
