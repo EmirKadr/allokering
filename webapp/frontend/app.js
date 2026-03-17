@@ -129,6 +129,8 @@ const OPEN_BUTTON_HINTS = {
   "prognos": "Ladda upp Prognos eller Kampanjvolymer först",
 };
 
+const THEME_STORAGE_KEY = "allok_theme";
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -146,6 +148,33 @@ let classifierStatusPoll = null;
 let classifierConfig = null;
 let classifierSessionId = null;
 let classifierDataFiles = {};
+
+function getCurrentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  const resolvedTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", resolvedTheme);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, resolvedTheme);
+  } catch (_e) {
+    // Tyst fel
+  }
+
+  const btn = document.getElementById("theme-toggle-btn");
+  if (btn) {
+    const isDark = resolvedTheme === "dark";
+    btn.textContent = isDark ? "Ljust läge" : "Mörkt läge";
+    btn.setAttribute("aria-pressed", isDark ? "true" : "false");
+    btn.title = isDark ? "Byt till ljust läge" : "Byt till mörkt läge";
+  }
+}
+
+function toggleTheme() {
+  applyTheme(getCurrentTheme() === "dark" ? "light" : "dark");
+  initTooltips();
+}
 
 // ---------------------------------------------------------------------------
 // Init
@@ -173,6 +202,7 @@ async function ensureSession() {
 window.addEventListener("DOMContentLoaded", async () => {
   await ensureSession();
 
+  applyTheme(getCurrentTheme());
   setupMainTabs();
   renderFileRows();
   renderProgRows();
