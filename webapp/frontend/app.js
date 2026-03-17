@@ -176,6 +176,44 @@ let availableResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
 let selectedFilters = { bolag: [], ordertyp: [] };
 let actionMissingByJob = {}; // { jobId: [missing labels] }
+
+// Per-tab session state
+const TAB_PAGE_IDS = ["allokering-page", "eftersok-page", "dela-page"];
+let tabSessions = {};      // pageId -> sessionId
+let tabStates = {};        // pageId -> { fileStatuses, availableResults, cachedFilterOptions, selectedFilters }
+
+function _initTabStates() {
+  TAB_PAGE_IDS.forEach(pid => {
+    tabStates[pid] = {
+      fileStatuses: {},
+      availableResults: new Set(),
+      cachedFilterOptions: {},
+      selectedFilters: { bolag: [], ordertyp: [] },
+    };
+  });
+}
+_initTabStates();
+
+function _saveTabState(pageId) {
+  if (!pageId) return;
+  tabStates[pageId] = {
+    fileStatuses: { ...fileStatuses },
+    availableResults: new Set(availableResults),
+    cachedFilterOptions: { ...cachedFilterOptions },
+    selectedFilters: { bolag: [...selectedFilters.bolag], ordertyp: [...selectedFilters.ordertyp] },
+  };
+}
+
+function _loadTabState(pageId) {
+  const s = tabStates[pageId];
+  if (!s) return;
+  fileStatuses = { ...s.fileStatuses };
+  availableResults = new Set(s.availableResults);
+  cachedFilterOptions = { ...s.cachedFilterOptions };
+  selectedFilters = { bolag: [...s.selectedFilters.bolag], ordertyp: [...s.selectedFilters.ordertyp] };
+}
+
+let _activePageId = "allokering-page";
 let classifierStatusPoll = null;
 let classifierConfig = null;
 let classifierSessionId = null;
@@ -231,6 +269,9 @@ function resetFrontendState(options = {}) {
   }
 
   ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
+
+  // Spara tillbaka till tabStates
+  _saveTabState(_activePageId);
 }
 
 async function readErrorDetail(resp) {
@@ -267,9 +308,12 @@ async function recoverExpiredSession(reason) {
 
   sessionRecoveryPromise = (async () => {
     const previousSessionId = sessionId;
+    // Nollställ bara aktiv flik
+    const pid = _activePageId;
+    tabSessions[pid] = null;
     sessionId = null;
     try {
-      sessionStorage.removeItem("allok_session_id");
+      sessionStorage.removeItem(`allok_session_${pid}`);
     } catch (_e) {
       // Tyst fel
     }
@@ -313,22 +357,28 @@ async function fetchWithSessionRecovery(url, options = {}, context = "") {
 // ---------------------------------------------------------------------------
 
 async function ensureSession() {
-  // Kontrollera om befintlig session fortfarande lever (servern kan ha startats om)
-  const stored = sessionStorage.getItem("allok_session_id");
-  if (stored) {
-    try {
-      const check = await fetch(`${API}/api/upload/${stored}`);
-      if (check.ok) {
-        sessionId = stored;
-        return;
-      }
-    } catch (e) { /* server nere eller session borta */ }
+  // Skapa/verifiera session för varje flik
+  for (const pid of TAB_PAGE_IDS) {
+    const storageKey = `allok_session_${pid}`;
+    const stored = sessionStorage.getItem(storageKey);
+    if (stored && !tabSessions[pid]) {
+      try {
+        const check = await fetch(`${API}/api/upload/${stored}`);
+        if (check.ok) {
+          tabSessions[pid] = stored;
+          continue;
+        }
+      } catch (e) { /* server nere eller session borta */ }
+    }
+    if (!tabSessions[pid]) {
+      const resp = await fetch(`${API}/api/session`, { method: "POST" });
+      const data = await resp.json();
+      tabSessions[pid] = data.session_id;
+      sessionStorage.setItem(storageKey, data.session_id);
+    }
   }
-  // Skapa ny session
-  const resp = await fetch(`${API}/api/session`, { method: "POST" });
-  const data = await resp.json();
-  sessionId = data.session_id;
-  sessionStorage.setItem("allok_session_id", sessionId);
+  // Sätt aktiv flik
+  sessionId = tabSessions[_activePageId] || tabSessions["allokering-page"];
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -1093,7 +1143,27 @@ function setMainPage(pageId) {
   document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
-  if (pageId === "admin-page") renderAdminPanel();
+  if (pageId === "admin-page") { renderAdminPanel(); return; }
+
+  // Spara state för föregående flik och ladda för ny
+  if (pageId !== _activePageId && TAB_PAGE_IDS.includes(pageId)) {
+    _saveTabState(_activePageId);
+    _activePageId = pageId;
+    sessionId = tabSessions[pageId] || sessionId;
+    _loadTabState(pageId);
+
+    // Uppdatera UI för nya flikens state
+    renderResultButtons();
+    renderFilterCard(cachedFilterOptions);
+    syncActionButtonsState();
+    connectSSE();
+
+    // Uppdatera flikens status från servern
+    refreshFileStatus();
+    refreshFilterOptions();
+    refreshResultStatus();
+    refreshOrdersaldoButtonState();
+  }
 }
 
 function getActiveMainPage() {
@@ -1669,15 +1739,15 @@ async function copyList(listId) {
 }
 
 // ---------------------------------------------------------------------------
-// Rensa cache
+// Rensa vy (enbart aktiv flik)
 // ---------------------------------------------------------------------------
 
-async function resetCache() {
+async function resetView() {
   try {
-    await fetchWithSessionRecovery(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" }, "rensning av cache");
+    await fetchWithSessionRecovery(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" }, "rensning av vy");
     resetFrontendState({ clearInputs: true });
     document.getElementById("log-output").textContent = "";
-    appendLog("Cache rensad (filer och resultat borttagna).");
+    appendLog("Vy rensad (filer och resultat borttagna).");
     await refreshFilterOptions();
     await refreshOrdersaldoButtonState();
     syncActionButtonsState();
@@ -1685,6 +1755,8 @@ async function resetCache() {
     appendLog(`FEL vid rensning: ${e}`);
   }
 }
+// Bakåtkompatibilitet
+function resetCache() { return resetView(); }
 
 // ---------------------------------------------------------------------------
 // Chunked Excel
