@@ -2217,6 +2217,71 @@ const GG_FILE_SLOTS = [
   { key: "gg_dispatch",    label: "Dispatchpallar",   accept: ".csv,.txt" },
 ];
 
+// Kolumner som behövs per fil — matchar backend GG_NEEDED_COLS
+const GG_NEEDED_COLS = {
+  gg_orders:      ["status", "zon", "bolag"],
+  gg_overview:    ["avgångstid", "zon", "rader", "transportör", "bolag"],
+  gg_plocklogg:   ["status", "zon", "användare", "datum", "timestamp", "ändrad", "andrad", "bolag"],
+  gg_palluppdrag: ["zon", "lagerplats", "krangång", "bolag"],
+  gg_dispatch:    ["pallplacering", "kund", "palltyp", "pallbeskrivning", "bolag"],
+};
+
+/**
+ * Parsa CSV i browsern och returnera ny Blob med bara relevanta kolumner.
+ * Om filen inte är CSV eller inga kolumner matchar returneras originalfilen.
+ */
+async function _stripGGColumns(key, file) {
+  const needed = GG_NEEDED_COLS[key];
+  if (!needed) return file;
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (ext !== "csv" && ext !== "txt") return file;
+
+  const text = await file.text();
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 2) return file;
+
+  // Detektera separator
+  const first = lines[0];
+  let sep = ",";
+  if (first.includes("\t")) sep = "\t";
+  else if (first.includes(";")) sep = ";";
+
+  // Enkel CSV-parse (klarar inte quoted fields med newlines, men WMS-data har inte det)
+  function splitLine(line) {
+    const result = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; continue; }
+      if (ch === sep && !inQ) { result.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    result.push(cur);
+    return result;
+  }
+
+  const header = splitLine(lines[0]);
+  const neededSet = new Set(needed.map(n => n.toLowerCase()));
+  const keepIdx = [];
+  for (let i = 0; i < header.length; i++) {
+    if (neededSet.has(header[i].trim().toLowerCase())) keepIdx.push(i);
+  }
+  if (keepIdx.length === 0 || keepIdx.length === header.length) return file;
+
+  const pick = (cols) => keepIdx.map(i => (i < cols.length ? cols[i] : ""));
+  const outLines = [pick(header).join(sep)];
+  for (let r = 1; r < lines.length; r++) {
+    if (!lines[r].trim()) continue;
+    outLines.push(pick(splitLine(lines[r])).join(sep));
+  }
+
+  const blob = new Blob([outLines.join("\n")], { type: "text/csv" });
+  const sizeBefore = (file.size / 1024).toFixed(0);
+  const sizeAfter = (blob.size / 1024).toFixed(0);
+  appendLog(`${file.name}: ${header.length} → ${keepIdx.length} kolumner, ${sizeBefore} KB → ${sizeAfter} KB`);
+  return new File([blob], file.name, { type: "text/csv" });
+}
+
 function _buildGGFileRow(slot) {
   const row = document.createElement("div");
   row.className = "d-flex align-items-center gap-2 mb-1";
@@ -2334,8 +2399,12 @@ function ggSaveFilters() {
 
 async function ggUploadFile(key, file) {
   const badge = document.getElementById(`gg-badge-${key}`);
-  if (badge) { badge.textContent = "0%"; badge.className = "file-status-badge"; }
+  if (badge) { badge.textContent = "Filtrerar..."; badge.className = "file-status-badge"; }
   try {
+    // Strippa onödiga kolumner i browsern innan upload
+    file = await _stripGGColumns(key, file);
+
+    if (badge) badge.textContent = "0%";
     const form = new FormData();
     form.append("file", file);
     const authToken = localStorage.getItem("allok_auth_token");

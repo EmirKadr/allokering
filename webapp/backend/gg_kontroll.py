@@ -88,14 +88,6 @@ async def gg_upload(
     content = await file.read()
     dest_path.write_bytes(content)
 
-    # Strippa onödiga kolumner direkt — sparar disk och minne vid process
-    needed = GG_NEEDED_COLS.get(key)
-    if needed and not str(dest_path).endswith(".xlsx"):
-        try:
-            _strip_csv_columns(str(dest_path), needed)
-        except Exception:
-            pass  # behåll originalfilen om stripping misslyckas
-
     now = utcnow()
     with connect() as conn:
         with conn.cursor() as cur:
@@ -201,35 +193,6 @@ def gg_reset(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _strip_csv_columns(path: str, needed: List[str]) -> None:
-    """Overwrite CSV keeping only needed columns. Streams via temp file."""
-    import csv as csv_mod
-    needed_set = {n.lower() for n in needed}
-    sep = _detect_separator_for_bolag(path)
-
-    tmp_path = path + ".tmp"
-    with open(path, encoding="utf-8-sig", newline="") as fin, \
-         open(tmp_path, "w", encoding="utf-8-sig", newline="") as fout:
-        reader = csv_mod.reader(fin, delimiter=sep)
-        writer = csv_mod.writer(fout, delimiter=sep)
-
-        header = next(reader, None)
-        if not header:
-            Path(tmp_path).unlink(missing_ok=True)
-            return
-
-        keep_idx = [i for i, col in enumerate(header) if col.strip().lower() in needed_set]
-        if not keep_idx or len(keep_idx) == len(header):
-            Path(tmp_path).unlink(missing_ok=True)
-            return  # inget att strippa
-
-        writer.writerow([header[i] for i in keep_idx])
-        for row in reader:
-            writer.writerow([row[i] if i < len(row) else "" for i in keep_idx])
-
-    Path(tmp_path).replace(path)
 
 
 def _load_gg_file_path(key: str) -> Optional[str]:
