@@ -34,7 +34,6 @@ GG_FILE_SLOTS = [
     {"key": "gg_plocklogg", "label": "Data Plocklogg"},
     {"key": "gg_palluppdrag", "label": "Inmatning Palluppdrag"},
     {"key": "gg_dispatch", "label": "Dispatchpallar"},
-    {"key": "gg_transport", "label": "Master Transport"},
 ]
 
 VALID_FILE_KEYS = {s["key"] for s in GG_FILE_SLOTS}
@@ -305,7 +304,6 @@ def _process_dagsoversikt(
     orders_df: Optional[pd.DataFrame],
     overview_df: Optional[pd.DataFrame],
     palluppdrag_df: Optional[pd.DataFrame],
-    transport_df: Optional[pd.DataFrame],
 ) -> dict:
     """Beräkna dagsöversikt: totala rader, rader per avgång, transportörer."""
 
@@ -512,10 +510,9 @@ def gg_process(
     orders = _load_gg_file("gg_orders")
     overview = _load_gg_file("gg_overview")
     palluppdrag = _load_gg_file("gg_palluppdrag")
-    transport = _load_gg_file("gg_transport")
 
     if orders is not None or overview is not None:
-        result = _process_dagsoversikt(orders, overview, palluppdrag, transport)
+        result = _process_dagsoversikt(orders, overview, palluppdrag)
         _save_result("dagsoversikt", result, username)
     else:
         errors.append("Orders/Overview saknas — Dagsöversikt ej beräknad")

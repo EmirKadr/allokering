@@ -1965,6 +1965,24 @@ function setupDragDrop() {
     e.preventDefault();
     body.classList.remove("drag-over");
     const files = Array.from(e.dataTransfer.files);
+    const activePage = getActiveMainPage();
+
+    // GG Kontrollpanel — use GG upload flow
+    if (activePage === "gg-kontroll-page") {
+      for (const file of files) {
+        const matched = _matchFileToGGSlot(file.name);
+        if (matched) {
+          appendLog(`Drag & drop: ${file.name} -> [${matched}]`);
+          await ggUploadFile(matched, file);
+        } else {
+          appendLog(`Kunde inte matcha "${file.name}" till en GG-slot. Ladda upp manuellt.`);
+        }
+      }
+      await ggRefreshFiles();
+      return;
+    }
+
+    // Allokering / Eftersök — use standard upload flow
     const changedKeys = new Set();
     for (const file of files) {
       const matched = matchFileToSlot(file.name);
@@ -1988,32 +2006,44 @@ function matchFileToSlot(filename) {
   const lower = filename.toLowerCase();
   const activePage = getActiveMainPage();
 
-  // Exakta prefix-matchningar (speglar allokera11.py _detect_file_type)
-  const exactMap = {
-    "wms_receive": "v_ask_receive_log",
-    "wms_booking": "v_ask_booking_putaway",
-    "wms_trans":   "v_ask_trans_log",
-    "wms_pick":    "v_ask_pick_log_full",
-    "wms_correct": "v_ask_correct_log",
-  };
-  if (lower.includes("v_ask_article_buffertpallet")) {
-    return activePage === "eftersok-page" ? "wms_buffer" : "buffer";
-  }
-  for (const [slot, hint] of Object.entries(exactMap)) {
-    if (lower.includes(hint)) return slot;
+  // Eftersök-specifika matchningar
+  if (activePage === "eftersok-page") {
+    const wmsMap = {
+      "wms_receive": "v_ask_receive_log",
+      "wms_booking": "v_ask_booking_putaway",
+      "wms_trans":   "v_ask_trans_log",
+      "wms_pick":    "v_ask_pick_log_full",
+      "wms_correct": "v_ask_correct_log",
+      "wms_buffer":  "v_ask_article_buffertpallet",
+    };
+    for (const [slot, hint] of Object.entries(wmsMap)) {
+      if (lower.includes(hint)) return slot;
+    }
+    if (lower.includes("buffert") || lower.includes("buffer")) return "wms_buffer";
+    return null;
   }
 
-  // Generiska matchningar
+  // Allokering-specifika matchningar
+  if (lower.includes("v_ask_article_buffertpallet")) return "buffer";
   if (lower.includes("kampanj") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "campaign";
   if (lower.includes("prognos") && (lower.endsWith(".xlsx") || lower.endsWith(".xls"))) return "prognos";
   if (lower.includes("bestall") || lower.includes("best\u00e4ll") || (lower.includes("order") && lower.includes("detail"))) return "orders";
-  if (lower.includes("buffert") || lower.includes("buffer")) {
-    return activePage === "eftersok-page" ? "wms_buffer" : "buffer";
-  }
+  if (lower.includes("buffert") || lower.includes("buffer")) return "buffer";
   if (lower.includes("saldo") || lower.includes("automation")) return "automation";
   if (lower.includes("item") || lower.includes("artikel_option")) return "item";
   if (lower.includes("overview") || lower.includes("oversikt") || lower.includes("\u00f6versikt") || lower.includes("order_overview")) return "overview";
   if (lower.includes("dispatch")) return "dispatch";
+  return null;
+}
+
+function _matchFileToGGSlot(filename) {
+  const lower = filename.toLowerCase();
+  // GG Kontrollpanel fil-matchning
+  if (lower.includes("customer_order_detail") || lower.includes("data_child") || lower.includes("data child")) return "gg_orders";
+  if (lower.includes("order_overview") || lower.includes("orderöversikt") || lower.includes("data_oö") || lower.includes("data oö")) return "gg_overview";
+  if (lower.includes("pick_log") || lower.includes("plocklogg")) return "gg_plocklogg";
+  if (lower.includes("assignment_move") || lower.includes("palluppdrag")) return "gg_palluppdrag";
+  if (lower.includes("dispatch_pallet") || lower.includes("dispatch")) return "gg_dispatch";
   return null;
 }
 
@@ -2162,7 +2192,6 @@ const GG_FILE_SLOTS = [
   { key: "gg_plocklogg",   label: "Data Plocklogg",                accept: ".csv,.txt" },
   { key: "gg_palluppdrag", label: "Inmatning Palluppdrag",         accept: ".csv,.txt" },
   { key: "gg_dispatch",    label: "Dispatchpallar",                accept: ".csv,.txt" },
-  { key: "gg_transport",   label: "Master Transport",              accept: ".csv,.txt,.xlsx" },
 ];
 
 function _buildGGFileRow(slot) {
