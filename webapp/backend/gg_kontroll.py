@@ -38,6 +38,15 @@ GG_FILE_SLOTS = [
 
 VALID_FILE_KEYS = {s["key"] for s in GG_FILE_SLOTS}
 
+# Kolumner som behövs per fil (case-insensitive matching)
+GG_NEEDED_COLS: Dict[str, List[str]] = {
+    "gg_plocklogg":   ["status", "zon", "användare", "datum", "timestamp", "ändrad", "andrad", "bolag"],
+    "gg_orders":      ["zon", "bolag", "status"],
+    "gg_overview":    ["avgångstid", "zon", "rader", "transportör", "bolag"],
+    "gg_palluppdrag": ["zon", "lagerplats", "krangång", "bolag"],
+    "gg_dispatch":    ["pallplacering", "kund", "palltyp", "pallbeskrivning", "bolag"],
+}
+
 
 def _gg_dir() -> Path:
     d = get_state_dir() / "gg_kontroll"
@@ -186,7 +195,8 @@ def gg_reset(
 # ---------------------------------------------------------------------------
 
 
-def _load_gg_file(key: str) -> Optional[pd.DataFrame]:
+def _load_gg_file_path(key: str) -> Optional[str]:
+    """Return the file path for a GG file key, or None."""
     with connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT path FROM gg_files WHERE file_key = %s", (key,))
@@ -196,9 +206,69 @@ def _load_gg_file(key: str) -> Optional[pd.DataFrame]:
     path = row["path"]
     if not Path(path).exists():
         return None
+    return path
+
+
+def _load_gg_file(key: str) -> Optional[pd.DataFrame]:
+    path = _load_gg_file_path(key)
+    if not path:
+        return None
+
+    needed = GG_NEEDED_COLS.get(key)
     if path.endswith(".xlsx"):
-        return pd.read_excel(path, dtype=str)
-    return read_csv_auto(path)
+        df = pd.read_excel(path, dtype=str)
+        return _keep_cols(df, needed) if needed else df
+
+    return _read_csv_selected(path, needed)
+
+
+def _keep_cols(df: pd.DataFrame, needed: List[str]) -> pd.DataFrame:
+    """Keep only columns whose name (lowered) matches the needed list."""
+    needed_set = {n.lower() for n in needed}
+    keep = [c for c in df.columns if c.strip().lower() in needed_set]
+    return df[keep] if keep else df
+
+
+def _read_csv_selected(path: str, needed: Optional[List[str]]) -> pd.DataFrame:
+    """Read CSV loading only needed columns (memory-efficient)."""
+    if not needed:
+        return read_csv_auto(path)
+
+    needed_set = {n.lower() for n in needed}
+
+    # Detect separator
+    sep = _detect_separator_for_bolag(path)
+
+    # Read header to find matching column indices
+    import csv as csv_mod
+    with open(path, encoding="utf-8-sig") as f:
+        reader = csv_mod.reader(f, delimiter=sep)
+        header = next(reader, None)
+    if not header:
+        return pd.DataFrame()
+
+    col_indices = []
+    col_names = []
+    for i, col in enumerate(header):
+        if col.strip().lower() in needed_set:
+            col_indices.append(i)
+            col_names.append(col.strip())
+
+    if not col_indices:
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(
+            path, dtype=str, sep=sep, engine="c",
+            encoding="utf-8-sig", usecols=col_indices,
+        )
+        # Clean column names
+        df.columns = [c.strip() for c in df.columns]
+        return df
+    except Exception:
+        # Fallback: load all and filter
+        df = read_csv_auto(path)
+        return _keep_cols(df, needed)
 
 
 def _find_col(df: pd.DataFrame, *candidates: str) -> Optional[str]:
@@ -503,20 +573,6 @@ def _process_lastlista(dispatch_df: pd.DataFrame, bolag_filter: Optional[List[st
 # ---------------------------------------------------------------------------
 # Process endpoint
 # ---------------------------------------------------------------------------
-
-
-def _load_gg_file_path(key: str) -> Optional[str]:
-    """Return the file path for a GG file key, or None."""
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT path FROM gg_files WHERE file_key = %s", (key,))
-            row = cur.fetchone()
-    if not row:
-        return None
-    path = row["path"]
-    if not Path(path).exists():
-        return None
-    return path
 
 
 def _read_bolag_values(path: str) -> set:
