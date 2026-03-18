@@ -156,6 +156,31 @@ def gg_delete_file(
     return {"ok": True, "key": key}
 
 
+@router.post("/reset")
+def gg_reset(
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    """Rensa alla GG-filer och resultat."""
+    tok = extract_token(authorization, token)
+    _require_gg_or_admin(tok)
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT path FROM gg_files")
+            rows = cur.fetchall()
+            for row in rows:
+                try:
+                    Path(row["path"]).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            cur.execute("DELETE FROM gg_files")
+            cur.execute("DELETE FROM gg_results")
+        conn.commit()
+
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

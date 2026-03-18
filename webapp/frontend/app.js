@@ -1826,7 +1826,21 @@ async function copyList(listId) {
 // ---------------------------------------------------------------------------
 
 async function resetView() {
+  const activePage = getActiveMainPage();
   try {
+    if (activePage === "gg-kontroll-page") {
+      // Rensa alla GG-filer och resultat
+      for (const slot of GG_FILE_SLOTS) {
+        await ggRemoveFile(slot.key);
+      }
+      // Rensa GG-resultat via backend
+      await fetch(`${API}/api/gg/reset`, { method: "POST" });
+      document.getElementById("log-output").textContent = "";
+      appendLog("GG Kontrollpanel rensad (filer och resultat borttagna).");
+      const filterCard = document.getElementById("gg-filter-card");
+      if (filterCard) filterCard.style.display = "none";
+      return;
+    }
     await fetchWithSessionRecovery(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" }, "rensning av vy");
     resetFrontendState({ clearInputs: true });
     document.getElementById("log-output").textContent = "";
