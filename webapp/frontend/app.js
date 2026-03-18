@@ -602,17 +602,38 @@ async function refreshAfterFileChanges(changedKeys) {
 async function uploadFile(fileKey, file, options = {}) {
   const { skipPostRefresh = false } = options;
   const previousStatus = fileStatuses[fileKey] || null;
-  setBadge(fileKey, "Laddar...", false);
+  setBadge(fileKey, "0%", false);
   try {
     const formData = new FormData();
     formData.append("file_key", fileKey);
     formData.append("page_id", getActiveMainPage());
     formData.append("file", file);
-    const resp = await fetchWithSessionRecovery(`${API}/api/upload/${sessionId}`, {
-      method: "POST",
-      body: formData,
-    }, "uppladdning");
-    const data = await resp.json();
+
+    const data = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API}/api/upload/${sessionId}`);
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setBadge(fileKey, `${pct}%`, false);
+        }
+      });
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText));
+        } else if (xhr.status === 404) {
+          // Session expired — trigger recovery
+          recoverExpiredSession("uppladdning").then(() => {
+            reject(new Error("Sessionen återställdes. Ladda upp filerna igen."));
+          }).catch(reject);
+        } else {
+          reject(new Error(xhr.responseText || xhr.statusText || `HTTP ${xhr.status}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Nätverksfel"));
+      xhr.send(formData);
+    });
+
     const actualKey = data.file_key || fileKey;
     if (actualKey !== fileKey) {
       fileStatuses[fileKey] = previousStatus;
