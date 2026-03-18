@@ -1074,6 +1074,7 @@ def compute_hib_koppling(details_df: pd.DataFrame, overview_df: pd.DataFrame) ->
         "Sändningsnr": ["Sändningsnr", "Sändnings nr", "Sändningsnummer", "Sendingsnr", "Sändnings number"],
         "Zon": ["Zon", "Zone"],
         "Multi": ["Multi", "Multi nr", "Multinr", "Multi number"],
+        "Ursprungsdatum": ["Ursprungsdatum", "Ursprungs datum", "Original date", "Ursprungsdate"],
     }
     for canonical, syns in synonyms.items():
         if canonical in overview.columns:
@@ -1088,14 +1089,14 @@ def compute_hib_koppling(details_df: pd.DataFrame, overview_df: pd.DataFrame) ->
     required_overview_cols = {"Ordernr", "Ordertyp", "Kund nr", "Orderdatum", "Sändningsnr", "Zon", "Multi"}
     missing = [c for c in required_overview_cols if c not in overview.columns]
     if missing:
-        return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
+        return pd.DataFrame(columns=["ordernummer", "Ursprungsdatum", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
     ov = overview.copy()
     ov["Ordertyp"] = ov["Ordertyp"].astype(str).str.strip().str.upper()
     if ov.empty:
-        return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
+        return pd.DataFrame(columns=["ordernummer", "Ursprungsdatum", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
     details.columns = [c.replace("\ufeff", "").strip() for c in details.columns]
     if "Order nr" not in details.columns or "Status" not in details.columns:
-        return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
+        return pd.DataFrame(columns=["ordernummer", "Ursprungsdatum", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
 
     def to_status_numeric(x):
         try:
@@ -1232,22 +1233,30 @@ def compute_hib_koppling(details_df: pd.DataFrame, overview_df: pd.DataFrame) ->
                             multi_update = "MULTI"
                     else:
                         multi_update = "MULTI"
+            # Hämta Ursprungsdatum för HIB-ordern
+            ursprungsdatum = ""
+            if "Ursprungsdatum" in ov.columns:
+                udat_vals = kund_df.loc[kund_df["Ordernr"] == h_ord, "Ursprungsdatum"].dropna().astype(str).str.strip()
+                if not udat_vals.empty:
+                    ursprungsdatum = udat_vals.iloc[0]
+
             if ship_update or date_update or z_update or multi_update:
                 rows.append({
                     "ordernummer": h_ord,
                     "kundnamn": order_to_kundnamn.get(h_ord, ""),
+                    "Ursprungsdatum": ursprungsdatum,
                     "Orderdatum": date_update,
                     "sändningsnummer": ship_update,
                     "Zon": z_update,
                     "Multi": multi_update
                 })
     if not rows:
-        return pd.DataFrame(columns=["ordernummer", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
+        return pd.DataFrame(columns=["ordernummer", "Ursprungsdatum", "Orderdatum", "sändningsnummer", "Zon", "Multi"])
     result_df = pd.DataFrame(rows)
     if result_df.empty:
         return result_df
     result_df = result_df.sort_values(by=["kundnamn", "ordernummer"]).reset_index(drop=True)
-    cols = ["ordernummer", "kundnamn", "Orderdatum", "sändningsnummer", "Zon", "Multi"]
+    cols = ["ordernummer", "kundnamn", "Ursprungsdatum", "Orderdatum", "sändningsnummer", "Zon", "Multi"]
     result_df = result_df[cols]
     return result_df
 

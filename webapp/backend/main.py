@@ -1831,6 +1831,11 @@ async def _job_orderkontroll(session: SessionData):
             trans_col = "__transport_dummy__"
             df[trans_col] = ""
 
+        date_col = _find_col_by_keywords(
+            df,
+            ["orderdatum", "order datum", "order date", "orderdate"],
+        )
+
         order_col = _find_col_by_keywords(
             df,
             ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order"],
@@ -1905,7 +1910,34 @@ async def _job_orderkontroll(session: SessionData):
             except Exception:
                 continue
 
+        # Kontroll: sändningsnr med olika orderdatum
+        date_diff_rows: List[Dict[str, Any]] = []
+        if date_col:
+            for ship, group in df.groupby(ship_col):
+                try:
+                    dates = sorted(set(group[date_col].dropna().astype(str).str.strip()))
+                    dates = [d for d in dates if d]
+                    if len(dates) > 1:
+                        order_vals: List[str] = []
+                        if order_col:
+                            for _, r in group.drop_duplicates(subset=[order_col]).iterrows():
+                                o = str(r[order_col]).strip()
+                                d = str(r[date_col]).strip()
+                                nm = order_to_customer.get(o, "")
+                                order_vals.append(f"{o} ({nm}, {d})" if nm else f"{o} ({d})")
+                        date_diff_rows.append({
+                            "Avvikelsetyp": "Sändningsnr med olika orderdatum",
+                            "Sändningsnr": ship,
+                            "Antal unika datum": len(dates),
+                            "Orderdatum": ", ".join(dates),
+                            "Antal orderrader": int(len(group)),
+                            "Ordernr (kundnamn, datum)": ", ".join(order_vals) if order_vals else "",
+                        })
+                except Exception:
+                    continue
+
         result_df = pd.DataFrame(shipment_diff_rows) if shipment_diff_rows else pd.DataFrame()
+        date_diff_df = pd.DataFrame(date_diff_rows) if date_diff_rows else pd.DataFrame()
 
         # HIB-kontroll
         ordertype_col = _find_col_by_keywords(df, ["ordertyp", "order type", "ordertype"])
@@ -1979,7 +2011,7 @@ async def _job_orderkontroll(session: SessionData):
 
         hib_check_df = pd.DataFrame(hib_rows) if hib_rows else pd.DataFrame()
 
-        has_any = not result_df.empty or not hib_check_df.empty
+        has_any = not result_df.empty or not date_diff_df.empty or not hib_check_df.empty
         if not has_any:
             msg = "Inga avvikelser hittades i orderöversikten."
             if missing_hib_cols:
@@ -1991,6 +2023,8 @@ async def _job_orderkontroll(session: SessionData):
         # Logga resultat
         if not result_df.empty:
             log(f"Orderöversikt: {len(result_df)} sändningsnummer med flera kunder/transportörer.")
+        if not date_diff_df.empty:
+            log(f"Orderöversikt: {len(date_diff_df)} sändningsnummer med olika orderdatum.")
         if not hib_check_df.empty:
             log(f"HIB-ordrar med status > 31 utan matchande butikssändning: {len(hib_check_df)} st.")
         if missing_hib_cols:
@@ -2005,6 +2039,12 @@ async def _job_orderkontroll(session: SessionData):
                 s_df.insert(0, "Avvikelsetyp", "Sändningsnr med flera kunder/transportörer")
             sheets["Sändningskontroll"] = s_df
             combined_parts.append(s_df)
+        if not date_diff_df.empty:
+            dd_df = date_diff_df.copy()
+            if "Avvikelsetyp" not in dd_df.columns:
+                dd_df.insert(0, "Avvikelsetyp", "Sändningsnr med olika orderdatum")
+            sheets["Datumkontroll"] = dd_df
+            combined_parts.append(dd_df)
         if not hib_check_df.empty:
             h_df = hib_check_df.copy()
             if "Avvikelsetyp" not in h_df.columns:

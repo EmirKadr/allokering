@@ -2194,11 +2194,14 @@ function _buildGGFileRow(slot) {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = slot.accept || "";
+  input.multiple = true;
   input.style.display = "none";
   input.id = `gg-input-${slot.key}`;
   input.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (file) await ggUploadFile(slot.key, file);
+    const files = Array.from(e.target.files);
+    for (const file of files) {
+      await ggUploadFile(slot.key, file);
+    }
     input.value = "";
   });
 
