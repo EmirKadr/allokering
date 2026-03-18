@@ -88,6 +88,14 @@ async def gg_upload(
     content = await file.read()
     dest_path.write_bytes(content)
 
+    # Strippa onödiga kolumner direkt — sparar disk och minne vid process
+    needed = GG_NEEDED_COLS.get(key)
+    if needed and not str(dest_path).endswith(".xlsx"):
+        try:
+            _strip_csv_columns(str(dest_path), needed)
+        except Exception:
+            pass  # behåll originalfilen om stripping misslyckas
+
     now = utcnow()
     with connect() as conn:
         with conn.cursor() as cur:
@@ -195,6 +203,35 @@ def gg_reset(
 # ---------------------------------------------------------------------------
 
 
+def _strip_csv_columns(path: str, needed: List[str]) -> None:
+    """Overwrite CSV keeping only needed columns. Streams via temp file."""
+    import csv as csv_mod
+    needed_set = {n.lower() for n in needed}
+    sep = _detect_separator_for_bolag(path)
+
+    tmp_path = path + ".tmp"
+    with open(path, encoding="utf-8-sig", newline="") as fin, \
+         open(tmp_path, "w", encoding="utf-8-sig", newline="") as fout:
+        reader = csv_mod.reader(fin, delimiter=sep)
+        writer = csv_mod.writer(fout, delimiter=sep)
+
+        header = next(reader, None)
+        if not header:
+            Path(tmp_path).unlink(missing_ok=True)
+            return
+
+        keep_idx = [i for i, col in enumerate(header) if col.strip().lower() in needed_set]
+        if not keep_idx or len(keep_idx) == len(header):
+            Path(tmp_path).unlink(missing_ok=True)
+            return  # inget att strippa
+
+        writer.writerow([header[i] for i in keep_idx])
+        for row in reader:
+            writer.writerow([row[i] if i < len(row) else "" for i in keep_idx])
+
+    Path(tmp_path).replace(path)
+
+
 def _load_gg_file_path(key: str) -> Optional[str]:
     """Return the file path for a GG file key, or None."""
     with connect() as conn:
@@ -210,16 +247,15 @@ def _load_gg_file_path(key: str) -> Optional[str]:
 
 
 def _load_gg_file(key: str) -> Optional[pd.DataFrame]:
+    """Ladda GG-fil (redan strippade vid upload, så den är liten)."""
     path = _load_gg_file_path(key)
     if not path:
         return None
-
-    needed = GG_NEEDED_COLS.get(key)
     if path.endswith(".xlsx"):
         df = pd.read_excel(path, dtype=str)
+        needed = GG_NEEDED_COLS.get(key)
         return _keep_cols(df, needed) if needed else df
-
-    return _read_csv_selected(path, needed)
+    return read_csv_auto(path)
 
 
 def _keep_cols(df: pd.DataFrame, needed: List[str]) -> pd.DataFrame:
@@ -227,48 +263,6 @@ def _keep_cols(df: pd.DataFrame, needed: List[str]) -> pd.DataFrame:
     needed_set = {n.lower() for n in needed}
     keep = [c for c in df.columns if c.strip().lower() in needed_set]
     return df[keep] if keep else df
-
-
-def _read_csv_selected(path: str, needed: Optional[List[str]]) -> pd.DataFrame:
-    """Read CSV loading only needed columns (memory-efficient)."""
-    if not needed:
-        return read_csv_auto(path)
-
-    needed_set = {n.lower() for n in needed}
-
-    # Detect separator
-    sep = _detect_separator_for_bolag(path)
-
-    # Read header to find matching column indices
-    import csv as csv_mod
-    with open(path, encoding="utf-8-sig") as f:
-        reader = csv_mod.reader(f, delimiter=sep)
-        header = next(reader, None)
-    if not header:
-        return pd.DataFrame()
-
-    col_indices = []
-    col_names = []
-    for i, col in enumerate(header):
-        if col.strip().lower() in needed_set:
-            col_indices.append(i)
-            col_names.append(col.strip())
-
-    if not col_indices:
-        return pd.DataFrame()
-
-    try:
-        df = pd.read_csv(
-            path, dtype=str, sep=sep, engine="c",
-            encoding="utf-8-sig", usecols=col_indices,
-        )
-        # Clean column names
-        df.columns = [c.strip() for c in df.columns]
-        return df
-    except Exception:
-        # Fallback: load all and filter
-        df = read_csv_auto(path)
-        return _keep_cols(df, needed)
 
 
 def _find_col(df: pd.DataFrame, *candidates: str) -> Optional[str]:
