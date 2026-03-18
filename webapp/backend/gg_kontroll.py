@@ -121,7 +121,7 @@ def gg_files(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT file_key, original_filename, uploaded_by, uploaded_at
+                SELECT file_key, path, original_filename, uploaded_by, uploaded_at
                 FROM gg_files
                 ORDER BY file_key
                 """
@@ -129,12 +129,27 @@ def gg_files(
             rows = cur.fetchall()
 
     files = {}
+    stale_keys = []
     for r in rows:
-        files[r["file_key"]] = {
-            "filename": r["original_filename"],
-            "uploaded_by": r["uploaded_by"],
-            "uploaded_at": r["uploaded_at"].isoformat() if r["uploaded_at"] else None,
-        }
+        # Only report file as uploaded if it actually exists on disk
+        if r["path"] and Path(r["path"]).exists():
+            files[r["file_key"]] = {
+                "filename": r["original_filename"],
+                "uploaded_by": r["uploaded_by"],
+                "uploaded_at": r["uploaded_at"].isoformat() if r["uploaded_at"] else None,
+            }
+        else:
+            stale_keys.append(r["file_key"])
+
+    # Clean up stale DB entries where file no longer exists
+    if stale_keys:
+        with connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM gg_files WHERE file_key = ANY(%s)", (stale_keys,)
+                )
+            conn.commit()
+
     return {"files": files}
 
 
