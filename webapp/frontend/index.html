@@ -30,6 +30,18 @@
       <li class="nav-item">
         <button class="nav-link" type="button" data-page="dela-page">Dela</button>
       </li>
+      <li class="nav-item" id="gg-kontroll-tab-item" style="display:none">
+        <button class="nav-link" type="button" data-page="gg-kontroll-page">Kontrollpanel GG</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" type="button" data-page="gg-produktion-page">Produktion GG</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" type="button" data-page="gg-dagsoversikt-page">Dagsöversikt GG</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" type="button" data-page="gg-lastlista-page">Lastlista</button>
+      </li>
       <li class="nav-item" id="admin-tab-item" style="display:none">
         <button class="nav-link" type="button" data-page="admin-page">Admin</button>
       </li>
@@ -213,6 +225,43 @@
             <div class="d-flex gap-1 flex-wrap mt-2" id="chunk-col-buttons" style="display:none!important"></div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="gg-kontroll-page" class="main-page-pane">
+    <div class="row g-3">
+      <div class="col-auto">
+        <div class="card mb-2">
+          <div class="card-header fw-bold">GG Kontrollpanel — Indatafiler</div>
+          <div class="card-body py-2" id="gg-file-rows"></div>
+        </div>
+        <button class="btn btn-primary btn-sm mb-2" id="gg-process-btn" onclick="ggProcess()">Bearbeta data</button>
+        <div id="gg-process-status" class="small text-muted"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="gg-produktion-page" class="main-page-pane">
+    <div class="card mb-2">
+      <div class="card-header fw-bold">Produktion Granngården <span id="gg-prod-date" class="text-muted small ms-2"></span></div>
+      <div class="card-body py-2" id="gg-produktion-content">
+        <p class="text-muted">Ingen data ännu. Ladda upp filer och kör "Bearbeta data" i Kontrollpanel GG.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="gg-dagsoversikt-page" class="main-page-pane">
+    <div class="row g-3" id="gg-dagsoversikt-content">
+      <div class="col-12"><p class="text-muted">Ingen data ännu.</p></div>
+    </div>
+  </div>
+
+  <div id="gg-lastlista-page" class="main-page-pane">
+    <div class="card mb-2">
+      <div class="card-header fw-bold">Lastlista</div>
+      <div class="card-body py-2" id="gg-lastlista-content">
+        <p class="text-muted">Ingen data ännu.</p>
       </div>
     </div>
   </div>

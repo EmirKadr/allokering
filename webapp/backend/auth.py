@@ -27,7 +27,7 @@ ADMIN_CODE = "0012"
 
 USERS_FILE = Path(__file__).parent / "users.json"
 
-VALID_LISTS = ("gg", "mg", "both")
+VALID_LISTS = ("gg",)
 
 _users_lock = threading.Lock()
 

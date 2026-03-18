@@ -1204,6 +1204,10 @@ function setMainPage(pageId) {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
   if (pageId === "admin-page") { renderAdminPanel(); return; }
+  if (pageId === "gg-kontroll-page") { renderGGKontrollPage(); return; }
+  if (pageId === "gg-produktion-page") { renderGGProduktion(); return; }
+  if (pageId === "gg-dagsoversikt-page") { renderGGDagsoversikt(); return; }
+  if (pageId === "gg-lastlista-page") { renderGGLastlista(); return; }
 
   // Spara state för föregående flik och ladda för ny
   if (pageId !== _activePageId && TAB_PAGE_IDS.includes(pageId)) {
@@ -2030,6 +2034,12 @@ function setupAuth() {
     const tab = document.getElementById("admin-tab-item");
     if (tab) tab.style.display = "";
   }
+
+  // Visa GG Kontrollpanel-flik för GG-användare och admin
+  if (user.role === "admin" || (user.lists && user.lists.includes("gg"))) {
+    const ggTab = document.getElementById("gg-kontroll-tab-item");
+    if (ggTab) ggTab.style.display = "";
+  }
 }
 
 async function renderAdminPanel() {
@@ -2043,7 +2053,7 @@ async function renderAdminPanel() {
     const lists = await resp.json();
 
     container.innerHTML = "";
-    const listKeys = ["gg", "mg", "both"];
+    const listKeys = ["gg"];
     for (const key of listKeys) {
       const info = lists[key];
       if (!info) continue;
@@ -2140,4 +2150,264 @@ function doLogout() {
   localStorage.removeItem("allok_auth_token");
   localStorage.removeItem("allok_user");
   window.location.href = "/login.html";
+}
+
+// ---------------------------------------------------------------------------
+// GG Kontrollpanel
+// ---------------------------------------------------------------------------
+
+const GG_FILE_SLOTS = [
+  { key: "gg_orders",      label: "Data Child (Detalj Kundorder)", accept: ".csv,.txt" },
+  { key: "gg_overview",    label: "Data OÖ (Orderöversikt)",       accept: ".csv,.txt" },
+  { key: "gg_plocklogg",   label: "Data Plocklogg",                accept: ".csv,.txt" },
+  { key: "gg_palluppdrag", label: "Inmatning Palluppdrag",         accept: ".csv,.txt" },
+  { key: "gg_dispatch",    label: "Dispatchpallar",                accept: ".csv,.txt" },
+  { key: "gg_transport",   label: "Master Transport",              accept: ".csv,.txt,.xlsx" },
+];
+
+function _buildGGFileRow(slot) {
+  const row = document.createElement("div");
+  row.className = "d-flex align-items-center gap-2 mb-1";
+  row.style.minWidth = "460px";
+
+  const label = document.createElement("span");
+  label.textContent = slot.label;
+  label.style.minWidth = "260px";
+  label.style.fontSize = "13px";
+  label.style.color = "var(--page-text)";
+
+  const badge = document.createElement("span");
+  badge.className = "file-status-badge";
+  badge.id = `gg-badge-${slot.key}`;
+  badge.textContent = "Ej fil";
+  badge.title = "Klicka för att välja fil";
+  badge.addEventListener("click", () => {
+    document.getElementById(`gg-input-${slot.key}`).click();
+  });
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "btn btn-danger btn-sm py-0 px-1";
+  removeBtn.innerHTML = "&#10005;";
+  removeBtn.title = `Ta bort ${slot.label}`;
+  removeBtn.addEventListener("click", () => ggRemoveFile(slot.key));
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = slot.accept || "";
+  input.style.display = "none";
+  input.id = `gg-input-${slot.key}`;
+  input.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (file) await ggUploadFile(slot.key, file);
+    input.value = "";
+  });
+
+  row.appendChild(label);
+  row.appendChild(badge);
+  row.appendChild(removeBtn);
+  row.appendChild(input);
+  return row;
+}
+
+async function renderGGKontrollPage() {
+  const container = document.getElementById("gg-file-rows");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const slot of GG_FILE_SLOTS) {
+    container.appendChild(_buildGGFileRow(slot));
+  }
+  await ggRefreshFiles();
+}
+
+async function ggUploadFile(key, file) {
+  const badge = document.getElementById(`gg-badge-${key}`);
+  if (badge) { badge.textContent = "Laddar upp..."; badge.className = "file-status-badge uploading"; }
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch(`${API}/api/gg/upload?key=${encodeURIComponent(key)}`, { method: "POST", body: form });
+    if (!resp.ok) throw new Error(await resp.text());
+    if (badge) { badge.textContent = file.name; badge.className = "file-status-badge has-file"; }
+  } catch (err) {
+    if (badge) { badge.textContent = "Fel!"; badge.className = "file-status-badge error"; }
+    console.error("GG upload error:", err);
+  }
+}
+
+async function ggRemoveFile(key) {
+  try {
+    await fetch(`${API}/api/gg/upload/${encodeURIComponent(key)}`, { method: "DELETE" });
+  } catch (_) {}
+  const badge = document.getElementById(`gg-badge-${key}`);
+  if (badge) { badge.textContent = "Ej fil"; badge.className = "file-status-badge"; }
+}
+
+async function ggRefreshFiles() {
+  try {
+    const resp = await fetch(`${API}/api/gg/files`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const files = data.files || {};
+    for (const slot of GG_FILE_SLOTS) {
+      const badge = document.getElementById(`gg-badge-${slot.key}`);
+      if (!badge) continue;
+      const f = files[slot.key];
+      if (f) {
+        badge.textContent = f.filename || slot.key;
+        badge.className = "file-status-badge has-file";
+      } else {
+        badge.textContent = "Ej fil";
+        badge.className = "file-status-badge";
+      }
+    }
+  } catch (_) {}
+}
+
+async function ggProcess() {
+  const btn = document.getElementById("gg-process-btn");
+  const status = document.getElementById("gg-process-status");
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "Bearbetar...";
+  try {
+    const resp = await fetch(`${API}/api/gg/process`, { method: "POST" });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    if (data.errors && data.errors.length > 0) {
+      if (status) status.textContent = "Klart med varningar: " + data.errors.join("; ");
+    } else {
+      if (status) status.textContent = "Klart! Data bearbetad.";
+    }
+  } catch (err) {
+    if (status) status.textContent = "Fel: " + err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// --- Produktion GG ---
+async function renderGGProduktion() {
+  const container = document.getElementById("gg-produktion-content");
+  const dateSpan = document.getElementById("gg-prod-date");
+  if (!container) return;
+  container.innerHTML = '<p class="text-muted">Laddar...</p>';
+  try {
+    const resp = await fetch(`${API}/api/gg/produktion`);
+    if (!resp.ok) throw new Error("Kunde inte hämta data");
+    const json = await resp.json();
+    const d = json.data;
+    if (!d || !d.hours) {
+      container.innerHTML = '<p class="text-muted">Ingen data ännu. Ladda upp filer och kör "Bearbeta data".</p>';
+      return;
+    }
+    if (dateSpan) dateSpan.textContent = d.date ? `(${d.date})` : "";
+    if (d._processed_at) {
+      if (dateSpan) dateSpan.textContent += ` — Senast uppdaterad: ${new Date(d._processed_at).toLocaleString("sv-SE")}`;
+    }
+
+    let html = '<div class="table-responsive"><table class="table table-sm table-bordered mb-0" style="font-size:12px">';
+    html += '<thead><tr><th>Snittplock per användare</th>';
+    for (const h of d.hours) html += `<th class="text-center">${esc(h)}</th>`;
+    html += '</tr></thead><tbody>';
+
+    for (const zKey of ["A", "S", "Z"]) {
+      const z = d.zones[zKey];
+      if (!z) continue;
+      html += `<tr class="table-secondary"><td colspan="${d.hours.length + 1}" class="fw-bold">${esc(z.label)}</td></tr>`;
+      html += '<tr><td>Producerade rader</td>';
+      for (const v of z.rows) html += `<td class="text-center">${v}</td>`;
+      html += '</tr><tr><td>Plockare</td>';
+      for (const v of z.pickers) html += `<td class="text-center">${v}</td>`;
+      html += '</tr><tr><td>Snitt per plockare</td>';
+      for (const v of z.avg) html += `<td class="text-center">${v}</td>`;
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">${esc(err.message)}</p>`;
+  }
+}
+
+// --- Dagsöversikt GG ---
+async function renderGGDagsoversikt() {
+  const container = document.getElementById("gg-dagsoversikt-content");
+  if (!container) return;
+  container.innerHTML = '<div class="col-12"><p class="text-muted">Laddar...</p></div>';
+  try {
+    const resp = await fetch(`${API}/api/gg/dagsoversikt`);
+    if (!resp.ok) throw new Error("Kunde inte hämta data");
+    const json = await resp.json();
+    const d = json.data;
+    if (!d) {
+      container.innerHTML = '<div class="col-12"><p class="text-muted">Ingen data ännu.</p></div>';
+      return;
+    }
+
+    let html = '';
+
+    // Card 1: Totala rader
+    html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Totala Rader</div><div class="card-body py-2">';
+    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
+    for (const t of (d.totals || [])) {
+      const cls = t.zone ? "fw-bold" : "";
+      html += `<tr><td>${t.zone ? esc(t.zone) : ""}</td><td class="${cls}">${esc(t.label)}</td><td class="text-end">${t.count}</td></tr>`;
+    }
+    html += '</tbody></table></div></div></div>';
+
+    // Card 2: Rader per avgång
+    html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Rader per avgång</div><div class="card-body py-2">';
+    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Tidpunkt</th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">Z</th></tr></thead><tbody>';
+    for (const dep of (d.departures || [])) {
+      html += `<tr><td>${esc(dep.time)}</td><td class="text-end">${dep.A}</td><td class="text-end">${dep.S}</td><td class="text-end">${dep.Z}</td></tr>`;
+    }
+    html += '</tbody></table></div></div></div>';
+
+    // Card 3: Transportörer
+    html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Transportörer</div><div class="card-body py-2">';
+    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Transportör</th><th class="text-end">A</th><th class="text-end">O</th><th class="text-end">F</th><th class="text-end">Tot</th></tr></thead><tbody>';
+    for (const tr of (d.transporters || [])) {
+      html += `<tr><td>${esc(tr.name)}</td><td class="text-end">${tr.A}</td><td class="text-end">${tr.O}</td><td class="text-end">${tr.F}</td><td class="text-end fw-bold">${tr.total}</td></tr>`;
+    }
+    html += '</tbody></table></div></div></div>';
+
+    if (d._processed_at) {
+      html += `<div class="col-12"><small class="text-muted">Senast uppdaterad: ${new Date(d._processed_at).toLocaleString("sv-SE")}</small></div>`;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div class="col-12"><p class="text-danger">${esc(err.message)}</p></div>`;
+  }
+}
+
+// --- Lastlista ---
+async function renderGGLastlista() {
+  const container = document.getElementById("gg-lastlista-content");
+  if (!container) return;
+  container.innerHTML = '<p class="text-muted">Laddar...</p>';
+  try {
+    const resp = await fetch(`${API}/api/gg/lastlista`);
+    if (!resp.ok) throw new Error("Kunde inte hämta data");
+    const json = await resp.json();
+    const d = json.data;
+    if (!d || !d.rows || d.rows.length === 0) {
+      container.innerHTML = '<p class="text-muted">Ingen data ännu.</p>';
+      return;
+    }
+
+    let html = '<div class="table-responsive"><table class="table table-sm table-bordered mb-0" style="font-size:12px">';
+    html += '<thead><tr><th>Ytor</th><th>Kundnamn</th><th class="text-end">Pallar</th><th class="text-end">Halvpallar</th><th class="text-end">Små Paket</th></tr></thead><tbody>';
+    for (const r of d.rows) {
+      html += `<tr><td>${esc(r.ytor)}</td><td>${esc(r.kund)}</td><td class="text-end">${r.pallar}</td><td class="text-end">${r.halvpallar}</td><td class="text-end">${r.sma_paket}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+
+    if (d._processed_at) {
+      html += `<div class="mt-1"><small class="text-muted">Senast uppdaterad: ${new Date(d._processed_at).toLocaleString("sv-SE")}</small></div>`;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger">${esc(err.message)}</p>`;
+  }
 }

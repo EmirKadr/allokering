@@ -65,6 +65,12 @@ try:
 except Exception as e:
     classifier_v2_router = None
     _classifier_v2_import_error = e
+try:
+    from gg_kontroll import router as gg_kontroll_router
+    _gg_kontroll_import_error: Optional[Exception] = None
+except Exception as e:
+    gg_kontroll_router = None
+    _gg_kontroll_import_error = e
 from logic import (
     _clean_columns,
     _reclassify_skrymmande,
@@ -111,6 +117,11 @@ if classifier_v2_router is not None:
     app.include_router(classifier_v2_router)
 else:
     print(f"[WARN] classifier_v2 disabled: {_classifier_v2_import_error}")
+
+if gg_kontroll_router is not None:
+    app.include_router(gg_kontroll_router)
+else:
+    print(f"[WARN] gg_kontroll disabled: {_gg_kontroll_import_error}")
 
 ASK_CSV_AGENT_URL = os.environ.get("ASK_CSV_AGENT_URL", "http://127.0.0.1:8010").rstrip("/")
 ASK_CSV_DEFAULT_URL = os.environ.get(

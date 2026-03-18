@@ -190,6 +190,27 @@ def init_db() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS gg_files (
+                    file_key TEXT PRIMARY KEY,
+                    path TEXT NOT NULL,
+                    original_filename TEXT NOT NULL DEFAULT '',
+                    uploaded_by TEXT NOT NULL DEFAULT '',
+                    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gg_results (
+                    result_key TEXT PRIMARY KEY,
+                    data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    processed_by TEXT NOT NULL DEFAULT '',
+                    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at
                 ON auth_sessions (expires_at);
                 """
