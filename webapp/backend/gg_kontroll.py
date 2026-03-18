@@ -505,22 +505,75 @@ def _process_lastlista(dispatch_df: pd.DataFrame, bolag_filter: Optional[List[st
 # ---------------------------------------------------------------------------
 
 
+def _load_gg_file_path(key: str) -> Optional[str]:
+    """Return the file path for a GG file key, or None."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT path FROM gg_files WHERE file_key = %s", (key,))
+            row = cur.fetchone()
+    if not row:
+        return None
+    path = row["path"]
+    if not Path(path).exists():
+        return None
+    return path
+
+
+def _read_bolag_values(path: str) -> set:
+    """Read only the Bolag column from a CSV file (memory-efficient)."""
+    try:
+        import csv as csv_mod
+        sep = _detect_separator_for_bolag(path)
+        with open(path, encoding="utf-8-sig") as f:
+            reader = csv_mod.reader(f, delimiter=sep)
+            header = next(reader, None)
+            if not header:
+                return set()
+            bolag_idx = None
+            for i, col in enumerate(header):
+                if col.strip().lower() == "bolag":
+                    bolag_idx = i
+                    break
+            if bolag_idx is None:
+                return set()
+            vals = set()
+            for row in reader:
+                if bolag_idx < len(row):
+                    v = row[bolag_idx].strip().upper()
+                    if v:
+                        vals.add(v)
+            return vals
+    except Exception:
+        return set()
+
+
+def _detect_separator_for_bolag(path: str) -> str:
+    """Quick separator detection for Bolag extraction."""
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            first_line = f.readline()
+        if "\t" in first_line:
+            return "\t"
+        if ";" in first_line:
+            return ";"
+    except Exception:
+        pass
+    return ","
+
+
 @router.get("/filter-options")
 def gg_filter_options(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None),
 ):
-    """Returnera unika Bolag-värden från uppladdade filer."""
+    """Returnera unika Bolag-värden från uppladdade filer (minneseffektivt)."""
     tok = extract_token(authorization, token)
     require_auth(tok)
     bolag_set: set = set()
     for key in ["gg_orders", "gg_overview", "gg_plocklogg", "gg_palluppdrag", "gg_dispatch"]:
-        df = _load_gg_file(key)
-        if df is not None:
-            col = _find_col(df, "Bolag")
-            if col:
-                vals = df[col].dropna().str.strip().str.upper().unique()
-                bolag_set.update(v for v in vals if v)
+        path = _load_gg_file_path(key)
+        if path:
+            bolag_set.update(_read_bolag_values(path))
     return {"bolag": sorted(bolag_set)}
 
 
@@ -550,31 +603,43 @@ def gg_process(
     errors = []
 
     # Produktion
-    plocklogg = _load_gg_file("gg_plocklogg")
-    if plocklogg is not None:
-        result = _process_produktion(plocklogg, bolag_filter)
-        _save_result("produktion", result, username)
-    else:
-        errors.append("Plocklogg saknas — Produktion ej beräknad")
+    try:
+        plocklogg = _load_gg_file("gg_plocklogg")
+        if plocklogg is not None:
+            result = _process_produktion(plocklogg, bolag_filter)
+            _save_result("produktion", result, username)
+            del plocklogg  # free memory
+        else:
+            errors.append("Plocklogg saknas — Produktion ej beräknad")
+    except Exception as e:
+        errors.append(f"Produktion-fel: {e}")
 
     # Dagsöversikt
-    orders = _load_gg_file("gg_orders")
-    overview = _load_gg_file("gg_overview")
-    palluppdrag = _load_gg_file("gg_palluppdrag")
+    try:
+        orders = _load_gg_file("gg_orders")
+        overview = _load_gg_file("gg_overview")
+        palluppdrag = _load_gg_file("gg_palluppdrag")
 
-    if orders is not None or overview is not None:
-        result = _process_dagsoversikt(orders, overview, palluppdrag, bolag_filter)
-        _save_result("dagsoversikt", result, username)
-    else:
-        errors.append("Orders/Overview saknas — Dagsöversikt ej beräknad")
+        if orders is not None or overview is not None:
+            result = _process_dagsoversikt(orders, overview, palluppdrag, bolag_filter)
+            _save_result("dagsoversikt", result, username)
+        else:
+            errors.append("Orders/Overview saknas — Dagsöversikt ej beräknad")
+        del orders, overview, palluppdrag
+    except Exception as e:
+        errors.append(f"Dagsöversikt-fel: {e}")
 
     # Lastlista
-    dispatch = _load_gg_file("gg_dispatch")
-    if dispatch is not None:
-        result = _process_lastlista(dispatch, bolag_filter)
-        _save_result("lastlista", result, username)
-    else:
-        errors.append("Dispatch saknas — Lastlista ej beräknad")
+    try:
+        dispatch = _load_gg_file("gg_dispatch")
+        if dispatch is not None:
+            result = _process_lastlista(dispatch, bolag_filter)
+            _save_result("lastlista", result, username)
+            del dispatch
+        else:
+            errors.append("Dispatch saknas — Lastlista ej beräknad")
+    except Exception as e:
+        errors.append(f"Lastlista-fel: {e}")
 
     return {"ok": True, "errors": errors}
 
