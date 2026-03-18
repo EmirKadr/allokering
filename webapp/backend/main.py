@@ -97,7 +97,7 @@ from logic import (
 # App setup
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Allokering WebApp")
+app = FastAPI(title="Stigamo WebApp")
 
 app.add_middleware(
     CORSMiddleware,
