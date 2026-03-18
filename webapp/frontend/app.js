@@ -1938,8 +1938,6 @@ async function resetView() {
       await fetch(`${API}/api/gg/reset`, { method: "POST" });
       document.getElementById("log-output").textContent = "";
       appendLog("GG Kontrollpanel rensad (filer och resultat borttagna).");
-      const filterCard = document.getElementById("gg-filter-card");
-      if (filterCard) filterCard.style.display = "none";
       return;
     }
     await fetchWithSessionRecovery(`${API}/api/session/reset-all/${sessionId}`, { method: "POST" }, "rensning av vy");
@@ -2434,8 +2432,6 @@ function _buildGGFileRow(slot) {
   return row;
 }
 
-let ggSelectedFilters = { bolag: [] };
-
 async function renderGGKontrollPage() {
   const container = document.getElementById("gg-file-rows");
   if (!container) return;
@@ -2444,58 +2440,6 @@ async function renderGGKontrollPage() {
     container.appendChild(_buildGGFileRow(slot));
   }
   await ggRefreshFiles();
-  await ggRefreshFilters();
-}
-
-async function ggRefreshFilters() {
-  try {
-    const resp = await fetch(`${API}/api/gg/filter-options`);
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const bolagValues = data.bolag || [];
-    const card = document.getElementById("gg-filter-card");
-    const content = document.getElementById("gg-filter-content");
-    if (!card || !content) return;
-    if (bolagValues.length === 0) { card.style.display = "none"; return; }
-    card.style.display = "";
-    content.innerHTML = "";
-    const group = document.createElement("div");
-    group.innerHTML = "<strong>Bolag</strong>";
-    bolagValues.forEach(val => {
-      const id = `gg-filter-bolag-${val.replace(/\W/g, "_")}`;
-      const div = document.createElement("div");
-      div.className = "form-check form-check-sm";
-      const isChecked = ggSelectedFilters.bolag.length === 0 || ggSelectedFilters.bolag.includes(val);
-      div.innerHTML = `
-        <input class="form-check-input gg-filter-check" type="checkbox" id="${id}"
-               data-group="bolag" value="${val}" ${isChecked ? "checked" : ""}>
-        <label class="form-check-label" for="${id}" style="font-size:12px">${val}</label>
-      `;
-      div.querySelector("input").addEventListener("change", ggSaveFilters);
-      group.appendChild(div);
-    });
-    content.appendChild(group);
-    const btnRow = document.createElement("div");
-    btnRow.className = "d-flex gap-2 mt-2";
-    const selectAll = document.createElement("button");
-    selectAll.className = "btn btn-sm btn-outline-secondary";
-    selectAll.textContent = "Välj alla";
-    selectAll.onclick = () => { document.querySelectorAll(".gg-filter-check").forEach(cb => { cb.checked = true; }); ggSaveFilters(); };
-    const clearAll = document.createElement("button");
-    clearAll.className = "btn btn-sm btn-outline-secondary";
-    clearAll.textContent = "Rensa filter";
-    clearAll.onclick = () => { document.querySelectorAll(".gg-filter-check").forEach(cb => { cb.checked = false; }); ggSaveFilters(); };
-    btnRow.appendChild(selectAll);
-    btnRow.appendChild(clearAll);
-    content.appendChild(btnRow);
-  } catch (_) {}
-}
-
-function ggSaveFilters() {
-  const checked = [];
-  document.querySelectorAll(".gg-filter-check:checked").forEach(cb => checked.push(cb.value));
-  ggSelectedFilters.bolag = checked;
-  appendLog(`GG filter: bolag=[${checked.join(",")}]`);
 }
 
 async function ggUploadFile(key, file) {
@@ -2573,11 +2517,7 @@ async function ggProcess() {
   if (btn) btn.disabled = true;
   if (status) status.textContent = "Bearbetar...";
   try {
-    const params = new URLSearchParams();
-    if (ggSelectedFilters.bolag.length > 0) {
-      params.set("bolag", ggSelectedFilters.bolag.join(","));
-    }
-    const resp = await fetch(`${API}/api/gg/process?${params}`, { method: "POST" });
+    const resp = await fetch(`${API}/api/gg/process`, { method: "POST" });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
     if (data.errors && data.errors.length > 0) {
@@ -2696,7 +2636,7 @@ async function renderGGDagsoversikt() {
 
     let html = '';
 
-    // --- Row 1: Totala Rader + Ehandel | Rader per avgång + Avgång klar | Transportör ---
+    // --- Row 1: Totala Rader + Ehandel | Pie chart | Rader per avgång + Avgång klar | Transportör ---
 
     // Column 1: Totala Rader + Ehandel
     html += '<div class="col-auto">';
@@ -2719,7 +2659,16 @@ async function renderGGDagsoversikt() {
     }
     html += '</div>'; // /col
 
-    // Column 2: Rader per avgång + Avgång klar
+    // Column 2: Pie chart (Tilldelning Rader)
+    const zoneTotals = (d.totals || []).filter(t => t.zone && t.count > 0);
+    if (zoneTotals.length > 0) {
+      html += '<div class="col-auto">';
+      html += '<div class="card mb-2"><div class="card-header fw-bold">Tilldelning Rader</div><div class="card-body py-2 d-flex align-items-center justify-content-center">';
+      html += '<canvas id="gg-dag-pie" width="220" height="220"></canvas>';
+      html += '</div></div></div>';
+    }
+
+    // Column 3: Rader per avgång + Avgång klar
     html += '<div class="col-auto">';
     html += '<div class="card mb-2"><div class="card-header fw-bold">Rader per avgång</div><div class="card-body py-2">';
     html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th></th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">F</th><th class="text-end">E</th></tr></thead><tbody>';
@@ -2745,7 +2694,7 @@ async function renderGGDagsoversikt() {
     }
     html += '</div>'; // /col
 
-    // Column 3: Transportörer
+    // Column 4: Transportörer
     html += '<div class="col-auto">';
     html += '<div class="card mb-2"><div class="card-header fw-bold">Transportör</div><div class="card-body py-2">';
     html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Transportör</th><th class="text-end">A</th><th class="text-end">O</th><th class="text-end">F</th><th class="text-end">Tot</th></tr></thead><tbody>';
@@ -2755,10 +2704,21 @@ async function renderGGDagsoversikt() {
     html += '</tbody></table></div></div>';
     html += '</div>'; // /col
 
-    // --- Row 2: Tid kvar (from produktion data) ---
+    // --- Row 2: Bar charts per zone ---
+    const departures = d.departures || [];
+    if (departures.length > 0) {
+      html += '<div class="col-12"><div class="row g-3 mt-1">';
+      for (const z of ["A", "S", "F", "E"]) {
+        html += `<div class="col-6 col-lg-3"><div class="card mb-2"><div class="card-header fw-bold">Zon ${z}</div><div class="card-body py-2">`;
+        html += `<canvas id="gg-dag-bar-${z}" height="160"></canvas>`;
+        html += '</div></div></div>';
+      }
+      html += '</div></div>';
+    }
+
+    // --- Row 3: Tid kvar (from produktion data) ---
     if (prod && prod.stats_dagen && prod.stats_dagen.length) {
       html += '<div class="col-12"><div class="row g-3 mt-1">';
-      // Tid kvar (Timmar)
       html += '<div class="col-auto"><div class="card mb-2"><div class="card-header fw-bold">Tid kvar (Timmar)</div><div class="card-body py-2">';
       html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
       for (const s of prod.stats_dagen) {
@@ -2774,6 +2734,58 @@ async function renderGGDagsoversikt() {
     }
 
     container.innerHTML = html;
+
+    // --- Render charts ---
+    const pieColors = { A: "#1b6ec2", S: "#e8833a", F: "#6cae3e", E: "#a855f7", R: "#6c757d" };
+    if (typeof Chart !== "undefined") {
+      // Pie chart
+      const pieCanvas = document.getElementById("gg-dag-pie");
+      if (pieCanvas && zoneTotals.length > 0) {
+        new Chart(pieCanvas, {
+          type: "pie",
+          data: {
+            labels: zoneTotals.map(t => `${t.zone} ${t.label}`),
+            datasets: [{
+              data: zoneTotals.map(t => t.count),
+              backgroundColor: zoneTotals.map(t => pieColors[t.zone] || "#999"),
+            }],
+          },
+          options: {
+            responsive: false,
+            plugins: {
+              legend: { position: "right", labels: { font: { size: 11 }, color: getComputedStyle(document.body).getPropertyValue("--page-text").trim() || "#1f2328" } },
+            },
+          },
+        });
+      }
+
+      // Bar charts per zone
+      for (const z of ["A", "S", "F", "E"]) {
+        const barCanvas = document.getElementById(`gg-dag-bar-${z}`);
+        if (!barCanvas) continue;
+        const labels = departures.map(dep => dep.time);
+        const values = departures.map(dep => dep[z] || 0);
+        new Chart(barCanvas, {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [{
+              data: values,
+              backgroundColor: pieColors[z] || "#1b6ec2",
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { beginAtZero: true, ticks: { font: { size: 10 }, color: getComputedStyle(document.body).getPropertyValue("--page-text").trim() || "#1f2328" } },
+              x: { ticks: { font: { size: 9 }, color: getComputedStyle(document.body).getPropertyValue("--page-text").trim() || "#1f2328" } },
+            },
+          },
+        });
+      }
+    }
   } catch (err) {
     container.innerHTML = `<div class="col-12"><p class="text-danger">${esc(err.message)}</p></div>`;
   }
