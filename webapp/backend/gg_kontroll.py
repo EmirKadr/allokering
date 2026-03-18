@@ -444,7 +444,7 @@ def _process_dagsoversikt(
 
         if zon_col:
             zone_counts = df[zon_col].str.strip().str.upper().value_counts()
-            zone_labels = {"A": "Huvudplock", "S": "Skrymmande", "F": "Frys", "E": "E-handel", "R": "Autostore"}
+            zone_labels = {"A": "Huvudplock", "S": "Skrymmande", "F": "HIB", "E": "E-handel", "R": "Autostore"}
             for z in ["A", "S", "F", "E", "R"]:
                 totals.append({
                     "zone": z,
