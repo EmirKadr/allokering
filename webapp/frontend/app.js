@@ -79,6 +79,20 @@ const WMS_SLOTS = [
   { key: "wms_correct", label: "Saldojusteringar & inventeringsavvikelser", accept: ".csv,.txt" },
 ];
 
+const SLOT_BY_KEY = new Map(
+  [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].map(slot => [slot.key, slot])
+);
+
+const ALLOKERING_UPLOAD_GROUPS = {
+  "file-rows-allokering": ["orders", "buffer", "item"],
+  "file-rows-kontroller": ["orders", "overview", "dispatch"],
+  "file-rows-saldo": ["orders", "automation"],
+};
+
+const ALLOKERING_PROG_GROUPS = {
+  "prog-rows-saldo": ["prognos", "campaign"],
+};
+
 const ASK_FETCHABLE_KEYS = new Set([
   ...FILE_SLOTS.map(s => s.key),
   ...WMS_SLOTS.map(s => s.key),
@@ -168,6 +182,18 @@ const OPEN_RESULT_ORDER = [
   "eftersok",
 ];
 
+const RESULT_GROUP_BY_KEY = {
+  allokerade: "result-buttons-allokering",
+  nearmiss: "result-buttons-allokering",
+  pallplatser: "result-buttons-allokering",
+  "hib-koppling": "result-buttons-kontroller",
+  orderkontroll: "result-buttons-kontroller",
+  dispatchkontroll: "result-buttons-kontroller",
+  refill: "result-buttons-saldo",
+  prognos: "result-buttons-saldo",
+  eftersok: "result-buttons-eftersok",
+};
+
 const OPEN_BUTTON_HINTS = {
   "allokerade": "Tryck först: Kör allokering",
   "nearmiss": "Tryck först: Kör allokering",
@@ -181,6 +207,7 @@ const OPEN_BUTTON_HINTS = {
 };
 
 const THEME_STORAGE_KEY = "allok_theme";
+const ALLOKERING_SUBTAB_STORAGE_KEY = "allok_allokering_subtab";
 
 // ---------------------------------------------------------------------------
 // State
@@ -250,6 +277,7 @@ function _loadTabState(pageId) {
 }
 
 let _activePageId = "allokering-page";
+let _activeAllokeringSubtab = "allokering-subpage-allokering";
 let classifierStatusPoll = null;
 let classifierConfig = null;
 let classifierSessionId = null;
@@ -442,6 +470,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   applyTheme(getCurrentTheme());
   setupMainTabs();
+  setupAllokeringSubtabs();
   setupAuth();
   renderFileRows();
   renderProgRows();
@@ -468,30 +497,33 @@ window.addEventListener("DOMContentLoaded", async () => {
 // ---------------------------------------------------------------------------
 
 function renderFileRows() {
-  const container = document.getElementById("file-rows");
-  container.innerHTML = "";
-  FILE_SLOTS.forEach(slot => {
-    container.appendChild(buildFileRow(slot));
+  Object.entries(ALLOKERING_UPLOAD_GROUPS).forEach(([containerId, keys]) => {
+    renderSlotGroup(containerId, keys, containerId);
   });
 }
 
 function renderProgRows() {
-  const container = document.getElementById("prog-rows");
-  container.innerHTML = "";
-  PROG_SLOTS.forEach(slot => {
-    container.appendChild(buildFileRow(slot));
+  Object.entries(ALLOKERING_PROG_GROUPS).forEach(([containerId, keys]) => {
+    renderSlotGroup(containerId, keys, containerId);
   });
 }
 
 function renderWmsRows() {
-  const container = document.getElementById("wms-file-rows");
+  renderSlotGroup("wms-file-rows", WMS_SLOTS.map(slot => slot.key), "wms-file-rows");
+}
+
+function renderSlotGroup(containerId, slotKeys, scopePrefix) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
   container.innerHTML = "";
-  WMS_SLOTS.forEach(slot => {
-    container.appendChild(buildFileRow(slot));
+  slotKeys.forEach((key, index) => {
+    const slot = SLOT_BY_KEY.get(key);
+    if (!slot) return;
+    container.appendChild(buildFileRow(slot, `${scopePrefix}-${index}`));
   });
 }
 
-function buildFileRow(slot) {
+function buildFileRow(slot, scopeId) {
   const row = document.createElement("div");
   row.className = "d-flex align-items-center gap-2 mb-1";
   row.style.minWidth = "460px";
@@ -504,10 +536,10 @@ function buildFileRow(slot) {
 
   const badge = document.createElement("span");
   badge.className = "file-status-badge";
-  badge.id = `badge-${slot.key}`;
+  badge.dataset.slotKey = slot.key;
+  badge.dataset.scopeId = scopeId || slot.key;
   badge.textContent = "Ej fil";
   badge.title = "Klicka för att välja fil";
-  badge.addEventListener("click", () => triggerFilePicker(slot.key, slot.accept));
 
   const removeBtn = document.createElement("button");
   removeBtn.className = "btn btn-danger btn-sm py-0 px-1";
@@ -518,7 +550,7 @@ function buildFileRow(slot) {
 
   const askBtn = document.createElement("button");
   askBtn.className = "btn btn-outline-primary btn-sm py-0 px-2";
-  askBtn.id = `btn-ask-fetch-${slot.key}`;
+  askBtn.dataset.askSlotKey = slot.key;
   askBtn.textContent = "H\u00e4mta CSV";
   askBtn.title = `H\u00e4mta ${viewNameFromSlotLabel(slot.label)} fr\u00e5n ASK och l\u00e4gg i denna slot`;
   askBtn.setAttribute("data-bs-toggle", "tooltip");
@@ -530,7 +562,8 @@ function buildFileRow(slot) {
   input.accept = slot.accept || "";
   input.multiple = true;
   input.style.display = "none";
-  input.id = `input-${slot.key}`;
+  input.dataset.slotKey = slot.key;
+  input.dataset.scopeId = scopeId || slot.key;
   input.addEventListener("change", async (e) => {
     const files = Array.from(e.target.files);
     const changedKeys = new Set();
@@ -546,6 +579,7 @@ function buildFileRow(slot) {
     }
     input.value = "";
   });
+  badge.addEventListener("click", () => input.click());
 
   row.appendChild(label);
   row.appendChild(badge);
@@ -569,11 +603,6 @@ function viewNameFromSlotLabel(label) {
 
 function askViewNameForSlot(fileKey, label) {
   return ASK_VIEW_OVERRIDES[fileKey] || viewNameFromSlotLabel(label);
-}
-
-function triggerFilePicker(key, accept) {
-  const input = document.getElementById(`input-${key}`);
-  if (input) input.click();
 }
 
 // ---------------------------------------------------------------------------
@@ -688,17 +717,18 @@ async function refreshFileStatus() {
 }
 
 function setBadge(key, text, loaded) {
-  const badge = document.getElementById(`badge-${key}`);
-  if (!badge) return;
   const maxLen = 18;
-  const displayText = text.length > maxLen ? "..." + text.slice(-maxLen + 3) : text;
-  badge.textContent = displayText;
-  badge.title = text;
-  if (loaded) {
-    badge.classList.add("loaded");
-  } else {
-    badge.classList.remove("loaded");
-  }
+  const fullText = String(text || "");
+  const displayText = fullText.length > maxLen ? "..." + fullText.slice(-maxLen + 3) : fullText;
+  document.querySelectorAll(`.file-status-badge[data-slot-key="${key}"]`).forEach((badge) => {
+    badge.textContent = displayText;
+    badge.title = fullText;
+    if (loaded) {
+      badge.classList.add("loaded");
+    } else {
+      badge.classList.remove("loaded");
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -773,7 +803,7 @@ async function fetchAskCsvToSlot(fileKey, slotLabel) {
     appendLog("ASK CSV ar avstangt i denna build.");
     return;
   }
-  const btn = document.getElementById(`btn-ask-fetch-${fileKey}`);
+  const btn = document.querySelector(`button[data-ask-slot-key="${fileKey}"]`);
   const original = btn ? btn.textContent : "Hämta CSV";
   if (btn) {
     btn.disabled = true;
@@ -1213,6 +1243,43 @@ function appendClassifierLog(msg) {
 // ---------------------------------------------------------------------------
 // Main tabs
 // ---------------------------------------------------------------------------
+
+function setupAllokeringSubtabs() {
+  const buttons = Array.from(document.querySelectorAll("#allokering-subtabs .nav-link[data-subtab]"));
+  if (buttons.length === 0) return;
+  buttons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setAllokeringSubtab(btn.dataset.subtab || "allokering-subpage-allokering");
+    });
+  });
+  let initialSubtab = "allokering-subpage-allokering";
+  try {
+    const stored = sessionStorage.getItem(ALLOKERING_SUBTAB_STORAGE_KEY);
+    if (stored && document.getElementById(stored)) {
+      initialSubtab = stored;
+    }
+  } catch (_e) {
+    // Ignorera
+  }
+  setAllokeringSubtab(initialSubtab);
+}
+
+function setAllokeringSubtab(subtabId) {
+  _activeAllokeringSubtab = document.getElementById(subtabId)
+    ? subtabId
+    : "allokering-subpage-allokering";
+  document.querySelectorAll(".allokering-subpage").forEach((pane) => {
+    pane.classList.toggle("active", pane.id === _activeAllokeringSubtab);
+  });
+  document.querySelectorAll("#allokering-subtabs .nav-link[data-subtab]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.subtab === _activeAllokeringSubtab);
+  });
+  try {
+    sessionStorage.setItem(ALLOKERING_SUBTAB_STORAGE_KEY, _activeAllokeringSubtab);
+  } catch (_e) {
+    // Ignorera
+  }
+}
 
 function setupMainTabs() {
   const buttons = Array.from(document.querySelectorAll("#main-tabs .nav-link[data-page]"));
@@ -1685,8 +1752,9 @@ function createResultButton(key, isReady) {
 }
 
 function resultContainerForKey(key) {
-  if (key === "eftersok") {
-    return document.getElementById("result-buttons-eftersok");
+  const containerId = RESULT_GROUP_BY_KEY[key];
+  if (containerId) {
+    return document.getElementById(containerId);
   }
   return document.getElementById("result-buttons-allokering");
 }
@@ -1704,8 +1772,12 @@ function updateResultContainerVisibility(container) {
 
 function renderResultButtons() {
   const allokeringContainer = document.getElementById("result-buttons-allokering");
+  const kontrollerContainer = document.getElementById("result-buttons-kontroller");
+  const saldoContainer = document.getElementById("result-buttons-saldo");
   const eftersokContainer = document.getElementById("result-buttons-eftersok");
   if (allokeringContainer) allokeringContainer.innerHTML = "";
+  if (kontrollerContainer) kontrollerContainer.innerHTML = "";
+  if (saldoContainer) saldoContainer.innerHTML = "";
   if (eftersokContainer) eftersokContainer.innerHTML = "";
 
   OPEN_RESULT_ORDER.forEach(key => {
@@ -1721,12 +1793,14 @@ function renderResultButtons() {
   Array.from(availableResults)
     .filter(key => !OPEN_RESULT_ORDER.includes(key))
     .forEach(key => {
-      const container = resultContainerForKey(key) || allokeringContainer || eftersokContainer;
+      const container = resultContainerForKey(key) || allokeringContainer || kontrollerContainer || saldoContainer || eftersokContainer;
       if (!container) return;
       container.appendChild(createResultButton(key, true));
     });
 
   updateResultContainerVisibility(allokeringContainer);
+  updateResultContainerVisibility(kontrollerContainer);
+  updateResultContainerVisibility(saldoContainer);
   updateResultContainerVisibility(eftersokContainer);
   initTooltips();
 }

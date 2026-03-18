@@ -66,6 +66,43 @@ body {
   display: block;
 }
 
+.allokering-subtabs {
+  gap: 8px;
+}
+
+.allokering-subtabs .nav-link {
+  border: 1px solid var(--card-border);
+  background: var(--card-header-bg);
+  color: var(--page-text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0.35rem 0.8rem;
+}
+
+.allokering-subtabs .nav-link:hover,
+.allokering-subtabs .nav-link:focus {
+  background: var(--nav-hover-bg);
+  color: var(--nav-active-text);
+}
+
+.allokering-subtabs .nav-link.active {
+  background: var(--nav-active-bg);
+  color: var(--nav-active-text);
+  box-shadow: inset 0 0 0 1px var(--card-border);
+}
+
+.allokering-subpage {
+  display: none;
+}
+
+.allokering-subpage.active {
+  display: block;
+}
+
+.subtab-upload-card {
+  min-width: 520px;
+}
+
 .top-bar {
   display: flex;
   flex-wrap: wrap;

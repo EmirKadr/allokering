@@ -16,7 +16,7 @@
     })();
   </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260318g">
+  <link rel="stylesheet" href="style.css?v=20260318h">
 </head>
 <body>
 <div class="container-fluid p-3">
@@ -64,106 +64,157 @@
   </div>
 
   <div id="allokering-page" class="main-page-pane active">
-    <div class="row g-3">
+    <div class="allokering-subtab-shell">
+      <ul class="nav nav-pills allokering-subtabs mb-3" id="allokering-subtabs">
+        <li class="nav-item">
+          <button class="nav-link active" type="button" data-subtab="allokering-subpage-allokering">Allokering</button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link" type="button" data-subtab="allokering-subpage-kontroller">Kontroller</button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link" type="button" data-subtab="allokering-subpage-saldo">Saldo</button>
+        </li>
+      </ul>
 
-      <!-- Vänster: Indatafiler + Prognos/Kampanj + Filter -->
-      <div class="col-auto">
-
-        <!-- Indatafiler -->
-        <div class="card mb-2">
-          <div class="card-header fw-bold">Indatafiler</div>
-          <div class="card-body py-2" id="file-rows">
-            <!-- Genereras av app.js -->
-          </div>
-        </div>
-
-        <!-- Prognos / Kampanj -->
-        <div class="card mb-2">
-          <div class="card-header fw-bold">Prognos / Kampanj</div>
-          <div class="card-body py-2" id="prog-rows">
-            <!-- Genereras av app.js -->
-          </div>
-        </div>
-
-        <!-- Filter (dolt tills filer laddas upp) -->
-        <div class="card mb-2" id="filter-card" style="display:none">
-          <div class="card-header fw-bold">Filtrering</div>
-          <div class="card-body py-2" id="filter-content">
-            <!-- Genereras av app.js -->
-          </div>
-        </div>
-
-      </div>
-
-      <div class="col-auto">
-        <div class="card mb-2 kalltyp-sidebar-card" id="kalltyp-summary-card" style="display:none">
-          <div class="card-header">
-            <span class="fw-bold">Summering per Källtyp</span>
-          </div>
-          <div class="card-body py-2">
-            <table class="table table-sm table-bordered mb-0" id="kalltyp-summary-table">
-              <thead>
-                <tr>
-                  <th scope="col">Källtyp</th>
-                  <th scope="col" class="text-end">antal rader</th>
-                  <th scope="col" class="text-end">antal kolli</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
+      <div class="card mb-3" id="filter-card" style="display:none">
+        <div class="card-header fw-bold">Filtrering</div>
+        <div class="card-body py-2" id="filter-content">
+          <!-- Genereras av app.js -->
         </div>
       </div>
 
-    </div><!-- /row -->
+      <div id="allokering-subpage-allokering" class="allokering-subpage active">
+        <div class="row g-3">
+          <div class="col-auto">
+            <div class="card mb-2 subtab-upload-card">
+              <div class="card-header fw-bold">Indatafiler</div>
+              <div class="card-body py-2" id="file-rows-allokering">
+                <!-- Genereras av app.js -->
+              </div>
+            </div>
+          </div>
+          <div class="col-auto">
+            <div class="card mb-2 kalltyp-sidebar-card" id="kalltyp-summary-card" style="display:none">
+              <div class="card-header">
+                <span class="fw-bold">Summering per Källtyp</span>
+              </div>
+              <div class="card-body py-2">
+                <table class="table table-sm table-bordered mb-0" id="kalltyp-summary-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Källtyp</th>
+                      <th scope="col" class="text-end">antal rader</th>
+                      <th scope="col" class="text-end">antal kolli</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
 
-    <div class="action-groups mb-2 mt-1">
-      <div class="action-group">
-        <div class="action-group-heading">Funktioner</div>
-        <div class="action-group-buttons">
-          <button class="btn btn-sm action-btn action-btn-function" id="btn-allokering" onclick="runJob('allokering')"
-                  data-bs-toggle="tooltip" title="Kör FIFO-allokering av kundorder mot buffertpallar">
-            Allokering
-          </button>
+        <div class="action-groups mb-2 mt-1">
+          <div class="action-group">
+            <div class="action-group-heading">Funktioner</div>
+            <div class="action-group-buttons">
+              <button class="btn btn-sm action-btn action-btn-function" id="btn-allokering" onclick="runJob('allokering')"
+                      data-bs-toggle="tooltip" title="Kör FIFO-allokering av kundorder mot buffertpallar">
+                Allokering
+              </button>
+            </div>
+          </div>
+
+          <div class="action-group action-group-open">
+            <div class="action-group-heading">Öppna Excel</div>
+            <div class="action-group-buttons" id="result-buttons-allokering">
+              <!-- Genereras av app.js efter körning -->
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="action-group">
-        <div class="action-group-heading">Kontroller</div>
-        <div class="action-group-buttons">
-          <button class="btn btn-sm action-btn action-btn-control" id="btn-hib-koppling" onclick="runJob('hib-koppling')"
-                  data-bs-toggle="tooltip" title="Koppla e-handelsorder mot lagerorder (HIB)">
-            HIB
-          </button>
-          <button class="btn btn-sm action-btn action-btn-control" id="btn-orderkontroll" onclick="runJob('orderkontroll')"
-                  data-bs-toggle="tooltip" title="Kontrollera dataintegritet och status i orderöversikten">
-            Orderöversikt
-          </button>
-          <button class="btn btn-sm action-btn action-btn-control" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')"
-                  data-bs-toggle="tooltip" title="Verifiera att dispatchpallar är korrekt tilldelade">
-            Dispatchpallar
-          </button>
+      <div id="allokering-subpage-kontroller" class="allokering-subpage">
+        <div class="row g-3">
+          <div class="col-auto">
+            <div class="card mb-2 subtab-upload-card">
+              <div class="card-header fw-bold">Indatafiler</div>
+              <div class="card-body py-2" id="file-rows-kontroller">
+                <!-- Genereras av app.js -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-groups mb-2 mt-1">
+          <div class="action-group">
+            <div class="action-group-heading">Kontroller</div>
+            <div class="action-group-buttons">
+              <button class="btn btn-sm action-btn action-btn-control" id="btn-hib-koppling" onclick="runJob('hib-koppling')"
+                      data-bs-toggle="tooltip" title="Koppla e-handelsorder mot lagerorder (HIB)">
+                HIB
+              </button>
+              <button class="btn btn-sm action-btn action-btn-control" id="btn-orderkontroll" onclick="runJob('orderkontroll')"
+                      data-bs-toggle="tooltip" title="Kontrollera dataintegritet och status i orderöversikten">
+                Orderöversikt
+              </button>
+              <button class="btn btn-sm action-btn action-btn-control" id="btn-dispatchkontroll" onclick="runJob('dispatchkontroll')"
+                      data-bs-toggle="tooltip" title="Verifiera att dispatchpallar är korrekt tilldelade">
+                Dispatchpallar
+              </button>
+            </div>
+          </div>
+
+          <div class="action-group action-group-open">
+            <div class="action-group-heading">Öppna Excel</div>
+            <div class="action-group-buttons" id="result-buttons-kontroller">
+              <!-- Genereras av app.js efter körning -->
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="action-group">
-        <div class="action-group-heading">Kopiera</div>
-        <div class="action-group-buttons">
-          <button class="btn btn-sm action-btn action-btn-copy" id="btn-kompletta" onclick="copyList('list1')"
-                  data-bs-toggle="tooltip" title="Kopiera ordernummer för alla kompletta (fullt allokerade) ordrar">
-            Kompletta ordrar
-          </button>
-          <button class="btn btn-sm action-btn action-btn-copy" id="btn-pafyllning" onclick="copyList('list2')"
-                  data-bs-toggle="tooltip" title="Kopiera artikelnummer som behöver påfyllning från lager">
-            Påfyllningsbehov
-          </button>
-        </div>
-      </div>
+      <div id="allokering-subpage-saldo" class="allokering-subpage">
+        <div class="row g-3">
+          <div class="col-auto">
+            <div class="card mb-2 subtab-upload-card">
+              <div class="card-header fw-bold">Saldofiler</div>
+              <div class="card-body py-2" id="file-rows-saldo">
+                <!-- Genereras av app.js -->
+              </div>
+            </div>
 
-      <div class="action-group action-group-open">
-        <div class="action-group-heading">Öppna Excel</div>
-        <div class="action-group-buttons" id="result-buttons-allokering">
-          <!-- Genereras av app.js efter körning -->
+            <div class="card mb-2 subtab-upload-card">
+              <div class="card-header fw-bold">Prognos / Kampanj</div>
+              <div class="card-body py-2" id="prog-rows-saldo">
+                <!-- Genereras av app.js -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-groups mb-2 mt-1">
+          <div class="action-group">
+            <div class="action-group-heading">Kopiera</div>
+            <div class="action-group-buttons">
+              <button class="btn btn-sm action-btn action-btn-copy" id="btn-kompletta" onclick="copyList('list1')"
+                      data-bs-toggle="tooltip" title="Kopiera ordernummer för alla kompletta (fullt allokerade) ordrar">
+                Kompletta ordrar
+              </button>
+              <button class="btn btn-sm action-btn action-btn-copy" id="btn-pafyllning" onclick="copyList('list2')"
+                      data-bs-toggle="tooltip" title="Kopiera artikelnummer som behöver påfyllning från lager">
+                Påfyllningsbehov
+              </button>
+            </div>
+          </div>
+
+          <div class="action-group action-group-open">
+            <div class="action-group-heading">Öppna Excel</div>
+            <div class="action-group-buttons" id="result-buttons-saldo">
+              <!-- Genereras av app.js efter körning -->
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -277,13 +328,11 @@
     </div>
   </div>
 
-  <!-- Delad loggruta -->
   <pre id="log-output" class="bg-dark text-light p-2 mb-0"
        style="height:220px;overflow-y:auto;font-size:12px;border-radius:4px;"></pre>
-
-</div><!-- /container -->
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="app.js?v=20260318k"></script>
+<script src="app.js?v=20260318l"></script>
 </body>
 </html>
