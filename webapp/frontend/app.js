@@ -641,6 +641,8 @@ async function uploadFile(fileKey, file, options = {}) {
     const data = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${API}/api/upload/${sessionId}`);
+      const authToken = localStorage.getItem("allok_auth_token");
+      if (authToken) xhr.setRequestHeader("Authorization", "Bearer " + authToken);
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
           const pct = Math.round((e.loaded / e.total) * 100);
