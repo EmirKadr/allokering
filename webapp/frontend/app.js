@@ -1166,9 +1166,18 @@ function connectSSE() {
 // Logg
 // ---------------------------------------------------------------------------
 
-function appendLog(msg) {
+function appendLog(msg, updateLast) {
   const el = document.getElementById("log-output");
-  el.textContent += msg + "\n";
+  if (updateLast) {
+    const lines = el.textContent.split("\n");
+    // Remove trailing empty line, replace last content line
+    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    if (lines.length > 0 && lines[lines.length - 1].startsWith("Laddar upp ")) lines.pop();
+    lines.push(msg, "");
+    el.textContent = lines.join("\n");
+  } else {
+    el.textContent += msg + "\n";
+  }
   el.scrollTop = el.scrollHeight;
 }
 
@@ -2311,16 +2320,37 @@ function ggSaveFilters() {
 
 async function ggUploadFile(key, file) {
   const badge = document.getElementById(`gg-badge-${key}`);
-  if (badge) { badge.textContent = "Laddar upp..."; badge.className = "file-status-badge uploading"; }
+  if (badge) { badge.textContent = "0%"; badge.className = "file-status-badge"; }
   try {
     const form = new FormData();
     form.append("file", file);
-    const resp = await fetch(`${API}/api/gg/upload?key=${encodeURIComponent(key)}`, { method: "POST", body: form });
-    if (!resp.ok) throw new Error(await resp.text());
-    if (badge) { badge.textContent = file.name; badge.className = "file-status-badge has-file"; }
+    const authToken = localStorage.getItem("allok_auth_token");
+
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API}/api/gg/upload?key=${encodeURIComponent(key)}`);
+      if (authToken) xhr.setRequestHeader("Authorization", "Bearer " + authToken);
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          if (badge) badge.textContent = `${pct}%`;
+          appendLog(`Laddar upp ${file.name}: ${pct}%`, true);
+        }
+      });
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(xhr.responseText));
+      };
+      xhr.onerror = () => reject(new Error("Nätverksfel"));
+      xhr.send(form);
+    });
+
+    const shortName = file.name.length > 18 ? "..." + file.name.slice(-15) : file.name;
+    if (badge) { badge.textContent = shortName; badge.title = file.name; badge.className = "file-status-badge loaded"; }
+    appendLog(`GG uppladdad: [${key}] ${file.name}`);
   } catch (err) {
-    if (badge) { badge.textContent = "Fel!"; badge.className = "file-status-badge error"; }
-    console.error("GG upload error:", err);
+    if (badge) { badge.textContent = "Fel!"; badge.className = "file-status-badge"; }
+    appendLog(`GG fel vid uppladdning [${key}]: ${err.message}`);
   }
 }
 
@@ -2344,7 +2374,7 @@ async function ggRefreshFiles() {
       const f = files[slot.key];
       if (f) {
         badge.textContent = f.filename || slot.key;
-        badge.className = "file-status-badge has-file";
+        badge.className = "file-status-badge loaded";
       } else {
         badge.textContent = "Ej fil";
         badge.className = "file-status-badge";
