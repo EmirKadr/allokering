@@ -1245,11 +1245,11 @@ function appendClassifierLog(msg) {
 // ---------------------------------------------------------------------------
 
 function setupAllokeringSubtabs() {
-  const buttons = Array.from(document.querySelectorAll("#allokering-subtabs .nav-link[data-subtab]"));
+  const buttons = Array.from(document.querySelectorAll("#main-tabs .nav-link[data-page='allokering-page'][data-subtab]"));
   if (buttons.length === 0) return;
   buttons.forEach((btn) => {
     btn.addEventListener("click", () => {
-      setAllokeringSubtab(btn.dataset.subtab || "allokering-subpage-allokering");
+      setMainPage("allokering-page", btn.dataset.subtab || "allokering-subpage-allokering");
     });
   });
   let initialSubtab = "allokering-subpage-allokering";
@@ -1271,9 +1271,6 @@ function setAllokeringSubtab(subtabId) {
   document.querySelectorAll(".allokering-subpage").forEach((pane) => {
     pane.classList.toggle("active", pane.id === _activeAllokeringSubtab);
   });
-  document.querySelectorAll("#allokering-subtabs .nav-link[data-subtab]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.subtab === _activeAllokeringSubtab);
-  });
   try {
     sessionStorage.setItem(ALLOKERING_SUBTAB_STORAGE_KEY, _activeAllokeringSubtab);
   } catch (_e) {
@@ -1285,21 +1282,30 @@ function setupMainTabs() {
   const buttons = Array.from(document.querySelectorAll("#main-tabs .nav-link[data-page]"));
   if (buttons.length === 0) return;
   buttons.forEach(btn => {
+    if (btn.dataset.page === "allokering-page" && btn.dataset.subtab) return;
     btn.addEventListener("click", () => {
-      setMainPage(btn.dataset.page || "allokering-page");
+      setMainPage(btn.dataset.page || "allokering-page", btn.dataset.subtab || null);
     });
   });
   const activeButton = buttons.find(btn => btn.classList.contains("active"));
-  setMainPage(activeButton?.dataset.page || "allokering-page");
+  setMainPage(
+    activeButton?.dataset.page || "allokering-page",
+    activeButton?.dataset.subtab || "allokering-subpage-allokering"
+  );
 }
 
-function setMainPage(pageId) {
+function setMainPage(pageId, subtabId = null) {
   document.querySelectorAll(".main-page-pane").forEach(pane => {
     pane.classList.toggle("active", pane.id === pageId);
   });
   document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.page === pageId);
+    const matchesPage = btn.dataset.page === pageId;
+    const matchesSubtab = !btn.dataset.subtab || btn.dataset.subtab === (subtabId || _activeAllokeringSubtab);
+    btn.classList.toggle("active", matchesPage && matchesSubtab);
   });
+  if (pageId === "allokering-page") {
+    setAllokeringSubtab(subtabId || _activeAllokeringSubtab);
+  }
   if (pageId === "admin-page") { renderAdminPanel(); return; }
   if (pageId === "gg-kontroll-page") { renderGGKontrollPage(); return; }
   if (pageId === "gg-produktion-page") { renderGGProduktion(); return; }

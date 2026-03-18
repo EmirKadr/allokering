@@ -23,7 +23,13 @@
   <div class="top-bar mb-3">
     <ul class="nav nav-tabs mb-0" id="main-tabs">
       <li class="nav-item">
-        <button class="nav-link active" type="button" data-page="allokering-page">Allokering</button>
+        <button class="nav-link active" type="button" data-page="allokering-page" data-subtab="allokering-subpage-allokering">Allokering</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" type="button" data-page="allokering-page" data-subtab="allokering-subpage-kontroller">Kontroller</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" type="button" data-page="allokering-page" data-subtab="allokering-subpage-saldo">Saldo</button>
       </li>
       <li class="nav-item">
         <button class="nav-link" type="button" data-page="eftersok-page">Eftersök</button>
@@ -65,18 +71,6 @@
 
   <div id="allokering-page" class="main-page-pane active">
     <div class="allokering-subtab-shell">
-      <ul class="nav nav-pills allokering-subtabs mb-3" id="allokering-subtabs">
-        <li class="nav-item">
-          <button class="nav-link active" type="button" data-subtab="allokering-subpage-allokering">Allokering</button>
-        </li>
-        <li class="nav-item">
-          <button class="nav-link" type="button" data-subtab="allokering-subpage-kontroller">Kontroller</button>
-        </li>
-        <li class="nav-item">
-          <button class="nav-link" type="button" data-subtab="allokering-subpage-saldo">Saldo</button>
-        </li>
-      </ul>
-
       <div class="card mb-3" id="filter-card" style="display:none">
         <div class="card-header fw-bold">Filtrering</div>
         <div class="card-body py-2" id="filter-content">
