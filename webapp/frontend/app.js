@@ -2240,7 +2240,7 @@ const GG_FILE_SLOTS = [
 
 // Kolumner som behövs per fil — matchar backend GG_NEEDED_COLS
 const GG_NEEDED_COLS = {
-  gg_orders:      ["status", "zon", "bolag"],
+  gg_orders:      ["status", "zon", "bolag", "kund"],
   gg_overview:    ["avgångstid", "zon", "rader", "transportör", "status", "bolag"],
   gg_plocklogg:   ["status", "zon", "användare", "datum", "timestamp", "ändrad", "andrad", "bolag"],
   gg_palluppdrag: ["zon", "lagerplats", "krangång", "bolag"],
@@ -2602,10 +2602,13 @@ async function renderGGDagsoversikt() {
   if (!container) return;
   container.innerHTML = '<div class="col-12"><p class="text-muted">Laddar...</p></div>';
   try {
-    const resp = await fetch(`${API}/api/gg/dagsoversikt`);
-    if (!resp.ok) throw new Error("Kunde inte hämta data");
-    const json = await resp.json();
-    const d = json.data;
+    const [dagResp, prodResp] = await Promise.all([
+      fetch(`${API}/api/gg/dagsoversikt`),
+      fetch(`${API}/api/gg/produktion`),
+    ]);
+    if (!dagResp.ok) throw new Error("Kunde inte hämta data");
+    const d = (await dagResp.json()).data;
+    const prod = prodResp.ok ? (await prodResp.json()).data : null;
     if (!d) {
       container.innerHTML = '<div class="col-12"><p class="text-muted">Ingen data ännu.</p></div>';
       return;
@@ -2613,31 +2616,79 @@ async function renderGGDagsoversikt() {
 
     let html = '';
 
-    // Card 1: Totala rader
-    html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Totala Rader</div><div class="card-body py-2">';
+    // --- Row 1: Totala Rader + Ehandel | Rader per avgång + Avgång klar | Transportör ---
+
+    // Column 1: Totala Rader + Ehandel
+    html += '<div class="col-auto">';
+    html += '<div class="card mb-2"><div class="card-header fw-bold">Totala Rader</div><div class="card-body py-2">';
     html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
     for (const t of (d.totals || [])) {
       const cls = t.zone ? "fw-bold" : "";
       html += `<tr><td>${t.zone ? esc(t.zone) : ""}</td><td class="${cls}">${esc(t.label)}</td><td class="text-end">${t.count}</td></tr>`;
     }
-    html += '</tbody></table></div></div></div>';
+    html += '</tbody></table></div></div>';
 
-    // Card 2: Rader per avgång
-    html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Rader per avgång</div><div class="card-body py-2">';
-    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Tidpunkt</th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">F</th><th class="text-end">E</th></tr></thead><tbody>';
+    // Ehandel
+    if (d.ehandel && d.ehandel.length) {
+      html += '<div class="card mb-2"><div class="card-header fw-bold">Ehandel</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
+      for (const eh of d.ehandel) {
+        html += `<tr><td class="fw-bold">${esc(eh.key)}</td><td>${esc(eh.label)}</td><td class="text-end">${eh.count}</td></tr>`;
+      }
+      html += '</tbody></table></div></div>';
+    }
+    html += '</div>'; // /col
+
+    // Column 2: Rader per avgång + Avgång klar
+    html += '<div class="col-auto">';
+    html += '<div class="card mb-2"><div class="card-header fw-bold">Rader per avgång</div><div class="card-body py-2">';
+    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th></th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">F</th><th class="text-end">E</th></tr></thead><tbody>';
     for (const dep of (d.departures || [])) {
       html += `<tr><td>${esc(dep.time)}</td><td class="text-end">${dep.A}</td><td class="text-end">${dep.S}</td><td class="text-end">${dep.F || 0}</td><td class="text-end">${dep.E || 0}</td></tr>`;
     }
-    html += '</tbody></table></div></div></div>';
+    html += '</tbody></table></div></div>';
 
-    // Card 3: Transportörer
-    html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Transportörer</div><div class="card-body py-2">';
+    // Avgång klar
+    if (d.avgang_klar && d.avgang_klar.length) {
+      html += '<div class="card mb-2"><div class="card-header fw-bold">Avgång klar</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th></th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">F</th><th class="text-end">E</th></tr></thead><tbody>';
+      for (const ak of d.avgang_klar) {
+        html += `<tr><td>${esc(ak.time)}</td>`;
+        for (const z of ["A", "S", "F", "E"]) {
+          const v = ak[z];
+          const cls = v === "Klar" ? "text-success fw-bold" : "text-end";
+          html += `<td class="${cls}">${v === "" ? "" : esc(String(v))}</td>`;
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table></div></div>';
+    }
+    html += '</div>'; // /col
+
+    // Column 3: Transportörer
+    html += '<div class="col-auto">';
+    html += '<div class="card mb-2"><div class="card-header fw-bold">Transportör</div><div class="card-body py-2">';
     html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Transportör</th><th class="text-end">A</th><th class="text-end">O</th><th class="text-end">F</th><th class="text-end">Tot</th></tr></thead><tbody>';
     for (const tr of (d.transporters || [])) {
       html += `<tr><td>${esc(tr.name)}</td><td class="text-end">${tr.A}</td><td class="text-end">${tr.O}</td><td class="text-end">${tr.F}</td><td class="text-end fw-bold">${tr.total}</td></tr>`;
     }
-    html += '</tbody></table></div></div></div>';
+    html += '</tbody></table></div></div>';
+    html += '</div>'; // /col
 
+    // --- Row 2: Tid kvar (from produktion data) ---
+    if (prod && prod.stats_dagen && prod.stats_dagen.length) {
+      html += '<div class="col-12"><div class="row g-3 mt-1">';
+      // Tid kvar (Timmar)
+      html += '<div class="col-auto"><div class="card mb-2"><div class="card-header fw-bold">Tid kvar (Timmar)</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
+      for (const s of prod.stats_dagen) {
+        html += `<tr><td>${esc(s.label)}</td><td class="text-end fw-bold">${s.tid_kvar > 0 ? s.tid_kvar : "-"}</td></tr>`;
+      }
+      html += '</tbody></table></div></div></div>';
+      html += '</div></div>';
+    }
+
+    // Senast uppdaterad
     if (d._processed_at) {
       html += `<div class="col-12"><small class="text-muted">Senast uppdaterad: ${new Date(d._processed_at).toLocaleString("sv-SE")}</small></div>`;
     }

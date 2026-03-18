@@ -41,7 +41,7 @@ VALID_FILE_KEYS = {s["key"] for s in GG_FILE_SLOTS}
 # Kolumner som behövs per fil (case-insensitive matching)
 GG_NEEDED_COLS: Dict[str, List[str]] = {
     "gg_plocklogg":   ["status", "zon", "användare", "datum", "timestamp", "ändrad", "andrad", "bolag"],
-    "gg_orders":      ["zon", "bolag", "status"],
+    "gg_orders":      ["zon", "bolag", "status", "kund"],
     "gg_overview":    ["avgångstid", "zon", "rader", "transportör", "status", "bolag"],
     "gg_palluppdrag": ["zon", "lagerplats", "krangång", "bolag"],
     "gg_dispatch":    ["pallplacering", "kund", "palltyp", "pallbeskrivning", "bolag"],
@@ -432,6 +432,8 @@ def _process_dagsoversikt(
     totals: List[Dict[str, Any]] = []
     departures: List[Dict[str, Any]] = []
     transporters: List[Dict[str, Any]] = []
+    ehandel: List[Dict[str, Any]] = []
+    avgang_klar: List[Dict[str, Any]] = []
 
     # --- Totala rader (from orders / customer_order_details_all) ---
     if orders_df is not None and not orders_df.empty:
@@ -439,6 +441,15 @@ def _process_dagsoversikt(
         zon_col = _find_col(df, "Zon")
         bolag_col = _find_col(df, "Bolag")
         status_col = _find_col(df, "Status")
+        # Find the "Kund" column that has customer names (not numbers)
+        kund_col = None
+        kund_candidates = [c for c in df.columns if c.strip().lower().startswith("kund")]
+        for c in kund_candidates:
+            if df[c].astype(str).str.contains("Ehandel|ehandel", case=False, na=False).any():
+                kund_col = c
+                break
+        if not kund_col and kund_candidates:
+            kund_col = kund_candidates[-1]  # last Kund column is usually the name
 
         df = _filter_bolag(df, bolag_filter)
 
@@ -459,6 +470,29 @@ def _process_dagsoversikt(
             df_num["_zon_upper"] = df_num[zon_col].str.strip().str.upper()
             ogenererat = len(df_num[(df_num["_status_num"] < 30) & (df_num["_zon_upper"] == "R")])
             totals.append({"zone": "", "label": "Ogenererat AS", "count": ogenererat})
+
+        # --- Ehandel ---
+        if zon_col and status_col and kund_col:
+            df_eh = df.copy()
+            df_eh["_status_num"] = pd.to_numeric(df_eh[status_col], errors="coerce")
+            df_eh["_zon_upper"] = df_eh[zon_col].str.strip().str.upper()
+            df_eh["_is_ehandel"] = df_eh[kund_col].astype(str).str.contains("Ehandel", case=False, na=False)
+            # EH Q (Manuellt): zone E, status 30, kund = Ehandel
+            eh_q = len(df_eh[
+                (df_eh["_status_num"] == 30) &
+                (df_eh["_zon_upper"] == "E") &
+                (df_eh["_is_ehandel"])
+            ])
+            # EH AS (Autostore): zone R, status in (31,32,33), kund = Ehandel
+            eh_as = len(df_eh[
+                (df_eh["_status_num"].isin([31, 32, 33])) &
+                (df_eh["_zon_upper"] == "R") &
+                (df_eh["_is_ehandel"])
+            ])
+            ehandel = [
+                {"key": "EH Q", "label": "Manuellt", "count": eh_q},
+                {"key": "EH AS", "label": "Autostore", "count": eh_as},
+            ]
 
     # Helpall/Påfyll from palluppdrag
     if palluppdrag_df is not None and not palluppdrag_df.empty:
@@ -519,12 +553,25 @@ def _process_dagsoversikt(
             odf["_zon_upper"] = odf[zon_col_o].str.strip().str.upper()
             odf["_rader"] = pd.to_numeric(odf[rader_col], errors="coerce").fillna(0).astype(int)
 
+            status_col_o = _find_col(odf, "Status")
+            if status_col_o:
+                odf["_status_num"] = pd.to_numeric(odf[status_col_o], errors="coerce").fillna(0)
+
             dep_groups = odf.groupby("_avgtid_str")
             for tid, group in sorted(dep_groups, key=lambda x: x[0]):
                 row_data = {"time": tid}
+                klar_data: Dict[str, Any] = {"time": tid}
                 for z in ["A", "S", "F", "E"]:
-                    row_data[z] = int(group[group["_zon_upper"] == z]["_rader"].sum())
+                    zg = group[group["_zon_upper"] == z]
+                    row_data[z] = int(zg["_rader"].sum())
+                    # Avgång klar: all orders status >= 35 → done
+                    if status_col_o and len(zg) > 0:
+                        all_done = bool((zg["_status_num"] >= 35).all())
+                        klar_data[z] = "Klar" if all_done else int(zg["_rader"].sum())
+                    else:
+                        klar_data[z] = "" if len(zg) == 0 else int(zg["_rader"].sum())
                 departures.append(row_data)
+                avgang_klar.append(klar_data)
 
         # --- Transportörer (from overview) ---
         transportor_col = _find_col(odf, "Transportör", "Transport\u00f6r")
@@ -551,6 +598,8 @@ def _process_dagsoversikt(
         "totals": totals,
         "departures": departures,
         "transporters": transporters,
+        "ehandel": ehandel,
+        "avgang_klar": avgang_klar,
     }
 
 
