@@ -2187,11 +2187,11 @@ function doLogout() {
 // ---------------------------------------------------------------------------
 
 const GG_FILE_SLOTS = [
-  { key: "gg_orders",      label: "Data Child (Detalj Kundorder)", accept: ".csv,.txt" },
-  { key: "gg_overview",    label: "Data OÖ (Orderöversikt)",       accept: ".csv,.txt" },
-  { key: "gg_plocklogg",   label: "Data Plocklogg",                accept: ".csv,.txt" },
-  { key: "gg_palluppdrag", label: "Inmatning Palluppdrag",         accept: ".csv,.txt" },
-  { key: "gg_dispatch",    label: "Dispatchpallar",                accept: ".csv,.txt" },
+  { key: "gg_orders",      label: "Detalj Kundorder", accept: ".csv,.txt" },
+  { key: "gg_overview",    label: "Orderöversikt",    accept: ".csv,.txt" },
+  { key: "gg_plocklogg",   label: "Plocklogg",        accept: ".csv,.txt" },
+  { key: "gg_palluppdrag", label: "Palluppdrag",      accept: ".csv,.txt" },
+  { key: "gg_dispatch",    label: "Dispatchpallar",   accept: ".csv,.txt" },
 ];
 
 function _buildGGFileRow(slot) {
