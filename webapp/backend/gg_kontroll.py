@@ -42,7 +42,7 @@ VALID_FILE_KEYS = {s["key"] for s in GG_FILE_SLOTS}
 GG_NEEDED_COLS: Dict[str, List[str]] = {
     "gg_plocklogg":   ["status", "zon", "användare", "datum", "timestamp", "ändrad", "andrad", "bolag"],
     "gg_orders":      ["zon", "bolag", "status"],
-    "gg_overview":    ["avgångstid", "zon", "rader", "transportör", "bolag"],
+    "gg_overview":    ["avgångstid", "zon", "rader", "transportör", "status", "bolag"],
     "gg_palluppdrag": ["zon", "lagerplats", "krangång", "bolag"],
     "gg_dispatch":    ["pallplacering", "kund", "palltyp", "pallbeskrivning", "bolag"],
 }
@@ -278,10 +278,15 @@ def _get_result(key: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 HOURS = [f"{h:02d}:00-{h+1:02d}:00" if h < 23 else "23:00-00:00" for h in range(6, 24)]
-ZONES_PRODUKTION = ["A", "S", "Z"]
+ZONES_PRODUKTION = ["A", "S", "F", "E"]
 
 
-def _process_produktion(plocklogg: pd.DataFrame, bolag_filter: Optional[List[str]] = None) -> dict:
+def _process_produktion(
+    plocklogg: pd.DataFrame,
+    bolag_filter: Optional[List[str]] = None,
+    orders_df: Optional[pd.DataFrame] = None,
+    overview_df: Optional[pd.DataFrame] = None,
+) -> dict:
     """Beräkna plockproduktion per zon och timme från plockloggen."""
     df = plocklogg.copy()
 
@@ -344,10 +349,75 @@ def _process_produktion(plocklogg: pd.DataFrame, bolag_filter: Optional[List[str
             "avg": avg,
         }
 
+    # --- Statistik dagen ---
+    stats_dagen: List[Dict[str, Any]] = []
+    # Count total ordered rows per zone (from orders_df)
+    orders_per_zone: Dict[str, int] = {}
+    if orders_df is not None and not orders_df.empty:
+        odf = orders_df.copy()
+        odf = _filter_bolag(odf, bolag_filter)
+        zon_col_o = _find_col(odf, "Zon")
+        if zon_col_o:
+            zon_counts = odf[zon_col_o].str.strip().str.upper().value_counts()
+            for z in ZONES_PRODUKTION:
+                orders_per_zone[z] = int(zon_counts.get(z, 0))
+
+    for zone in ZONES_PRODUKTION:
+        z_data = zones[zone]
+        total_picked = sum(z_data["rows"])
+        active_hours = sum(1 for r in z_data["rows"] if r > 0)
+        avg_per_hour = round(total_picked / active_hours, 1) if active_hours > 0 else 0
+        total_orders = orders_per_zone.get(zone, 0)
+        rader_kvar = max(0, total_orders - total_picked)
+        tid_kvar = round(rader_kvar / avg_per_hour, 1) if avg_per_hour > 0 else 0
+        stats_dagen.append({
+            "zone": zone,
+            "label": f"Zon {zone}",
+            "avg_per_hour": avg_per_hour,
+            "rader_kvar": rader_kvar,
+            "tid_kvar": tid_kvar,
+        })
+
+    # --- Tid kvar till avgång ---
+    tid_kvar_avgang: List[Dict[str, Any]] = []
+    if overview_df is not None and not overview_df.empty:
+        ovdf = overview_df.copy()
+        ovdf = _filter_bolag(ovdf, bolag_filter)
+        avgtid_col = _find_col(ovdf, "Avgångstid", "Avg\u00e5ngstid")
+        zon_col_ov = _find_col(ovdf, "Zon")
+        rader_col_ov = _find_col(ovdf, "Rader")
+        status_col_ov = _find_col(ovdf, "Status")
+
+        if avgtid_col and zon_col_ov and rader_col_ov:
+            ovdf["_avgtid"] = pd.to_datetime(ovdf[avgtid_col], errors="coerce", dayfirst=True)
+            ovdf = ovdf.dropna(subset=["_avgtid"])
+            ovdf["_avgtid_str"] = ovdf["_avgtid"].dt.strftime("%H:%M")
+            ovdf["_zon_upper"] = ovdf[zon_col_ov].str.strip().str.upper()
+            ovdf["_rader"] = pd.to_numeric(ovdf[rader_col_ov], errors="coerce").fillna(0).astype(int)
+
+            # Check status to determine if departure is done (all orders picked)
+            if status_col_ov:
+                ovdf["_status_num"] = pd.to_numeric(ovdf[status_col_ov], errors="coerce").fillna(0)
+
+            for tid, group in sorted(ovdf.groupby("_avgtid_str"), key=lambda x: x[0]):
+                row_data: Dict[str, Any] = {"time": tid}
+                for z in ZONES_PRODUKTION:
+                    zg = group[group["_zon_upper"] == z]
+                    total_rader = int(zg["_rader"].sum())
+                    # If status >= 35 for all orders in this zone/departure → done
+                    if status_col_ov and len(zg) > 0:
+                        all_done = bool((zg["_status_num"] >= 35).all())
+                    else:
+                        all_done = total_rader == 0
+                    row_data[z] = "Avgång klar" if all_done else str(total_rader)
+                tid_kvar_avgang.append(row_data)
+
     return {
         "date": str(today) if today else None,
         "hours": HOURS,
         "zones": zones,
+        "stats_dagen": stats_dagen,
+        "tid_kvar_avgang": tid_kvar_avgang,
     }
 
 
@@ -374,8 +444,8 @@ def _process_dagsoversikt(
 
         if zon_col:
             zone_counts = df[zon_col].str.strip().str.upper().value_counts()
-            zone_labels = {"A": "Huvudplock", "S": "Skrymmande", "Z": "Brandfarligt", "R": "Autostore"}
-            for z in ["A", "S", "Z", "R"]:
+            zone_labels = {"A": "Huvudplock", "S": "Skrymmande", "F": "Frys", "E": "E-handel", "R": "Autostore"}
+            for z in ["A", "S", "F", "E", "R"]:
                 totals.append({
                     "zone": z,
                     "label": zone_labels.get(z, z),
@@ -452,7 +522,7 @@ def _process_dagsoversikt(
             dep_groups = odf.groupby("_avgtid_str")
             for tid, group in sorted(dep_groups, key=lambda x: x[0]):
                 row_data = {"time": tid}
-                for z in ["A", "S", "Z"]:
+                for z in ["A", "S", "F", "E"]:
                     row_data[z] = int(group[group["_zon_upper"] == z]["_rader"].sum())
                 departures.append(row_data)
 
@@ -460,7 +530,7 @@ def _process_dagsoversikt(
         transportor_col = _find_col(odf, "Transportör", "Transport\u00f6r")
         if transportor_col and zon_col_o and rader_col:
             odf["_zon_cat"] = odf["_zon_upper"].map(
-                lambda z: "A" if z == "A" else ("O" if z in ("S", "Z") else "F" if z in ("E", "R") else z)
+                lambda z: "A" if z == "A" else ("O" if z in ("S",) else "F" if z in ("F", "E", "R") else z)
             )
             trans_groups = odf.groupby(transportor_col)
             for name, group in sorted(trans_groups, key=lambda x: x[0]):
@@ -615,11 +685,20 @@ def gg_process(
 
     errors = []
 
+    # Load shared files (used by both Produktion and Dagsöversikt)
+    orders = None
+    overview = None
+    try:
+        orders = _load_gg_file("gg_orders")
+        overview = _load_gg_file("gg_overview")
+    except Exception as e:
+        errors.append(f"Laddningsfel orders/overview: {e}")
+
     # Produktion
     try:
         plocklogg = _load_gg_file("gg_plocklogg")
         if plocklogg is not None:
-            result = _process_produktion(plocklogg, bolag_filter)
+            result = _process_produktion(plocklogg, bolag_filter, orders_df=orders, overview_df=overview)
             _save_result("produktion", result, username)
             del plocklogg  # free memory
         else:
@@ -629,8 +708,6 @@ def gg_process(
 
     # Dagsöversikt
     try:
-        orders = _load_gg_file("gg_orders")
-        overview = _load_gg_file("gg_overview")
         palluppdrag = _load_gg_file("gg_palluppdrag")
 
         if orders is not None or overview is not None:

@@ -2220,7 +2220,7 @@ const GG_FILE_SLOTS = [
 // Kolumner som behövs per fil — matchar backend GG_NEEDED_COLS
 const GG_NEEDED_COLS = {
   gg_orders:      ["status", "zon", "bolag"],
-  gg_overview:    ["avgångstid", "zon", "rader", "transportör", "bolag"],
+  gg_overview:    ["avgångstid", "zon", "rader", "transportör", "status", "bolag"],
   gg_plocklogg:   ["status", "zon", "användare", "datum", "timestamp", "ändrad", "andrad", "bolag"],
   gg_palluppdrag: ["zon", "lagerplats", "krangång", "bolag"],
   gg_dispatch:    ["pallplacering", "kund", "palltyp", "pallbeskrivning", "bolag"],
@@ -2516,7 +2516,7 @@ async function renderGGProduktion() {
     for (const h of d.hours) html += `<th class="text-center">${esc(h)}</th>`;
     html += '</tr></thead><tbody>';
 
-    for (const zKey of ["A", "S", "Z"]) {
+    for (const zKey of ["A", "S", "F", "E"]) {
       const z = d.zones[zKey];
       if (!z) continue;
       html += `<tr class="table-secondary"><td colspan="${d.hours.length + 1}" class="fw-bold">${esc(z.label)}</td></tr>`;
@@ -2529,6 +2529,46 @@ async function renderGGProduktion() {
       html += '</tr>';
     }
     html += '</tbody></table></div>';
+
+    // --- Statistik dagen ---
+    if (d.stats_dagen && d.stats_dagen.length) {
+      html += '<div class="row g-3 mt-2">';
+      // Snittplock per timma
+      html += '<div class="col-auto"><div class="card mb-2"><div class="card-header fw-bold">Snittplock per timma</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
+      for (const s of d.stats_dagen) html += `<tr><td>${esc(s.label)}</td><td class="text-end fw-bold">${s.avg_per_hour}</td></tr>`;
+      html += '</tbody></table></div></div></div>';
+      // Rader kvar
+      html += '<div class="col-auto"><div class="card mb-2"><div class="card-header fw-bold">Rader Kvar</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
+      for (const s of d.stats_dagen) html += `<tr><td>${esc(s.label)}</td><td class="text-end fw-bold">${s.rader_kvar}</td></tr>`;
+      html += '</tbody></table></div></div></div>';
+      // Tid kvar (Timmar)
+      html += '<div class="col-auto"><div class="card mb-2"><div class="card-header fw-bold">Tid kvar (Timmar)</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><tbody>';
+      for (const s of d.stats_dagen) html += `<tr><td>${esc(s.label)}</td><td class="text-end fw-bold">${s.tid_kvar}</td></tr>`;
+      html += '</tbody></table></div></div></div>';
+      html += '</div>';
+    }
+
+    // --- Tid kvar till avgång ---
+    if (d.tid_kvar_avgang && d.tid_kvar_avgang.length) {
+      html += '<div class="card mt-2 mb-2"><div class="card-header fw-bold">Tid kvar till avgång</div><div class="card-body py-2">';
+      html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th></th>';
+      for (const z of ["A", "S", "F", "E"]) html += `<th class="text-center">Zon ${z}</th>`;
+      html += '</tr></thead><tbody>';
+      for (const row of d.tid_kvar_avgang) {
+        html += `<tr><td class="fw-bold">${esc(row.time)}</td>`;
+        for (const z of ["A", "S", "F", "E"]) {
+          const val = row[z] || "";
+          const cls = val === "Avgång klar" ? "text-muted" : "fw-bold";
+          html += `<td class="text-center ${cls}">${esc(String(val))}</td>`;
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table></div></div>';
+    }
+
     container.innerHTML = html;
   } catch (err) {
     container.innerHTML = `<p class="text-danger">${esc(err.message)}</p>`;
@@ -2563,9 +2603,9 @@ async function renderGGDagsoversikt() {
 
     // Card 2: Rader per avgång
     html += '<div class="col-12 col-md-4"><div class="card mb-2"><div class="card-header fw-bold">Rader per avgång</div><div class="card-body py-2">';
-    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Tidpunkt</th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">Z</th></tr></thead><tbody>';
+    html += '<table class="table table-sm table-bordered mb-0" style="font-size:12px"><thead><tr><th>Tidpunkt</th><th class="text-end">A</th><th class="text-end">S</th><th class="text-end">F</th><th class="text-end">E</th></tr></thead><tbody>';
     for (const dep of (d.departures || [])) {
-      html += `<tr><td>${esc(dep.time)}</td><td class="text-end">${dep.A}</td><td class="text-end">${dep.S}</td><td class="text-end">${dep.Z}</td></tr>`;
+      html += `<tr><td>${esc(dep.time)}</td><td class="text-end">${dep.A}</td><td class="text-end">${dep.S}</td><td class="text-end">${dep.F || 0}</td><td class="text-end">${dep.E || 0}</td></tr>`;
     }
     html += '</tbody></table></div></div></div>';
 
