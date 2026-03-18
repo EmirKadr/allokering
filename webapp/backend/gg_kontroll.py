@@ -229,7 +229,7 @@ HOURS = [f"{h:02d}:00-{h+1:02d}:00" if h < 23 else "23:00-00:00" for h in range(
 ZONES_PRODUKTION = ["A", "S", "Z"]
 
 
-def _process_produktion(plocklogg: pd.DataFrame) -> dict:
+def _process_produktion(plocklogg: pd.DataFrame, bolag_filter: Optional[List[str]] = None) -> dict:
     """Beräkna plockproduktion per zon och timme från plockloggen."""
     df = plocklogg.copy()
 
@@ -245,9 +245,8 @@ def _process_produktion(plocklogg: pd.DataFrame) -> dict:
     if not zon_col or not user_col:
         return {"error": "Saknar kolumner Zon/Användare i plockloggen"}
 
-    # Filter GG only
-    if bolag_col:
-        df = df[df[bolag_col].str.strip().str.upper() == "GG"]
+    # Filter by bolag
+    df = _filter_bolag(df, bolag_filter)
 
     # Filter completed picks (status 35 = slutförd)
     if status_col:
@@ -304,6 +303,7 @@ def _process_dagsoversikt(
     orders_df: Optional[pd.DataFrame],
     overview_df: Optional[pd.DataFrame],
     palluppdrag_df: Optional[pd.DataFrame],
+    bolag_filter: Optional[List[str]] = None,
 ) -> dict:
     """Beräkna dagsöversikt: totala rader, rader per avgång, transportörer."""
 
@@ -318,8 +318,7 @@ def _process_dagsoversikt(
         bolag_col = _find_col(df, "Bolag")
         status_col = _find_col(df, "Status")
 
-        if bolag_col:
-            df = df[df[bolag_col].str.strip().str.upper() == "GG"]
+        df = _filter_bolag(df, bolag_filter)
 
         if zon_col:
             zone_counts = df[zon_col].str.strip().str.upper().value_counts()
@@ -342,9 +341,7 @@ def _process_dagsoversikt(
     # Helpall/Påfyll from palluppdrag
     if palluppdrag_df is not None and not palluppdrag_df.empty:
         pdf = palluppdrag_df.copy()
-        bolag_col_p = _find_col(pdf, "Bolag")
-        if bolag_col_p:
-            pdf = pdf[pdf[bolag_col_p].str.strip().str.upper() == "GG"]
+        pdf = _filter_bolag(pdf, bolag_filter)
 
         zon_col_p = _find_col(pdf, "Zon")
         lagerplats_col = _find_col(pdf, "Lagerplats")
@@ -387,9 +384,7 @@ def _process_dagsoversikt(
     # --- Rader per avgång (from overview) ---
     if overview_df is not None and not overview_df.empty:
         odf = overview_df.copy()
-        bolag_col_o = _find_col(odf, "Bolag")
-        if bolag_col_o:
-            odf = odf[odf[bolag_col_o].str.strip().str.upper() == "GG"]
+        odf = _filter_bolag(odf, bolag_filter)
 
         avgangstid_col = _find_col(odf, "Avgångstid", "Avg\u00e5ngstid")
         zon_col_o = _find_col(odf, "Zon")
@@ -437,13 +432,11 @@ def _process_dagsoversikt(
     }
 
 
-def _process_lastlista(dispatch_df: pd.DataFrame) -> dict:
+def _process_lastlista(dispatch_df: pd.DataFrame, bolag_filter: Optional[List[str]] = None) -> dict:
     """Beräkna lastlista från dispatch-data."""
     df = dispatch_df.copy()
 
-    bolag_col = _find_col(df, "Bolag")
-    if bolag_col:
-        df = df[df[bolag_col].str.strip().str.upper() == "GG"]
+    df = _filter_bolag(df, bolag_filter)
 
     pallplacering_col = _find_col(df, "Pallplacering")
     kund_col = _find_col(df, "Kund")
@@ -487,21 +480,54 @@ def _process_lastlista(dispatch_df: pd.DataFrame) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@router.get("/filter-options")
+def gg_filter_options(
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    """Returnera unika Bolag-värden från uppladdade filer."""
+    tok = extract_token(authorization, token)
+    require_auth(tok)
+    bolag_set: set = set()
+    for key in ["gg_orders", "gg_overview", "gg_plocklogg", "gg_palluppdrag", "gg_dispatch"]:
+        df = _load_gg_file(key)
+        if df is not None:
+            col = _find_col(df, "Bolag")
+            if col:
+                vals = df[col].dropna().str.strip().str.upper().unique()
+                bolag_set.update(v for v in vals if v)
+    return {"bolag": sorted(bolag_set)}
+
+
+def _filter_bolag(df: pd.DataFrame, bolag_filter: Optional[List[str]]) -> pd.DataFrame:
+    """Filtrera DataFrame på Bolag om filter är satt."""
+    if not bolag_filter:
+        return df
+    col = _find_col(df, "Bolag")
+    if not col:
+        return df
+    return df[df[col].str.strip().str.upper().isin(bolag_filter)]
+
+
 @router.post("/process")
 def gg_process(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None),
+    bolag: Optional[str] = Query(None),
 ):
     tok = extract_token(authorization, token)
     user = _require_gg_or_admin(tok)
     username = user.get("username", "")
+
+    # Parse bolag filter
+    bolag_filter = [b.strip().upper() for b in bolag.split(",") if b.strip()] if bolag else None
 
     errors = []
 
     # Produktion
     plocklogg = _load_gg_file("gg_plocklogg")
     if plocklogg is not None:
-        result = _process_produktion(plocklogg)
+        result = _process_produktion(plocklogg, bolag_filter)
         _save_result("produktion", result, username)
     else:
         errors.append("Plocklogg saknas — Produktion ej beräknad")
@@ -512,7 +538,7 @@ def gg_process(
     palluppdrag = _load_gg_file("gg_palluppdrag")
 
     if orders is not None or overview is not None:
-        result = _process_dagsoversikt(orders, overview, palluppdrag)
+        result = _process_dagsoversikt(orders, overview, palluppdrag, bolag_filter)
         _save_result("dagsoversikt", result, username)
     else:
         errors.append("Orders/Overview saknas — Dagsöversikt ej beräknad")
@@ -520,7 +546,7 @@ def gg_process(
     # Lastlista
     dispatch = _load_gg_file("gg_dispatch")
     if dispatch is not None:
-        result = _process_lastlista(dispatch)
+        result = _process_lastlista(dispatch, bolag_filter)
         _save_result("lastlista", result, username)
     else:
         errors.append("Dispatch saknas — Lastlista ej beräknad")

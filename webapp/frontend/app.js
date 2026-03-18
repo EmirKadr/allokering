@@ -2229,9 +2229,13 @@ function _buildGGFileRow(slot) {
   input.addEventListener("change", async (e) => {
     const files = Array.from(e.target.files);
     for (const file of files) {
-      await ggUploadFile(slot.key, file);
+      // Auto-matcha fil till rätt slot baserat på filnamn
+      const matched = _matchFileToGGSlot(file.name) || slot.key;
+      appendLog(`GG fil: ${file.name} -> [${matched}]`);
+      await ggUploadFile(matched, file);
     }
     input.value = "";
+    await ggRefreshFiles();
   });
 
   row.appendChild(label);
@@ -2241,6 +2245,8 @@ function _buildGGFileRow(slot) {
   return row;
 }
 
+let ggSelectedFilters = { bolag: [] };
+
 async function renderGGKontrollPage() {
   const container = document.getElementById("gg-file-rows");
   if (!container) return;
@@ -2249,6 +2255,58 @@ async function renderGGKontrollPage() {
     container.appendChild(_buildGGFileRow(slot));
   }
   await ggRefreshFiles();
+  await ggRefreshFilters();
+}
+
+async function ggRefreshFilters() {
+  try {
+    const resp = await fetch(`${API}/api/gg/filter-options`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const bolagValues = data.bolag || [];
+    const card = document.getElementById("gg-filter-card");
+    const content = document.getElementById("gg-filter-content");
+    if (!card || !content) return;
+    if (bolagValues.length === 0) { card.style.display = "none"; return; }
+    card.style.display = "";
+    content.innerHTML = "";
+    const group = document.createElement("div");
+    group.innerHTML = "<strong>Bolag</strong>";
+    bolagValues.forEach(val => {
+      const id = `gg-filter-bolag-${val.replace(/\W/g, "_")}`;
+      const div = document.createElement("div");
+      div.className = "form-check form-check-sm";
+      const isChecked = ggSelectedFilters.bolag.length === 0 || ggSelectedFilters.bolag.includes(val);
+      div.innerHTML = `
+        <input class="form-check-input gg-filter-check" type="checkbox" id="${id}"
+               data-group="bolag" value="${val}" ${isChecked ? "checked" : ""}>
+        <label class="form-check-label" for="${id}" style="font-size:12px">${val}</label>
+      `;
+      div.querySelector("input").addEventListener("change", ggSaveFilters);
+      group.appendChild(div);
+    });
+    content.appendChild(group);
+    const btnRow = document.createElement("div");
+    btnRow.className = "d-flex gap-2 mt-2";
+    const selectAll = document.createElement("button");
+    selectAll.className = "btn btn-sm btn-outline-secondary";
+    selectAll.textContent = "Välj alla";
+    selectAll.onclick = () => { document.querySelectorAll(".gg-filter-check").forEach(cb => { cb.checked = true; }); ggSaveFilters(); };
+    const clearAll = document.createElement("button");
+    clearAll.className = "btn btn-sm btn-outline-secondary";
+    clearAll.textContent = "Rensa filter";
+    clearAll.onclick = () => { document.querySelectorAll(".gg-filter-check").forEach(cb => { cb.checked = false; }); ggSaveFilters(); };
+    btnRow.appendChild(selectAll);
+    btnRow.appendChild(clearAll);
+    content.appendChild(btnRow);
+  } catch (_) {}
+}
+
+function ggSaveFilters() {
+  const checked = [];
+  document.querySelectorAll(".gg-filter-check:checked").forEach(cb => checked.push(cb.value));
+  ggSelectedFilters.bolag = checked;
+  appendLog(`GG filter: bolag=[${checked.join(",")}]`);
 }
 
 async function ggUploadFile(key, file) {
@@ -2301,7 +2359,11 @@ async function ggProcess() {
   if (btn) btn.disabled = true;
   if (status) status.textContent = "Bearbetar...";
   try {
-    const resp = await fetch(`${API}/api/gg/process`, { method: "POST" });
+    const params = new URLSearchParams();
+    if (ggSelectedFilters.bolag.length > 0) {
+      params.set("bolag", ggSelectedFilters.bolag.join(","));
+    }
+    const resp = await fetch(`${API}/api/gg/process?${params}`, { method: "POST" });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
     if (data.errors && data.errors.length > 0) {
