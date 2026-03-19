@@ -111,6 +111,37 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    # Start embedded worker so jobs run even without a separate worker process
+    asyncio.create_task(_embedded_worker_loop())
+
+
+async def _embedded_worker_loop():
+    """Lightweight in-process worker that claims and runs queued jobs."""
+    from job_queue import claim_next_job, complete_job, fail_job, append_job_log, requeue_stale_jobs
+    from job_runner import run_job
+    import socket, uuid as _uuid
+    worker_id = f"embedded-{socket.gethostname()}-{_uuid.uuid4().hex[:6]}"
+    while True:
+        try:
+            await asyncio.to_thread(requeue_stale_jobs)
+            job = await asyncio.to_thread(claim_next_job, worker_id)
+            if not job:
+                await asyncio.sleep(1.0)
+                continue
+            try:
+                marker = await run_job(job)
+                if marker == "__ERROR__":
+                    await asyncio.to_thread(fail_job, job["session_id"], job["job_id"], "Jobbet avslutades med fel")
+                else:
+                    await asyncio.to_thread(complete_job, job["session_id"], job["job_id"])
+            except Exception as exc:
+                await asyncio.to_thread(append_job_log, job["session_id"], job_id=job["job_id"],
+                                        attempt=int(job.get("attempt_count") or 1), message=f"FEL: {exc}")
+                await asyncio.to_thread(append_job_log, job["session_id"], job_id=job["job_id"],
+                                        attempt=int(job.get("attempt_count") or 1), message="__ERROR__")
+                await asyncio.to_thread(fail_job, job["session_id"], job["job_id"], str(exc))
+        except Exception:
+            await asyncio.sleep(5.0)
 
 # v2 classifier router (kept isolated from legacy v1 endpoints)
 if classifier_v2_router is not None:
