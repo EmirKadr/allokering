@@ -76,6 +76,7 @@ from logic import (
     _reclassify_skrymmande,
     allocate,
     apply_value_filters,
+    build_prognos_vs_autoplock_report,
     calculate_refill,
     compute_hib_koppling,
     compute_missed_departures,
@@ -237,11 +238,22 @@ def _invalidate_ordersaldo_cache(session: SessionData) -> None:
     session.ordersaldo_list2 = []
 
 
+def _invalidate_result_cache(session: SessionData, result_key: str) -> None:
+    path = session.results.pop(result_key, None)
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
 def _handle_session_file_change(session: SessionData, file_key: str, old_path: Optional[str] = None) -> None:
     _clear_filter_cache_entry(session, old_path)
     _clear_filter_cache_entry(session, session.files.get(file_key))
     if file_key in ORDERSALDO_INVALIDATION_KEYS:
         _invalidate_ordersaldo_cache(session)
+    if file_key in {"prognos", "campaign", "automation", "buffer"}:
+        _invalidate_result_cache(session, "prognos")
 
 
 def _scan_filter_values_for_path(session: SessionData, path: str) -> Dict[str, List[str]]:
@@ -278,6 +290,154 @@ def _collect_filter_options(session: SessionData) -> Dict[str, List[str]]:
             session.filter_scan_cache.pop(cached_path, None)
 
     return combined
+
+
+def _build_prognos_excel_sheets(report_df: pd.DataFrame, meta: Optional[dict] = None) -> Dict[str, pd.DataFrame]:
+    sheets: Dict[str, pd.DataFrame] = {}
+    if isinstance(meta, dict) and (meta.get("partial") == "yes" or meta.get("note")):
+        lines: List[str] = []
+        if meta.get("partial") == "yes":
+            missing = meta.get("missing", "")
+            lines.append("PARTIELL RAPPORT - mer data krävs för fullständig bild.")
+            if missing:
+                lines.append(f"Saknar underlag: {missing}.")
+        if meta.get("note"):
+            lines.append(str(meta["note"]))
+        if lines:
+            sheets["Info"] = pd.DataFrame({"Info": [" ".join(lines)]})
+
+    if not isinstance(report_df, pd.DataFrame):
+        output_df = pd.DataFrame()
+    else:
+        output_df = report_df.copy()
+        col_name = "FIFO-baserad beräkning (antal pall)"
+        if col_name in output_df.columns:
+            try:
+                output_df = output_df.sort_values(by=col_name, ascending=False).reset_index(drop=True)
+            except Exception:
+                pass
+
+    sheets["Prognos vs Autoplock"] = output_df
+    return sheets
+
+
+async def _generate_prognos_result(session: SessionData) -> Dict[str, Any]:
+    loop = asyncio.get_event_loop()
+    prognos_path = session.files.get("prognos")
+    campaign_path = session.files.get("campaign")
+    automation_path = session.files.get("automation")
+    buffer_path = session.files.get("buffer")
+
+    if not prognos_path and not campaign_path:
+        raise RuntimeError("Ladda upp Prognos eller Kampanjvolymer först.")
+
+    prognos_df: Optional[pd.DataFrame] = None
+    campaign_df: Optional[pd.DataFrame] = None
+    saldo_raw: Optional[pd.DataFrame] = None
+    buffer_raw: Optional[pd.DataFrame] = None
+
+    if prognos_path and os.path.exists(prognos_path):
+        prognos_df = await loop.run_in_executor(None, lambda p=prognos_path: read_prognos_xlsx(p))
+    if campaign_path and os.path.exists(campaign_path):
+        campaign_df = await loop.run_in_executor(None, lambda p=campaign_path: read_campaign_xlsx(p))
+    if automation_path and os.path.exists(automation_path):
+        saldo_raw = await loop.run_in_executor(None, lambda p=automation_path: read_csv_auto(p))
+    if buffer_path and os.path.exists(buffer_path):
+        buffer_raw = await loop.run_in_executor(None, lambda p=buffer_path: read_csv_auto(p))
+
+    has_prognos = isinstance(prognos_df, pd.DataFrame) and not prognos_df.empty
+    has_campaign = isinstance(campaign_df, pd.DataFrame) and not campaign_df.empty
+    if not has_prognos and not has_campaign:
+        raise RuntimeError("Kunde inte läsa Prognos eller Kampanjvolymer.")
+
+    if has_prognos:
+        combined_df = prognos_df.copy()
+    else:
+        combined_df = pd.DataFrame(
+            columns=["Artikelnummer", "Beskrivning", "Antal styck", "Antal rader", "Antal butiker"]
+        )
+
+    if has_campaign:
+        camp_df = campaign_df.copy()
+        if isinstance(saldo_raw, pd.DataFrame) and not saldo_raw.empty:
+            saldo_df = saldo_raw.copy()
+            art_col_sal = None
+            robot_col_sal = None
+            for c in saldo_df.columns:
+                lc = str(c).strip().lower()
+                if not art_col_sal and lc in ("artikel", "artikelnummer", "artnr", "art.nr", "sku", "article"):
+                    art_col_sal = c
+                if not robot_col_sal and lc == "robot":
+                    robot_col_sal = c
+            if art_col_sal and robot_col_sal:
+                saldo_df = saldo_df[[art_col_sal, robot_col_sal]].copy()
+                saldo_df.columns = ["Artikelnummer", "Robot"]
+                saldo_df["Artikelnummer"] = saldo_df["Artikelnummer"].astype(str).str.strip()
+                saldo_df["Robot"] = saldo_df["Robot"].astype(str).str.upper().str.strip()
+                saldo_df = saldo_df.loc[saldo_df["Robot"] == "Y"]
+                if not saldo_df.empty:
+                    camp_df = camp_df.merge(saldo_df[["Artikelnummer"]], on="Artikelnummer", how="inner")
+                else:
+                    camp_df = camp_df.iloc[0:0]
+            else:
+                camp_df = camp_df.iloc[0:0]
+        else:
+            camp_df = camp_df.iloc[0:0]
+
+        if not camp_df.empty:
+            vol_by_art = camp_df.groupby("Artikelnummer")["Antal styck"].sum().to_dict()
+            combined_df["Artikelnummer"] = combined_df["Artikelnummer"].astype(str).str.strip()
+            combined_df["Antal styck"] = (
+                pd.to_numeric(combined_df.get("Antal styck", 0), errors="coerce").fillna(0).astype(int)
+            )
+            existing_arts = set(combined_df["Artikelnummer"].astype(str))
+            for art, vol in vol_by_art.items():
+                if art in existing_arts:
+                    mask = combined_df["Artikelnummer"] == art
+                    combined_df.loc[mask, "Antal styck"] = (
+                        combined_df.loc[mask, "Antal styck"].astype(int) + int(vol)
+                    ).astype(int)
+                else:
+                    combined_df = pd.concat(
+                        [
+                            combined_df,
+                            pd.DataFrame(
+                                {
+                                    "Artikelnummer": [art],
+                                    "Beskrivning": [None],
+                                    "Antal styck": [int(vol)],
+                                    "Antal rader": [0],
+                                    "Antal butiker": [0],
+                                }
+                            ),
+                        ],
+                        ignore_index=True,
+                    )
+
+    report_df, meta = await loop.run_in_executor(
+        None,
+        lambda: build_prognos_vs_autoplock_report(
+            prognos_df=combined_df,
+            saldo_norm_df=(saldo_raw if isinstance(saldo_raw, pd.DataFrame) else None),
+            buffer_df=(buffer_raw if isinstance(buffer_raw, pd.DataFrame) else None),
+            exclude_source_ids=None,
+            allocated_df=None,
+        ),
+    )
+
+    result_path = os.path.join(session.results_dir, "prognos.xlsx")
+    sheets = _build_prognos_excel_sheets(report_df, meta)
+    await loop.run_in_executor(None, lambda: save_df_to_excel(sheets, "prognos", result_path))
+    session.results["prognos"] = result_path
+
+    return {
+        "ok": True,
+        "result_key": "prognos",
+        "rows": int(len(report_df)) if isinstance(report_df, pd.DataFrame) else 0,
+        "partial": bool(isinstance(meta, dict) and meta.get("partial") == "yes"),
+        "missing": str(meta.get("missing", "")) if isinstance(meta, dict) else "",
+        "note": str(meta.get("note", "")) if isinstance(meta, dict) else "",
+    }
 
 # ---------------------------------------------------------------------------
 # Pydantic modeller
@@ -1477,6 +1637,15 @@ def api_run_status(request: Request, sid: str):
         return get_session_status(sid)
     except RuntimeError:
         raise HTTPException(status_code=404, detail="Session saknas")
+
+
+@app.post("/api/result/prognos/{sid}")
+async def api_build_prognos_result(request: Request, sid: str):
+    session = _get_owned_session(request, sid)
+    try:
+        return await _generate_prognos_result(session)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

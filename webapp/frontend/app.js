@@ -102,6 +102,7 @@ const FILTER_REFRESH_KEYS = new Set([
   ...WMS_SLOTS.map(s => s.key),
 ]);
 const ORDERSALDO_REFRESH_KEYS = new Set(["orders"]);
+const PROGNOS_RESULT_KEYS = new Set(["prognos", "campaign", "automation", "buffer"]);
 const ENABLE_ASK_CSV = false;
 // UI-toggle: hide ASK "Hämta CSV" buttons but keep backend/frontend logic intact.
 const SHOW_ASK_FETCH_BUTTONS = false && ENABLE_ASK_CSV;
@@ -624,6 +625,11 @@ async function refreshAfterFileChanges(changedKeys) {
   }
   if (hasTrackedKey(changedKeys, ORDERSALDO_REFRESH_KEYS)) {
     await refreshOrdersaldoButtonState({ recompute: true });
+  }
+  if (hasTrackedKey(changedKeys, PROGNOS_RESULT_KEYS)) {
+    await refreshResultStatus();
+  } else {
+    renderResultButtons();
   }
   syncActionButtonsState();
 }
@@ -1744,7 +1750,11 @@ function createResultButton(key, isReady) {
   btn.setAttribute("data-bs-toggle", "tooltip");
   btn.onclick = () => openResult(key);
   if (isReady) {
-    btn.title = `Ladda ner och öppna ${label.replace(/^Öppna\\s+/i, "")} som Excel-fil`;
+    if (key === "prognos" && !availableResults.has("prognos")) {
+      btn.title = "Skapa och öppna prognosrapport som Excel-fil";
+    } else {
+      btn.title = `Ladda ner och öppna ${label.replace(/^Öppna\\s+/i, "")} som Excel-fil`;
+    }
     setButtonLockState(btn, false, "");
   } else {
     setButtonLockState(btn, true, OPEN_BUTTON_HINTS[key] || "Resultatet är inte tillgängligt än.");
@@ -1782,7 +1792,8 @@ function renderResultButtons() {
   if (eftersokContainer) eftersokContainer.innerHTML = "";
 
   OPEN_RESULT_ORDER.forEach(key => {
-    if (!availableResults.has(key)) {
+    const hasPrognosInput = key === "prognos" && (fileStatuses.prognos || fileStatuses.campaign);
+    if (!availableResults.has(key) && !hasPrognosInput) {
       return;
     }
     const container = resultContainerForKey(key);
@@ -1806,7 +1817,38 @@ function renderResultButtons() {
   initTooltips();
 }
 
+async function generateAndOpenPrognosResult() {
+  const hasInputs = !!(fileStatuses.prognos || fileStatuses.campaign);
+  if (!hasInputs) {
+    appendLog(OPEN_BUTTON_HINTS.prognos || "Ladda upp Prognos eller Kampanjvolymer först.");
+    return;
+  }
+  try {
+    const resp = await fetchWithSessionRecovery(
+      `${API}/api/result/prognos/${sessionId}`,
+      { method: "POST" },
+      "skapande av prognosrapport"
+    );
+    const data = await resp.json().catch(() => ({}));
+    availableResults.add("prognos");
+    renderResultButtons();
+    downloadResult("prognos");
+
+    let msg = `Prognosrapport skapad (${Number(data.rows || 0)} rader).`;
+    if (data.partial && data.missing) {
+      msg += ` PARTIELL: saknar ${String(data.missing).replace(/,/g, ", ")}.`;
+    }
+    appendLog(msg);
+  } catch (e) {
+    appendLog(`FEL vid skapande av prognosrapport: ${e}`);
+  }
+}
+
 function openResult(key) {
+  if (key === "prognos") {
+    generateAndOpenPrognosResult();
+    return;
+  }
   if (!availableResults.has(key)) {
     appendLog(OPEN_BUTTON_HINTS[key] || `Resultat '${key}' är inte tillgängligt än.`);
     return;
