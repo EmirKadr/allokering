@@ -623,7 +623,7 @@ async function refreshAfterFileChanges(changedKeys) {
     await refreshFilterOptions();
   }
   if (hasTrackedKey(changedKeys, ORDERSALDO_REFRESH_KEYS)) {
-    await refreshOrdersaldoButtonState();
+    await refreshOrdersaldoButtonState({ recompute: true });
   }
   syncActionButtonsState();
 }
@@ -986,7 +986,7 @@ async function saveFilters() {
   } catch (_e) {
     // Tyst fel
   }
-  await refreshOrdersaldoButtonState();
+  await refreshOrdersaldoButtonState({ recompute: true });
   appendLog(`Filter uppdaterat: bolag=[${filters.bolag.join(",")}], ordertyp=[${filters.ordertyp.join(",")}]`);
 }
 
@@ -1176,14 +1176,7 @@ function connectSSE() {
       currentJobState = msg === "__DONE__" ? "completed" : "failed";
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
       refreshResultStatus().catch(() => {});
-      if (msg === "__DONE__") {
-        // Uppdatera ordersaldo-listor efter avslutad korning
-        fetch(`${API}/api/ordersaldo/refresh/${sessionId}`, { method: "POST" })
-          .then(() => refreshOrdersaldoButtonState().catch(() => {}))
-          .catch(() => {});
-      } else {
-        refreshOrdersaldoButtonState().catch(() => {});
-      }
+      refreshOrdersaldoButtonState({ recompute: msg === "__DONE__" }).catch(() => {});
       _saveTabState(_activePageId);
       return;
     }
@@ -1882,7 +1875,39 @@ function setOrdersaldoCopyButtonState(buttonId, count, emptyHint) {
   }
 }
 
-async function refreshOrdersaldoButtonState() {
+async function recomputeOrdersaldoLists(options = {}) {
+  const quiet = !!options.quiet;
+  if (!sessionId || !fileStatuses.orders) {
+    return false;
+  }
+  try {
+    await fetchWithSessionRecovery(
+      `${API}/api/ordersaldo/refresh/${sessionId}`,
+      { method: "POST" },
+      "uppdatering av ordersaldo"
+    );
+    return true;
+  } catch (e) {
+    if (!quiet) {
+      appendLog(`FEL vid uppdatering av ordersaldo: ${e}`);
+    }
+    return false;
+  }
+}
+
+async function refreshOrdersaldoButtonState(options = {}) {
+  const recompute = !!options.recompute;
+  if (!fileStatuses.orders) {
+    setOrdersaldoCopyButtonState("btn-kompletta", 0, COPY_BUTTON_REQUIREMENTS.list1?.lockedHint);
+    setOrdersaldoCopyButtonState("btn-pafyllning", 0, COPY_BUTTON_REQUIREMENTS.list2?.lockedHint);
+    initTooltips();
+    return;
+  }
+
+  if (recompute) {
+    await recomputeOrdersaldoLists({ quiet: true });
+  }
+
   try {
     const [r1, r2] = await Promise.all([
       fetchWithSessionRecovery(`${API}/api/ordersaldo/list1/${sessionId}`, {}, "hämtning av kompletta ordrar"),
@@ -1904,6 +1929,9 @@ async function refreshOrdersaldoButtonState() {
 async function copyList(listId) {
   const copyConfig = COPY_BUTTON_REQUIREMENTS[listId];
   const btn = copyConfig ? document.getElementById(copyConfig.buttonId) : null;
+  if (btn && btn.dataset.locked === "1" && fileStatuses.orders) {
+    await refreshOrdersaldoButtonState({ recompute: true });
+  }
   if (btn && btn.dataset.locked === "1") {
     appendLog(btn.title || "Listan är inte tillgänglig ännu.");
     return;
