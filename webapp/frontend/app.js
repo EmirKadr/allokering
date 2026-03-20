@@ -249,6 +249,11 @@ const SESSION_SCOPE_IDS = [
   "eftersok-page",
   "dela-page",
 ];
+const LOGLESS_PAGE_IDS = new Set([
+  "gg-produktion-page",
+  "gg-dagsoversikt-page",
+  "gg-lastlista-page",
+]);
 let tabSessions = {};      // scopeId -> sessionId
 let tabStates = {};        // scopeId -> { fileStatuses, availableResults, cachedFilterOptions, selectedFilters }
 
@@ -334,6 +339,12 @@ function applyScopeVisualState() {
     logEl.scrollTop = logEl.scrollHeight;
   }
   renderKalltypSummary(currentKalltypSummaryRows, { persist: false });
+}
+
+function updateLogVisibility(pageId = _activePageId) {
+  const logEl = document.getElementById("log-output");
+  if (!logEl) return;
+  logEl.style.display = LOGLESS_PAGE_IDS.has(pageId) ? "none" : "";
 }
 
 function activateSessionScope(scopeId, options = {}) {
@@ -1432,6 +1443,7 @@ function setMainPage(pageId, subtabId = null) {
   if (pageId === "allokering-page") {
     setAllokeringSubtab(nextSubtabId);
   }
+  updateLogVisibility(pageId);
   if (pageId === "admin-page") { renderAdminPanel(); return; }
   if (pageId === "gg-kontroll-page") { renderGGKontrollPage(); return; }
   if (pageId === "gg-produktion-page") { renderGGProduktion(); return; }
