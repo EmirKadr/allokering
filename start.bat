@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 
-python allokera11.py
+python allokera12.py
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo Could not start with "python". Trying "py -3"...
@@ -12,7 +12,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo Failed to start allokera11.py.
+    echo Failed to start allokera12.py
     pause
 )
 

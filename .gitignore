@@ -2,6 +2,13 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Local working folders / generated artifacts
+ask/
+build/
+dist/
+exempelkod/
+testdata/
+
 # Local secrets / env
 .env
 .env.*
