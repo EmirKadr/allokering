@@ -929,7 +929,7 @@ def build_prognos_vs_autoplock_report(
             s["Saldo autoplock"] = _num_series(s["Saldo autoplock"])
             pr = pr.merge(s[["Artikel", "Robot", "Saldo autoplock"]], left_on="Artikelnummer", right_on="Artikel", how="left")
             pr = pr.drop(columns=["Artikel"], errors="ignore")
-            pr["Robot"].fillna("N", inplace=True)
+            pr["Robot"] = pr["Robot"].fillna("N")
             pr["Saldo i autoplock"] = pr["Saldo autoplock"].fillna(0.0)
     else:
         missing.append("saldo")

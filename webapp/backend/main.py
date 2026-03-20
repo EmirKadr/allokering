@@ -9,19 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import csv
-from dataclasses import dataclass, field
-import mimetypes
 import os
-import random
 import re
 import shutil
-import subprocess
 import tempfile
 import threading
 import time
 import unicodedata
 import uuid
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,7 +25,7 @@ import pandas as pd
 import requests as req
 from fastapi import FastAPI, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -59,12 +55,6 @@ from auth import (
     ADMIN_EMAIL,
     ADMIN_USERNAME,
 )
-try:
-    from classifier_v2 import router as classifier_v2_router
-    _classifier_v2_import_error: Optional[Exception] = None
-except Exception as e:
-    classifier_v2_router = None
-    _classifier_v2_import_error = e
 try:
     from gg_kontroll import router as gg_kontroll_router
     _gg_kontroll_import_error: Optional[Exception] = None
@@ -144,12 +134,6 @@ async def _embedded_worker_loop():
         except Exception:
             await asyncio.sleep(5.0)
 
-# v2 classifier router (kept isolated from legacy v1 endpoints)
-if classifier_v2_router is not None:
-    app.include_router(classifier_v2_router)
-else:
-    print(f"[WARN] classifier_v2 disabled: {_classifier_v2_import_error}")
-
 if gg_kontroll_router is not None:
     app.include_router(gg_kontroll_router)
 else:
@@ -175,51 +159,8 @@ ASK_FETCHABLE_FILE_KEYS = {
     "wms_pick",
     "wms_correct",
 }
-CLASSIFIER_APP_DIR = os.environ.get("CLASSIFIER_APP_DIR", r"C:\artikelplacering\Artikelplacering").strip()
-CLASSIFIER_SCRIPT = os.environ.get("CLASSIFIER_SCRIPT", "classifier.py").strip()
-_classifier_lock = threading.Lock()
-_classifier_proc: Optional[subprocess.Popen] = None
-CLASSIFIER_DEFAULT_IMAGE_DIR = os.environ.get(
-    "CLASSIFIER_DEFAULT_IMAGE_DIR",
-    str(Path(CLASSIFIER_APP_DIR) / "bilder"),
-).strip()
-CLASSIFIER_DEFAULT_OUTPUT_DIR = os.environ.get(
-    "CLASSIFIER_DEFAULT_OUTPUT_DIR",
-    CLASSIFIER_APP_DIR,
-).strip()
-CLASSIFIER_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"}
-CLASSIFIER_DATA_FILE_KEYS = {"item", "item_alias", "item_attribute", "main_category"}
 FILTER_SCAN_TEXT_EXTENSIONS = {".csv", ".txt", ".tsv"}
 ORDERSALDO_INVALIDATION_KEYS = {"orders"}
-CLASSIFIER_WEB_DATA_DIR = Path(
-    os.environ.get(
-        "CLASSIFIER_WEB_DATA_DIR",
-        str(Path(tempfile.gettempdir()) / "allok_classifier_data"),
-    )
-)
-
-
-@dataclass
-class WebClassifierSession:
-    session_id: str
-    test_name: str
-    image_dir: str
-    output_dir: str
-    categories: List[str]
-    images: List[str]
-    image_source: str = "file"  # "file" | "url"
-    image_rows: List[Dict[str, str]] = field(default_factory=list)  # for url mode
-    counts: Dict[str, int] = field(default_factory=dict)
-    index: int = 0
-    skipped: int = 0
-    finished: bool = False
-    created_at: float = field(default_factory=time.time)
-
-
-_web_classifier_lock = threading.Lock()
-_web_classifier_sessions: Dict[str, WebClassifierSession] = {}
-_classifier_data_lock = threading.Lock()
-_classifier_data_files: Dict[str, str] = {}
 
 
 def _file_cache_signature(path: str) -> tuple[int, int]:
@@ -477,18 +418,6 @@ class AskCsvFetchBody(BaseModel):
     output_name: str = ""
 
 
-class WebClassifierStartBody(BaseModel):
-    test_name: str = ""
-    categories: List[str] = []
-    image_dir: str = ""
-    output_dir: str = ""
-    shuffle: bool = False
-
-
-class WebClassifierClassifyBody(BaseModel):
-    category: str = ""
-
-
 def _parse_content_disposition_filename(header_value: str) -> str:
     """Extract filename from Content-Disposition header."""
     if not header_value:
@@ -576,58 +505,6 @@ def _find_col_by_keywords(df: pd.DataFrame, keywords: List[str]) -> Optional[str
         for col, nk in normalized_cols.items():
             if kw in nk or nk in kw:
                 return col
-    return None
-
-
-def _classifier_script_path() -> Path:
-    base = Path(CLASSIFIER_APP_DIR)
-    return (base / CLASSIFIER_SCRIPT).resolve()
-
-
-def _ensure_classifier_data_dir() -> Path:
-    CLASSIFIER_WEB_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return CLASSIFIER_WEB_DATA_DIR
-
-
-def _classifier_data_files_payload() -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
-    with _classifier_data_lock:
-        for key in sorted(CLASSIFIER_DATA_FILE_KEYS):
-            path = _classifier_data_files.get(key)
-            exists = bool(path and os.path.exists(path))
-            out[key] = {
-                "exists": exists,
-                "filename": os.path.basename(path) if exists and path else "",
-                "path": path if exists and path else "",
-            }
-    return out
-
-
-def _read_csv_loose(path: str) -> pd.DataFrame:
-    # More tolerant read for uploaded data files.
-    for enc in ("utf-8-sig", "latin1"):
-        try:
-            return pd.read_csv(path, dtype=str, sep=None, engine="python", encoding=enc)
-        except Exception:
-            continue
-    # Last fallback
-    return pd.read_csv(path, dtype=str, encoding="utf-8-sig")
-
-
-def _pick_col_by_names(df: pd.DataFrame, names: List[str]) -> Optional[str]:
-    nmap: Dict[str, str] = {}
-    for c in df.columns:
-        nk = _norm_col_key(c)
-        if nk and nk not in nmap:
-            nmap[nk] = c
-    nkeys = [_norm_col_key(n) for n in names if _norm_col_key(n)]
-    for nk in nkeys:
-        if nk in nmap:
-            return nmap[nk]
-    for nk in nkeys:
-        for ck, c in nmap.items():
-            if nk in ck or ck in nk:
-                return c
     return None
 
 
@@ -769,163 +646,6 @@ def _resolve_upload_slot(requested_key: str, detected_type: Optional[str], page_
             return "wms_buffer"
         return "buffer"
     return detected_type
-
-
-def _extract_rows_from_item_attribute(path: str) -> List[Dict[str, str]]:
-    try:
-        df = _read_csv_loose(path)
-    except Exception:
-        return []
-    if df is None or df.empty:
-        return []
-
-    art_col = _pick_col_by_names(df, ["Artikel", "Artikelnummer", "Artikelnr", "article"])
-    name_col = _pick_col_by_names(df, ["Namn", "Name", "Attribut", "Attribute"])
-    val_col = _pick_col_by_names(df, ["Värde", "Varde", "Value", "Val"])
-    bolag_col = _pick_col_by_names(df, ["Bolag", "Company"])
-    if not art_col or not val_col:
-        return []
-
-    rows: List[Dict[str, str]] = []
-    seen = set()
-    for _, r in df.iterrows():
-        article = str(r.get(art_col, "") or "").strip()
-        value = str(r.get(val_col, "") or "").strip()
-        name = str(r.get(name_col, "") or "").strip().lower() if name_col else ""
-        bolag = str(r.get(bolag_col, "") or "").strip() if bolag_col else ""
-        if not article or not value.lower().startswith("http"):
-            continue
-        if name_col and name not in {"img", "image", "bild", "url"}:
-            continue
-        key = (article, bolag, value)
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append(
-            {
-                "article_number": article,
-                "url": value,
-                "bolag": bolag,
-            }
-        )
-    return rows
-
-
-def _download_url_bytes(url: str, timeout_sec: int = 40) -> tuple[bytes, str]:
-    resp = req.get(url, timeout=timeout_sec)
-    if not resp.ok or not resp.content:
-        raise RuntimeError(f"Kunde inte ladda bild-URL ({resp.status_code}): {url}")
-    content_type = (resp.headers.get("content-type") or "").split(";")[0].strip()
-    return resp.content, (content_type or "application/octet-stream")
-
-
-def _filename_from_url_row(row: Dict[str, str], index: int, content_type: str) -> str:
-    article = _safe_folder_fragment(str(row.get("article_number", "") or "").strip())
-    if not article:
-        article = f"image_{index + 1}"
-    url_path = urlparse(str(row.get("url", "") or "")).path
-    ext = Path(url_path).suffix.lower()
-    if ext not in CLASSIFIER_IMAGE_EXTENSIONS:
-        guessed = mimetypes.guess_extension(content_type or "")
-        ext = (guessed or ".jpg").lower()
-    if not ext.startswith("."):
-        ext = f".{ext}"
-    return f"{article}{ext}"
-
-
-def _classifier_status_payload() -> Dict[str, Any]:
-    script = _classifier_script_path()
-    available = script.exists()
-
-    running = False
-    pid: Optional[int] = None
-    global _classifier_proc
-    with _classifier_lock:
-        if _classifier_proc is not None:
-            if _classifier_proc.poll() is None:
-                running = True
-                pid = int(_classifier_proc.pid) if _classifier_proc.pid else None
-            else:
-                _classifier_proc = None
-
-    if not available:
-        message = "Hittar inte classifier.py i CLASSIFIER_APP_DIR."
-    elif running:
-        message = "Classifier är igång."
-    else:
-        message = "Classifier är stoppad."
-
-    return {
-        "ok": True,
-        "available": available,
-        "running": running,
-        "pid": pid,
-        "script_path": str(script),
-        "message": message,
-    }
-
-
-def _safe_folder_fragment(name: str) -> str:
-    text = str(name or "").strip()
-    text = re.sub(r'[\\/:*?"<>|]+', "_", text)
-    text = re.sub(r"\s+", " ", text).strip(" .")
-    return text or "unnamed"
-
-
-def _unique_target_path(dst_dir: Path, filename: str) -> Path:
-    target = dst_dir / filename
-    if not target.exists():
-        return target
-    stem = target.stem
-    suffix = target.suffix
-    for i in range(2, 10000):
-        candidate = dst_dir / f"{stem}_{i}{suffix}"
-        if not candidate.exists():
-            return candidate
-    return dst_dir / f"{stem}_{int(time.time())}{suffix}"
-
-
-def _build_web_classifier_state(session: WebClassifierSession) -> Dict[str, Any]:
-    total = len(session.images)
-    done = bool(session.finished or session.index >= total)
-    current_path = session.images[session.index] if not done else ""
-    current_name = Path(current_path).name if current_path else ""
-    current_article = ""
-    current_source_url = ""
-    if session.image_source == "url" and not done and session.index < len(session.image_rows):
-        row = session.image_rows[session.index]
-        current_article = str(row.get("article_number", "") or "").strip()
-        current_source_url = str(row.get("url", "") or "").strip()
-        if current_article:
-            current_name = current_article
-
-    return {
-        "ok": True,
-        "session_id": session.session_id,
-        "test_name": session.test_name,
-        "image_dir": session.image_dir,
-        "output_dir": session.output_dir,
-        "image_source": session.image_source,
-        "categories": session.categories,
-        "counts": session.counts,
-        "skipped": session.skipped,
-        "index": session.index,
-        "total": total,
-        "done": done,
-        "current_filename": current_name,
-        "current_article": current_article,
-        "current_source_url": current_source_url,
-        "image_url": (
-            f"/api/classifier/web/{session.session_id}/image?ts={int(time.time() * 1000)}"
-            if not done
-            else ""
-        ),
-    }
-
-
-def _find_web_classifier_session(session_id: str) -> Optional[WebClassifierSession]:
-    with _web_classifier_lock:
-        return _web_classifier_sessions.get(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1266,364 +986,6 @@ def api_ask_csv_fetch(request: Request, sid: str, body: AskCsvFetchBody):
         "filename": os.path.basename(dest),
         "bytes": len(resp.content),
     }
-
-
-# ---------------------------------------------------------------------------
-# Classifier bridge (external desktop app)
-# ---------------------------------------------------------------------------
-
-@app.get("/api/classifier/status")
-def api_classifier_status():
-    return _classifier_status_payload()
-
-
-@app.post("/api/classifier/start")
-def api_classifier_start():
-    script = _classifier_script_path()
-    if not script.exists():
-        raise HTTPException(status_code=404, detail=f"Classifier-script saknas: {script}")
-
-    global _classifier_proc
-    with _classifier_lock:
-        if _classifier_proc is not None and _classifier_proc.poll() is None:
-            return {
-                "ok": True,
-                "already_running": True,
-                "pid": int(_classifier_proc.pid) if _classifier_proc.pid else None,
-                "message": "Classifier kör redan.",
-            }
-
-        try:
-            creationflags = 0
-            if os.name == "nt":
-                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-
-            _classifier_proc = subprocess.Popen(
-                [sys.executable, str(script)],
-                cwd=str(script.parent),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Kunde inte starta classifier: {e}") from e
-
-        return {
-            "ok": True,
-            "started": True,
-            "pid": int(_classifier_proc.pid) if _classifier_proc.pid else None,
-            "message": f"Classifier startad (PID {_classifier_proc.pid}).",
-        }
-
-
-@app.post("/api/classifier/stop")
-def api_classifier_stop():
-    global _classifier_proc
-    with _classifier_lock:
-        if _classifier_proc is None or _classifier_proc.poll() is not None:
-            _classifier_proc = None
-            return {"ok": True, "stopped": False, "message": "Classifier var redan stoppad."}
-
-        pid = int(_classifier_proc.pid) if _classifier_proc.pid else None
-        try:
-            _classifier_proc.terminate()
-            _classifier_proc.wait(timeout=8)
-        except Exception:
-            try:
-                _classifier_proc.kill()
-            except Exception:
-                pass
-        finally:
-            _classifier_proc = None
-
-        return {"ok": True, "stopped": True, "pid": pid, "message": f"Classifier stoppad (PID {pid})."}
-
-
-# ---------------------------------------------------------------------------
-# Classifier web flow
-# ---------------------------------------------------------------------------
-
-@app.get("/api/classifier/web/config")
-def api_classifier_web_config():
-    return {
-        "ok": True,
-        "default_image_dir": CLASSIFIER_DEFAULT_IMAGE_DIR,
-        "default_output_dir": CLASSIFIER_DEFAULT_OUTPUT_DIR,
-        "supported_extensions": sorted(CLASSIFIER_IMAGE_EXTENSIONS),
-        "data_files": _classifier_data_files_payload(),
-    }
-
-
-@app.get("/api/classifier/web/data-files")
-def api_classifier_web_data_files():
-    payload = _classifier_data_files_payload()
-    item_attribute = payload.get("item_attribute", {})
-    item_rows = 0
-    if item_attribute.get("exists") and item_attribute.get("path"):
-        item_rows = len(_extract_rows_from_item_attribute(str(item_attribute["path"])))
-    return {
-        "ok": True,
-        "files": payload,
-        "item_attribute_rows": item_rows,
-    }
-
-
-@app.post("/api/classifier/web/data-files/upload")
-async def api_classifier_web_data_upload(file_key: str = Form(...), file: UploadFile = Form(...)):
-    if file_key not in CLASSIFIER_DATA_FILE_KEYS:
-        raise HTTPException(status_code=400, detail=f"Ogiltig file_key: {file_key}")
-    base = _ensure_classifier_data_dir()
-    safe_name = re.sub(r"[^\w.\-]", "_", file.filename or f"{file_key}.csv")
-    dest = base / f"{file_key}_{safe_name}"
-    content = await file.read()
-    with open(dest, "wb") as fh:
-        fh.write(content)
-    with _classifier_data_lock:
-        old = _classifier_data_files.get(file_key)
-        _classifier_data_files[file_key] = str(dest)
-    if old and old != str(dest):
-        try:
-            if os.path.exists(old):
-                os.remove(old)
-        except Exception:
-            pass
-    payload = _classifier_data_files_payload()
-    item_rows = 0
-    if file_key == "item_attribute":
-        item_rows = len(_extract_rows_from_item_attribute(str(dest)))
-    return {
-        "ok": True,
-        "file_key": file_key,
-        "filename": os.path.basename(dest),
-        "bytes": len(content),
-        "item_attribute_rows": item_rows,
-        "files": payload,
-    }
-
-
-@app.delete("/api/classifier/web/data-files/{file_key}")
-def api_classifier_web_data_delete(file_key: str):
-    if file_key not in CLASSIFIER_DATA_FILE_KEYS:
-        raise HTTPException(status_code=400, detail=f"Ogiltig file_key: {file_key}")
-    old = None
-    with _classifier_data_lock:
-        old = _classifier_data_files.pop(file_key, None)
-    if old and os.path.exists(old):
-        try:
-            os.remove(old)
-        except Exception:
-            pass
-    return {"ok": True, "file_key": file_key, "files": _classifier_data_files_payload()}
-
-
-@app.post("/api/classifier/web/start")
-def api_classifier_web_start(body: WebClassifierStartBody):
-    test_name = str(body.test_name or "").strip()
-    if not test_name:
-        raise HTTPException(status_code=400, detail="Testnamn krävs.")
-
-    categories: List[str] = []
-    seen = set()
-    for raw in body.categories or []:
-        cat = str(raw or "").strip()
-        if not cat:
-            continue
-        key = cat.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        categories.append(cat)
-    if not categories:
-        raise HTTPException(status_code=400, detail="Minst en kategori krävs.")
-
-    output_dir = Path((body.output_dir or CLASSIFIER_DEFAULT_OUTPUT_DIR).strip()).expanduser()
-    if not output_dir.exists() or not output_dir.is_dir():
-        raise HTTPException(status_code=400, detail=f"Outputmapp saknas: {output_dir}")
-
-    image_dir = Path((body.image_dir or CLASSIFIER_DEFAULT_IMAGE_DIR).strip()).expanduser()
-    images: List[str] = []
-    if image_dir.exists() and image_dir.is_dir():
-        images = [
-            str(p.resolve())
-            for p in sorted(image_dir.rglob("*"))
-            if p.is_file() and p.suffix.lower() in CLASSIFIER_IMAGE_EXTENSIONS
-        ]
-
-    image_rows: List[Dict[str, str]] = []
-    item_attr_path = ""
-    with _classifier_data_lock:
-        item_attr_path = _classifier_data_files.get("item_attribute", "") or ""
-    if item_attr_path and os.path.exists(item_attr_path):
-        image_rows = _extract_rows_from_item_attribute(item_attr_path)
-
-    image_source = "file"
-    if images:
-        if body.shuffle:
-            random.shuffle(images)
-    elif image_rows:
-        image_source = "url"
-        images = [str(r.get("url", "") or "").strip() for r in image_rows if str(r.get("url", "") or "").strip()]
-        if body.shuffle:
-            combo = list(zip(images, image_rows))
-            random.shuffle(combo)
-            images = [c[0] for c in combo]
-            image_rows = [c[1] for c in combo]
-    else:
-        if image_dir.exists():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Inga bilder hittades i {image_dir} och ingen item_attribute med IMG-URL är uppladdad.",
-            )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Bildmapp saknas: {image_dir}. Ladda upp datafiler eller ange korrekt bildmapp.",
-        )
-
-    cls_id = uuid.uuid4().hex[:12]
-    session = WebClassifierSession(
-        session_id=cls_id,
-        test_name=test_name,
-        image_dir=str(image_dir.resolve()) if image_dir.exists() else str(image_dir),
-        output_dir=str(output_dir.resolve()),
-        categories=categories,
-        images=images,
-        image_source=image_source,
-        image_rows=image_rows,
-        counts={c: 0 for c in categories},
-    )
-    with _web_classifier_lock:
-        _web_classifier_sessions[cls_id] = session
-
-    state = _build_web_classifier_state(session)
-    if image_source == "url":
-        state["message"] = f"Klassificering startad med {len(images)} bilder från item_attribute."
-    else:
-        state["message"] = f"Klassificering startad med {len(images)} bilder."
-    return state
-
-
-@app.get("/api/classifier/web/{cls_id}")
-def api_classifier_web_state(cls_id: str):
-    session = _find_web_classifier_session(cls_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
-    return _build_web_classifier_state(session)
-
-
-@app.get("/api/classifier/web/{cls_id}/image")
-def api_classifier_web_image(cls_id: str):
-    session = _find_web_classifier_session(cls_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
-    if session.finished or session.index >= len(session.images):
-        raise HTTPException(status_code=404, detail="Ingen aktiv bild kvar.")
-
-    if session.image_source == "url":
-        if session.index >= len(session.image_rows):
-            raise HTTPException(status_code=404, detail="Ingen aktiv bildrad kvar.")
-        row = session.image_rows[session.index]
-        url = str(row.get("url", "") or "").strip()
-        if not url:
-            raise HTTPException(status_code=404, detail="Bild-URL saknas i aktuell rad.")
-        try:
-            content, content_type = _download_url_bytes(url, timeout_sec=40)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Kunde inte hämta bild från URL: {e}") from e
-        return Response(content=content, media_type=content_type)
-
-    path = Path(session.images[session.index])
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Bilden saknas: {path.name}")
-    media_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-    return FileResponse(str(path), media_type=media_type, filename=path.name)
-
-
-@app.post("/api/classifier/web/{cls_id}/classify")
-def api_classifier_web_classify(cls_id: str, body: WebClassifierClassifyBody):
-    category = str(body.category or "").strip()
-    if not category:
-        raise HTTPException(status_code=400, detail="Kategori krävs.")
-
-    with _web_classifier_lock:
-        session = _web_classifier_sessions.get(cls_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
-        if session.finished or session.index >= len(session.images):
-            raise HTTPException(status_code=400, detail="Sessionen är redan klar.")
-        if category not in session.categories:
-            raise HTTPException(status_code=400, detail=f"Okänd kategori: {category}")
-
-        dst_dir = Path(session.output_dir) / f"{_safe_folder_fragment(session.test_name)}.{_safe_folder_fragment(category)}"
-        dst_dir.mkdir(parents=True, exist_ok=True)
-
-        saved_path = ""
-        if session.image_source == "url":
-            if session.index >= len(session.image_rows):
-                raise HTTPException(status_code=400, detail="Ingen aktiv URL-rad kvar.")
-            row = session.image_rows[session.index]
-            url = str(row.get("url", "") or "").strip()
-            if not url:
-                raise HTTPException(status_code=400, detail="Aktuell rad saknar URL.")
-            try:
-                content, content_type = _download_url_bytes(url, timeout_sec=40)
-            except Exception as e:
-                raise HTTPException(status_code=502, detail=f"Kunde inte ladda bild för klassificering: {e}") from e
-            fname = _filename_from_url_row(row, session.index, content_type)
-            dst = _unique_target_path(dst_dir, fname)
-            with open(dst, "wb") as fh:
-                fh.write(content)
-            saved_path = str(dst)
-        else:
-            src = Path(session.images[session.index])
-            if not src.exists():
-                session.skipped += 1
-                session.index += 1
-                if session.index >= len(session.images):
-                    session.finished = True
-                state = _build_web_classifier_state(session)
-                state["message"] = f"Bilden saknades och hoppades över: {src.name}"
-                return state
-            dst = _unique_target_path(dst_dir, src.name)
-            shutil.copy2(src, dst)
-            saved_path = str(dst)
-
-        session.counts[category] = int(session.counts.get(category, 0)) + 1
-        session.index += 1
-        if session.index >= len(session.images):
-            session.finished = True
-        state = _build_web_classifier_state(session)
-        state["saved_to"] = saved_path
-        state["message"] = f"Sparad till {dst_dir.name}"
-        return state
-
-
-@app.post("/api/classifier/web/{cls_id}/skip")
-def api_classifier_web_skip(cls_id: str):
-    with _web_classifier_lock:
-        session = _web_classifier_sessions.get(cls_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
-        if session.finished or session.index >= len(session.images):
-            raise HTTPException(status_code=400, detail="Sessionen är redan klar.")
-        session.skipped += 1
-        session.index += 1
-        if session.index >= len(session.images):
-            session.finished = True
-        state = _build_web_classifier_state(session)
-        state["message"] = "Bild hoppades över."
-        return state
-
-
-@app.post("/api/classifier/web/{cls_id}/finish")
-def api_classifier_web_finish(cls_id: str):
-    with _web_classifier_lock:
-        session = _web_classifier_sessions.get(cls_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Klassificeringssession saknas.")
-        session.finished = True
-        state = _build_web_classifier_state(session)
-        state["message"] = "Session avslutad."
-        return state
 
 
 # ---------------------------------------------------------------------------
