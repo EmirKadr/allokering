@@ -200,6 +200,22 @@ const OPEN_BUTTON_HINTS = {
   "prognos": "Ladda upp Prognos eller Kampanjvolymer först. För komplett rapport behövs även Saldo inkl. automation och Buffertpall.",
 };
 
+const RESULT_TOOLTIP_CONFIG = {
+  "allokerade": { job: "allokering", actionLabel: "Kör allokering" },
+  "nearmiss": { job: "allokering", actionLabel: "Kör allokering" },
+  "pallplatser": { job: "allokering", actionLabel: "Kör allokering" },
+  "refill": { job: "allokering", actionLabel: "Kör allokering" },
+  "hib-koppling": { job: "hib-koppling", actionLabel: "Kör HIB" },
+  "orderkontroll": { job: "orderkontroll", actionLabel: "Kör Orderöversikt" },
+  "dispatchkontroll": { job: "dispatchkontroll", actionLabel: "Kör Dispatchpallar" },
+  "eftersok": { job: "eftersok", actionLabel: "Kör Eftersök" },
+  "prognos": {
+    requiredLabels: ["Prognos eller Kampanjvolymer"],
+    optionalLabels: ["Saldo inkl. automation (CSV)", "Buffertpall (CSV)"],
+    actionLabel: "Skapa prognosrapport",
+  },
+};
+
 const THEME_STORAGE_KEY = "allok_theme";
 const ALLOKERING_SUBTAB_STORAGE_KEY = "allok_allokering_subtab";
 
@@ -1008,12 +1024,43 @@ function getRequiredLabelsForJob(job) {
     .filter(Boolean);
 }
 
-function buildRequirementTitle(baseTitle, requiredLabels) {
+function buildRequirementTitle(baseTitle, requiredLabels, options = {}) {
   const base = String(baseTitle || "").trim();
-  const requirementText = (requiredLabels || []).length > 0
-    ? `Kräver: ${(requiredLabels || []).join(", ")}.`
-    : "";
-  return [base, requirementText].filter(Boolean).join(" ");
+  const required = Array.isArray(requiredLabels) ? requiredLabels.filter(Boolean) : [];
+  const optional = Array.isArray(options.optionalLabels) ? options.optionalLabels.filter(Boolean) : [];
+  const missing = Array.isArray(options.missingLabels) ? options.missingLabels.filter(Boolean) : [];
+  const parts = [];
+  if (base) parts.push(base);
+  if (required.length > 0) {
+    parts.push(`Kräver: ${required.join(", ")}.`);
+  }
+  if (optional.length > 0) {
+    parts.push(`För komplett resultat: ${optional.join(", ")}.`);
+  }
+  if (missing.length > 0) {
+    parts.push(`Saknas just nu: ${missing.join(", ")}.`);
+  }
+  if (options.actionLabel) {
+    parts.push(`Skapas via: ${options.actionLabel}.`);
+  }
+  if (options.note) {
+    parts.push(String(options.note).trim());
+  }
+  return parts.filter(Boolean).join(" ");
+}
+
+function getResultTooltipInfo(resultKey) {
+  const config = RESULT_TOOLTIP_CONFIG[resultKey] || {};
+  return {
+    requiredLabels: config.job ? getRequiredLabelsForJob(config.job) : (config.requiredLabels || []),
+    optionalLabels: config.optionalLabels || [],
+    missingLabels: config.job
+      ? getMissingRequirements(config.job)
+      : (resultKey === "prognos" && !(fileStatuses.prognos || fileStatuses.campaign)
+        ? ["Prognos eller Kampanjvolymer"]
+        : []),
+    actionLabel: config.actionLabel || "",
+  };
 }
 
 function getMissingRequirements(job) {
@@ -1039,13 +1086,26 @@ function syncActionButtonsState() {
     const btn = document.getElementById(`btn-${job}`);
     if (!btn) return;
     const missing = getMissingRequirements(job);
-    const readyTitle = buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", getRequiredLabelsForJob(job));
+    const requiredLabels = getRequiredLabelsForJob(job);
+    const readyTitle = buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", requiredLabels);
     actionMissingByJob[job] = missing;
     if (jobInFlight) {
       const currentLabel = currentJobType || "ett jobb";
-      setButtonLockState(btn, true, `En körning pågår redan (${currentLabel}). Vänta tills den är klar.`);
+      setButtonLockState(
+        btn,
+        true,
+        buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", requiredLabels, {
+          note: `En körning pågår redan (${currentLabel}). Vänta tills den är klar.`,
+        })
+      );
     } else if (missing.length > 0) {
-      setButtonLockState(btn, true, `För att aktivera krävs: ${missing.join(", ")}`);
+      setButtonLockState(
+        btn,
+        true,
+        buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", requiredLabels, {
+          missingLabels: missing,
+        })
+      );
     } else {
       setButtonLockState(btn, false, "");
       btn.title = readyTitle || btn.title;
@@ -1351,6 +1411,7 @@ async function refreshResultStatus() {
 
 function createResultButton(key, isReady) {
   const label = RESULT_LABELS[key] || `Öppna ${key}`;
+  const tooltipInfo = getResultTooltipInfo(key);
   const btn = document.createElement("button");
   btn.className = "btn btn-sm action-btn action-btn-open";
   btn.textContent = label;
@@ -1359,13 +1420,35 @@ function createResultButton(key, isReady) {
   btn.onclick = () => openResult(key);
   if (isReady) {
     if (key === "prognos" && !availableResults.has("prognos")) {
-      btn.title = "Skapa och öppna prognosrapport som Excel-fil";
+      btn.title = buildRequirementTitle("Skapa och öppna prognosrapport som Excel-fil", tooltipInfo.requiredLabels, {
+        optionalLabels: tooltipInfo.optionalLabels,
+        actionLabel: tooltipInfo.actionLabel,
+      });
     } else {
-      btn.title = `Ladda ner och öppna ${label.replace(/^Öppna\\s+/i, "")} som Excel-fil`;
+      btn.title = buildRequirementTitle(
+        `Ladda ner och öppna ${label.replace(/^Öppna\\s+/i, "")} som Excel-fil`,
+        tooltipInfo.requiredLabels,
+        {
+          optionalLabels: tooltipInfo.optionalLabels,
+          actionLabel: tooltipInfo.actionLabel,
+        }
+      );
     }
     setButtonLockState(btn, false, "");
   } else {
-    setButtonLockState(btn, true, OPEN_BUTTON_HINTS[key] || "Resultatet är inte tillgängligt än.");
+    setButtonLockState(
+      btn,
+      true,
+      buildRequirementTitle(
+        OPEN_BUTTON_HINTS[key] || "Resultatet är inte tillgängligt än.",
+        tooltipInfo.requiredLabels,
+        {
+          optionalLabels: tooltipInfo.optionalLabels,
+          missingLabels: tooltipInfo.missingLabels,
+          actionLabel: tooltipInfo.actionLabel,
+        }
+      )
+    );
   }
   return btn;
 }
@@ -1521,7 +1604,18 @@ function setOrdersaldoCopyButtonState(buttonId, count, emptyHint) {
     setButtonLockState(btn, false, "");
     btn.title = readyTitle || btn.title;
   } else {
-    setButtonLockState(btn, true, emptyHint || copyConfig?.lockedHint || "Listan är tom.");
+    const missingLabels = fileStatuses.orders ? [] : (copyConfig?.requiredLabels || []);
+    const noteText = missingLabels.length > 0
+      ? "Listan blir tillgänglig när orderrader är uppladdade och listan innehåller värden."
+      : (emptyHint || "Listan är tom.");
+    setButtonLockState(
+      btn,
+      true,
+      buildRequirementTitle(btn.dataset.baseTitle || btn.title || "", copyConfig?.requiredLabels || [], {
+        missingLabels,
+        note: noteText,
+      })
+    );
   }
 }
 
