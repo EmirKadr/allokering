@@ -878,6 +878,7 @@ function renderFilterCard(options) {
   const normalized = { ...(options || {}) };
   const card = document.getElementById("filter-card");
   const content = document.getElementById("filter-content");
+  if (!card || !content) return;
   const hasBolag = normalized.bolag && normalized.bolag.length > 0;
   const hasOrdertyp = normalized.ordertyp && normalized.ordertyp.length > 0;
 
@@ -889,7 +890,7 @@ function renderFilterCard(options) {
   content.innerHTML = "";
 
   const row = document.createElement("div");
-  row.className = "d-flex gap-3 flex-wrap";
+  row.className = "filter-groups";
 
   if (hasBolag) {
     row.appendChild(buildFilterGroup("bolag", "Bolag", normalized.bolag));
@@ -901,7 +902,7 @@ function renderFilterCard(options) {
 
   // "Valj alla" / "Rensa" knappar
   const btnRow = document.createElement("div");
-  btnRow.className = "d-flex gap-2 mt-2";
+  btnRow.className = "filter-actions";
   const selectAll = document.createElement("button");
   selectAll.className = "btn btn-sm btn-outline-secondary";
   selectAll.textContent = "Valj alla";
@@ -923,7 +924,8 @@ function renderFilterCard(options) {
 
 function buildFilterGroup(key, title, values) {
   const group = document.createElement("div");
-  group.innerHTML = `<strong>${title}</strong>`;
+  group.className = "filter-group";
+  group.innerHTML = `<strong class="filter-group-title">${title}</strong>`;
   values.forEach(val => {
     const id = `filter-${key}-${val.replace(/\W/g, "_")}`;
     const div = document.createElement("div");

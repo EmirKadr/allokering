@@ -103,6 +103,37 @@ body {
   min-width: 520px;
 }
 
+.subtab-filter-card {
+  min-width: 220px;
+  max-width: 240px;
+}
+
+.subtab-filter-card .card-body {
+  min-width: 0;
+}
+
+.filter-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-group {
+  min-width: 0;
+}
+
+.filter-group-title {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .top-bar {
   display: flex;
   flex-wrap: wrap;
