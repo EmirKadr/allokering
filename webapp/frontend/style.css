@@ -44,8 +44,8 @@ html[data-theme="dark"] {
   --nav-active-bg: #182028;
   --nav-active-text: #f4f7fb;
   --nav-hover-bg: #202b35;
-  --log-bg: #0b0f13;
-  --log-text: #d9e2ec;
+  --log-bg: #ffffff;
+  --log-text: #101418;
   --secondary-btn-border: #8da0b4;
   --secondary-btn-text: #dce5ee;
   --secondary-btn-hover-bg: #8da0b4;
