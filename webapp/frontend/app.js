@@ -1696,6 +1696,23 @@ function setOrdersaldoCopyButtonState(buttonId, count, emptyHint) {
   }
 }
 
+function logOrdersaldoListReady(listId, count) {
+  if (listId === "list1") {
+    if (count > 0) {
+      appendLog(`Kompletta ordrar klara: ${count} ordernummer.`);
+    } else {
+      appendLog("Kompletta ordrar klara: listan är tom.");
+    }
+    return;
+  }
+
+  if (count > 0) {
+    appendLog(`Påfyllningsbehov klart: ${count} artikelnummer.`);
+  } else {
+    appendLog("Påfyllningsbehov klart: listan är tom.");
+  }
+}
+
 async function recomputeOrdersaldoLists(options = {}) {
   const quiet = !!options.quiet;
   if (!sessionId || !fileStatuses.orders) {
@@ -1740,6 +1757,10 @@ async function refreshOrdersaldoButtonState(options = {}) {
     const c2 = Array.isArray(d2.values) ? d2.values.length : 0;
     setOrdersaldoCopyButtonState("btn-kompletta", c1, "Lista 1 är tom.");
     setOrdersaldoCopyButtonState("btn-pafyllning", c2, "Lista 2 är tom.");
+    if (recompute) {
+      logOrdersaldoListReady("list1", c1);
+      logOrdersaldoListReady("list2", c2);
+    }
   } catch (e) {
     setOrdersaldoCopyButtonState("btn-kompletta", 0, "Lista 1 är tom.");
     setOrdersaldoCopyButtonState("btn-pafyllning", 0, "Lista 2 är tom.");
