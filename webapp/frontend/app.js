@@ -237,15 +237,38 @@ let currentJobId = null;
 let currentJobType = null;
 let currentJobState = null;
 let lastLogEventId = 0;
+let currentLogText = "";
+let currentKalltypSummaryRows = [];
 
-// Per-tab session state
-const TAB_PAGE_IDS = ["allokering-page", "eftersok-page", "dela-page"];
-let tabSessions = {};      // pageId -> sessionId
-let tabStates = {};        // pageId -> { fileStatuses, availableResults, cachedFilterOptions, selectedFilters }
+// Session state per view scope. Allokering-subtabs have separate sessions so
+// uploads/results do not leak between Allokering, Kontroller and Saldo.
+const SESSION_SCOPE_IDS = [
+  "allokering-subpage-allokering",
+  "allokering-subpage-kontroller",
+  "allokering-subpage-saldo",
+  "eftersok-page",
+  "dela-page",
+];
+let tabSessions = {};      // scopeId -> sessionId
+let tabStates = {};        // scopeId -> { fileStatuses, availableResults, cachedFilterOptions, selectedFilters }
+
+function getSessionScopeId(pageId = _activePageId, subtabId = _activeAllokeringSubtab) {
+  if (pageId === "allokering-page") {
+    const resolvedSubtab = document.getElementById(subtabId)
+      ? subtabId
+      : "allokering-subpage-allokering";
+    return resolvedSubtab;
+  }
+  return pageId;
+}
+
+function getSessionStorageKey(scopeId) {
+  return `allok_session_${scopeId}`;
+}
 
 function _initTabStates() {
-  TAB_PAGE_IDS.forEach(pid => {
-    tabStates[pid] = {
+  SESSION_SCOPE_IDS.forEach(scopeId => {
+    tabStates[scopeId] = {
       fileStatuses: {},
       availableResults: new Set(),
       cachedFilterOptions: {},
@@ -254,14 +277,16 @@ function _initTabStates() {
       currentJobType: null,
       currentJobState: null,
       lastLogEventId: 0,
+      logText: "",
+      kalltypSummaryRows: [],
     };
   });
 }
 _initTabStates();
 
-function _saveTabState(pageId) {
-  if (!pageId) return;
-  tabStates[pageId] = {
+function _saveTabState(scopeId) {
+  if (!scopeId || !SESSION_SCOPE_IDS.includes(scopeId)) return;
+  tabStates[scopeId] = {
     fileStatuses: { ...fileStatuses },
     availableResults: new Set(availableResults),
     cachedFilterOptions: { ...cachedFilterOptions },
@@ -270,11 +295,13 @@ function _saveTabState(pageId) {
     currentJobType,
     currentJobState,
     lastLogEventId,
+    logText: currentLogText,
+    kalltypSummaryRows: currentKalltypSummaryRows.map(row => ({ ...row })),
   };
 }
 
-function _loadTabState(pageId) {
-  const s = tabStates[pageId];
+function _loadTabState(scopeId) {
+  const s = tabStates[scopeId];
   if (!s) return;
   fileStatuses = { ...s.fileStatuses };
   availableResults = new Set(s.availableResults);
@@ -284,10 +311,55 @@ function _loadTabState(pageId) {
   currentJobType = s.currentJobType || null;
   currentJobState = s.currentJobState || null;
   lastLogEventId = Number(s.lastLogEventId || 0);
+  currentLogText = String(s.logText || "");
+  currentKalltypSummaryRows = Array.isArray(s.kalltypSummaryRows)
+    ? s.kalltypSummaryRows.map(row => ({ ...row }))
+    : [];
 }
 
 let _activePageId = "allokering-page";
 let _activeAllokeringSubtab = "allokering-subpage-allokering";
+
+function applyFileStatusesToUi() {
+  [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
+    const filename = fileStatuses[slot.key] || null;
+    setBadge(slot.key, filename || "Ej fil", !!filename);
+  });
+}
+
+function applyScopeVisualState() {
+  const logEl = document.getElementById("log-output");
+  if (logEl) {
+    logEl.textContent = currentLogText;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  renderKalltypSummary(currentKalltypSummaryRows, { persist: false });
+}
+
+function activateSessionScope(scopeId, options = {}) {
+  if (!scopeId || !SESSION_SCOPE_IDS.includes(scopeId)) return;
+  const nextSessionId = tabSessions[scopeId] || null;
+  _loadTabState(scopeId);
+  applyFileStatusesToUi();
+  applyScopeVisualState();
+  renderResultButtons();
+  renderFilterCard(cachedFilterOptions);
+  syncActionButtonsState();
+  if (!nextSessionId) {
+    sessionId = null;
+    return;
+  }
+  sessionId = nextSessionId;
+  connectSSE();
+
+  if (options.refresh === false) {
+    return;
+  }
+  refreshFileStatus();
+  refreshFilterOptions();
+  refreshResultStatus();
+  refreshOrdersaldoButtonState();
+}
 
 function getCurrentTheme() {
   return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
@@ -326,6 +398,8 @@ function resetFrontendState(options = {}) {
   currentJobType = null;
   currentJobState = null;
   lastLogEventId = 0;
+  currentLogText = "";
+  currentKalltypSummaryRows = [];
 
   [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
     setBadge(slot.key, "Ej fil", false);
@@ -334,6 +408,7 @@ function resetFrontendState(options = {}) {
   renderResultButtons();
   renderFilterCard({});
   clearKalltypSummary();
+  applyScopeVisualState();
 
   if (clearInputs) {
     const purchaseInput = document.getElementById("purchase-input");
@@ -345,7 +420,7 @@ function resetFrontendState(options = {}) {
   ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
 
   // Spara tillbaka till tabStates
-  _saveTabState(_activePageId);
+  _saveTabState(getSessionScopeId());
 }
 
 async function readErrorDetail(resp) {
@@ -382,12 +457,12 @@ async function recoverExpiredSession(reason) {
 
   sessionRecoveryPromise = (async () => {
     const previousSessionId = sessionId;
-    // Nollställ bara aktiv flik
-    const pid = _activePageId;
-    tabSessions[pid] = null;
+    // Nollställ bara aktiv vy/scope
+    const scopeId = getSessionScopeId();
+    tabSessions[scopeId] = null;
     sessionId = null;
     try {
-      sessionStorage.removeItem(`allok_session_${pid}`);
+      sessionStorage.removeItem(getSessionStorageKey(scopeId));
     } catch (_e) {
       // Tyst fel
     }
@@ -431,28 +506,28 @@ async function fetchWithSessionRecovery(url, options = {}, context = "") {
 // ---------------------------------------------------------------------------
 
 async function ensureSession() {
-  // Skapa/verifiera session för varje flik
-  for (const pid of TAB_PAGE_IDS) {
-    const storageKey = `allok_session_${pid}`;
+  // Skapa/verifiera session för varje vy/scope.
+  for (const scopeId of SESSION_SCOPE_IDS) {
+    const storageKey = getSessionStorageKey(scopeId);
     const stored = sessionStorage.getItem(storageKey);
-    if (stored && !tabSessions[pid]) {
+    if (stored && !tabSessions[scopeId]) {
       try {
         const check = await fetch(`${API}/api/upload/${stored}`);
         if (check.ok) {
-          tabSessions[pid] = stored;
+          tabSessions[scopeId] = stored;
           continue;
         }
       } catch (e) { /* server nere eller session borta */ }
     }
-    if (!tabSessions[pid]) {
+    if (!tabSessions[scopeId]) {
       const resp = await fetch(`${API}/api/session`, { method: "POST" });
       const data = await resp.json();
-      tabSessions[pid] = data.session_id;
+      tabSessions[scopeId] = data.session_id;
       sessionStorage.setItem(storageKey, data.session_id);
     }
   }
-  // Sätt aktiv flik
-  sessionId = tabSessions[_activePageId] || tabSessions["allokering-page"];
+  // Sätt aktiv scope
+  sessionId = tabSessions[getSessionScopeId()] || tabSessions["allokering-subpage-allokering"];
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -646,7 +721,7 @@ async function uploadFile(fileKey, file, options = {}) {
   try {
     const formData = new FormData();
     formData.append("file_key", fileKey);
-    formData.append("page_id", getActiveMainPage());
+    formData.append("page_id", getSessionScopeId());
     formData.append("file", file);
 
     const data = await new Promise((resolve, reject) => {
@@ -1161,7 +1236,7 @@ async function runJob(job) {
     currentJobId = data.job_id || currentJobId;
     currentJobType = data.job_type || job;
     currentJobState = data.status || "queued";
-    _saveTabState(_activePageId);
+    _saveTabState(getSessionScopeId());
     appendLog(currentJobState === "queued" ? `Köade jobb: ${job}` : `Startade jobb: ${job}`);
     syncActionButtonsState();
   } catch (e) {
@@ -1206,7 +1281,7 @@ function connectSSE() {
   sseSource.onmessage = (e) => {
     if (e.lastEventId) {
       lastLogEventId = Number(e.lastEventId || 0);
-      _saveTabState(_activePageId);
+      _saveTabState(getSessionScopeId());
     }
     const msg = e.data.replace(/\\n/g, "\n");
 
@@ -1234,7 +1309,7 @@ function connectSSE() {
       appendLog(msg === "__DONE__" ? "--- Klar ---" : "--- Avbrots med fel ---");
       refreshResultStatus().catch(() => {});
       refreshOrdersaldoButtonState({ recompute: msg === "__DONE__" }).catch(() => {});
-      _saveTabState(_activePageId);
+      _saveTabState(getSessionScopeId());
       return;
     }
 
@@ -1271,6 +1346,7 @@ function connectSSE() {
 
 function appendLog(msg, updateLast) {
   const el = document.getElementById("log-output");
+  if (!el) return;
   if (updateLast) {
     const lines = el.textContent.split("\n");
     // Remove trailing empty line, replace last content line
@@ -1282,6 +1358,7 @@ function appendLog(msg, updateLast) {
     el.textContent += msg + "\n";
   }
   el.scrollTop = el.scrollHeight;
+  currentLogText = el.textContent;
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,7 +1382,7 @@ function setupAllokeringSubtabs() {
   } catch (_e) {
     // Ignorera
   }
-  setAllokeringSubtab(initialSubtab);
+  setMainPage("allokering-page", initialSubtab);
 }
 
 function setAllokeringSubtab(subtabId) {
@@ -1339,16 +1416,21 @@ function setupMainTabs() {
 }
 
 function setMainPage(pageId, subtabId = null) {
+  const previousScopeId = getSessionScopeId(_activePageId, _activeAllokeringSubtab);
+  const nextSubtabId = pageId === "allokering-page"
+    ? (document.getElementById(subtabId) ? subtabId : _activeAllokeringSubtab)
+    : _activeAllokeringSubtab;
+
   document.querySelectorAll(".main-page-pane").forEach(pane => {
     pane.classList.toggle("active", pane.id === pageId);
   });
   document.querySelectorAll("#main-tabs .nav-link[data-page]").forEach(btn => {
     const matchesPage = btn.dataset.page === pageId;
-    const matchesSubtab = !btn.dataset.subtab || btn.dataset.subtab === (subtabId || _activeAllokeringSubtab);
+    const matchesSubtab = !btn.dataset.subtab || btn.dataset.subtab === nextSubtabId;
     btn.classList.toggle("active", matchesPage && matchesSubtab);
   });
   if (pageId === "allokering-page") {
-    setAllokeringSubtab(subtabId || _activeAllokeringSubtab);
+    setAllokeringSubtab(nextSubtabId);
   }
   if (pageId === "admin-page") { renderAdminPanel(); return; }
   if (pageId === "gg-kontroll-page") { renderGGKontrollPage(); return; }
@@ -1356,24 +1438,15 @@ function setMainPage(pageId, subtabId = null) {
   if (pageId === "gg-dagsoversikt-page") { renderGGDagsoversikt(); return; }
   if (pageId === "gg-lastlista-page") { renderGGLastlista(); return; }
 
-  // Spara state för föregående flik och ladda för ny
-  if (pageId !== _activePageId && TAB_PAGE_IDS.includes(pageId)) {
-    _saveTabState(_activePageId);
-    _activePageId = pageId;
-    sessionId = tabSessions[pageId] || sessionId;
-    _loadTabState(pageId);
+  const nextScopeId = getSessionScopeId(pageId, nextSubtabId);
+  const scopeChanged = nextScopeId !== previousScopeId;
 
-    // Uppdatera UI för nya flikens state
-    renderResultButtons();
-    renderFilterCard(cachedFilterOptions);
-    syncActionButtonsState();
-    connectSSE();
+  _activePageId = pageId;
 
-    // Uppdatera flikens status från servern
-    refreshFileStatus();
-    refreshFilterOptions();
-    refreshResultStatus();
-    refreshOrdersaldoButtonState();
+  // Spara state för föregående vy/scope och ladda den nya.
+  if (scopeChanged && SESSION_SCOPE_IDS.includes(nextScopeId)) {
+    _saveTabState(previousScopeId);
+    activateSessionScope(nextScopeId);
   }
 }
 
@@ -1403,7 +1476,7 @@ async function refreshResultStatus() {
     if (!(data.running || currentJobState === "queued" || currentJobState === "running")) {
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
     }
-    _saveTabState(_activePageId);
+    _saveTabState(getSessionScopeId());
   } catch (e) {
     // Tyst fel
   }
@@ -1569,13 +1642,16 @@ const KALLTYP_COLORS = {
 function renderKalltypSummary(rows) {
   const card = document.getElementById("kalltyp-summary-card");
   const tbody = document.querySelector("#kalltyp-summary-table tbody");
+  currentKalltypSummaryRows = Array.isArray(rows)
+    ? rows.map(row => ({ ...row }))
+    : [];
   if (!card || !tbody) return;
   tbody.innerHTML = "";
-  if (!Array.isArray(rows) || rows.length === 0) {
+  if (currentKalltypSummaryRows.length === 0) {
     card.style.display = "none";
     return;
   }
-  for (const r of rows) {
+  for (const r of currentKalltypSummaryRows) {
     const color = KALLTYP_COLORS[r.kalltyp] || "inherit";
     const tr = document.createElement("tr");
     tr.innerHTML = `<td style="color:${color};font-weight:600">${r.kalltyp || ""}</td><td class="text-end">${r.antal_text || ""}</td><td class="text-end">${r.kolli ?? ""}</td>`;
@@ -1587,6 +1663,7 @@ function renderKalltypSummary(rows) {
 function clearKalltypSummary() {
   const card = document.getElementById("kalltyp-summary-card");
   const tbody = document.querySelector("#kalltyp-summary-table tbody");
+  currentKalltypSummaryRows = [];
   if (tbody) tbody.innerHTML = "";
   if (card) card.style.display = "none";
 }
