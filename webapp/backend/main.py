@@ -40,6 +40,7 @@ from job_queue import (
     fetch_session_logs_since,
     get_session_status,
 )
+from worker_runtime import process_claimed_job
 from auth import (
     VALID_LISTS,
     create_auth_session,
@@ -108,8 +109,7 @@ async def startup_event():
 
 async def _embedded_worker_loop():
     """Lightweight in-process worker that claims and runs queued jobs."""
-    from job_queue import claim_next_job, complete_job, fail_job, append_job_log, requeue_stale_jobs
-    from job_runner import run_job
+    from job_queue import claim_next_job, requeue_stale_jobs
     import socket, uuid as _uuid
     worker_id = f"embedded-{socket.gethostname()}-{_uuid.uuid4().hex[:6]}"
     while True:
@@ -119,18 +119,7 @@ async def _embedded_worker_loop():
             if not job:
                 await asyncio.sleep(1.0)
                 continue
-            try:
-                marker = await run_job(job)
-                if marker == "__ERROR__":
-                    await asyncio.to_thread(fail_job, job["session_id"], job["job_id"], "Jobbet avslutades med fel")
-                else:
-                    await asyncio.to_thread(complete_job, job["session_id"], job["job_id"])
-            except Exception as exc:
-                await asyncio.to_thread(append_job_log, job["session_id"], job_id=job["job_id"],
-                                        attempt=int(job.get("attempt_count") or 1), message=f"FEL: {exc}")
-                await asyncio.to_thread(append_job_log, job["session_id"], job_id=job["job_id"],
-                                        attempt=int(job.get("attempt_count") or 1), message="__ERROR__")
-                await asyncio.to_thread(fail_job, job["session_id"], job["job_id"], str(exc))
+            await process_claimed_job(job, worker_id)
         except Exception:
             await asyncio.sleep(5.0)
 
