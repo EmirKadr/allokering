@@ -41,11 +41,17 @@ _runtime_lock = threading.Lock()
 _runtime_filter_cache: Dict[str, Dict[str, Tuple[Tuple[int, int], Dict[str, list]]]] = {}
 
 
-def _normalize_filters(value: Optional[Dict[str, list]]) -> Dict[str, list]:
+def _normalize_filter_values(raw: Optional[list]) -> Optional[list]:
+    if raw is None:
+        return None
+    return list(raw or [])
+
+
+def _normalize_filters(value: Optional[Dict[str, list]]) -> Dict[str, Optional[list]]:
     data = value or {}
     return {
-        "bolag": list(data.get("bolag", []) or []),
-        "ordertyp": list(data.get("ordertyp", []) or []),
+        "bolag": _normalize_filter_values(data.get("bolag")),
+        "ordertyp": _normalize_filter_values(data.get("ordertyp")),
     }
 
 
@@ -195,7 +201,7 @@ class SessionData:
     session_id: str
     owner_username: str
     created_at: datetime
-    _active_filters: Dict[str, list] = field(default_factory=dict)
+    _active_filters: Dict[str, Optional[list]] = field(default_factory=dict)
     _ordersaldo_list1: list = field(default_factory=list)
     _ordersaldo_list2: list = field(default_factory=list)
     _running: bool = False
@@ -229,11 +235,11 @@ class SessionData:
             conn.commit()
 
     @property
-    def active_filters(self) -> Dict[str, list]:
+    def active_filters(self) -> Dict[str, Optional[list]]:
         return dict(self._active_filters)
 
     @active_filters.setter
-    def active_filters(self, value: Dict[str, list]) -> None:
+    def active_filters(self, value: Dict[str, Optional[list]]) -> None:
         normalized = _normalize_filters(value)
         self._active_filters = normalized
         with connect() as conn:
@@ -430,7 +436,7 @@ def create_session(owner_username: str) -> SessionData:
                 (
                     sid,
                     owner_username,
-                    Jsonb({"bolag": [], "ordertyp": []}),
+                    Jsonb({"bolag": None, "ordertyp": None}),
                     Jsonb([]),
                     Jsonb([]),
                     now,

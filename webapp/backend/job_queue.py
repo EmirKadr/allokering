@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from psycopg.types.json import Jsonb
 
 try:
+    from .allokering_result_cache import get_prepared_results
     from .db import (
         DEFAULT_JOB_MAX_ATTEMPTS,
         connect,
@@ -14,6 +15,7 @@ try:
         work_session_expiry,
     )
 except ImportError:
+    from allokering_result_cache import get_prepared_results
     from db import (
         DEFAULT_JOB_MAX_ATTEMPTS,
         connect,
@@ -131,6 +133,11 @@ def enqueue_job(session_id: str, job_type: str, payload: Optional[Dict[str, Any]
 
 
 def get_session_status(session_id: str) -> Dict[str, Any]:
+    try:
+        from .session_store import get_session
+    except ImportError:
+        from session_store import get_session
+
     with connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -158,12 +165,14 @@ def get_session_status(session_id: str) -> Dict[str, Any]:
             results = [row["result_key"] for row in cur.fetchall()]
     if not session_row:
         raise RuntimeError("Session saknas")
+    session = get_session(session_id)
     return {
         "running": bool(session_row.get("running")),
         "current_job_id": session_row.get("current_job_id"),
         "current_job_type": session_row.get("current_job_type"),
         "current_job_state": session_row.get("current_job_state"),
         "results": results,
+        "prepared_results": get_prepared_results(session) if session else [],
     }
 
 

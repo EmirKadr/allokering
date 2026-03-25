@@ -176,6 +176,20 @@ const OPEN_RESULT_ORDER = [
   "eftersok",
 ];
 
+const DEFERRED_RESULT_KEYS = new Set([
+  "allokerade",
+  "nearmiss",
+  "pallplatser",
+  "refill",
+]);
+
+const BACKGROUND_RESULT_BUILD_ORDER = [
+  "pallplatser",
+  "refill",
+  "nearmiss",
+  "allokerade",
+];
+
 const RESULT_GROUP_BY_KEY = {
   allokerade: "result-buttons-allokering",
   nearmiss: "result-buttons-allokering",
@@ -230,6 +244,7 @@ let sseReconnectLogAt = 0;
 let sessionRecoveryPromise = null;
 let fileStatuses = {};  // key -> filename | null
 let availableResults = new Set();
+let preparedResults = new Set();
 let cachedFilterOptions = {};  // { bolag: [...], ordertyp: [...] }
 let selectedFilters = { bolag: [], ordertyp: [] };
 let actionMissingByJob = {}; // { jobId: [missing labels] }
@@ -239,6 +254,9 @@ let currentJobState = null;
 let lastLogEventId = 0;
 let currentLogText = "";
 let currentKalltypSummaryRows = [];
+let resultBuildQueue = [];
+let activeResultBuild = null; // { scopeId, key }
+let autoOpenResultKeys = new Set();
 
 // Session state per view scope. Allokering-subtabs have separate sessions so
 // uploads/results do not leak between Allokering, Kontroller and Saldo.
@@ -276,6 +294,7 @@ function _initTabStates() {
     tabStates[scopeId] = {
       fileStatuses: {},
       availableResults: new Set(),
+      preparedResults: new Set(),
       cachedFilterOptions: {},
       selectedFilters: { bolag: [], ordertyp: [] },
       currentJobId: null,
@@ -294,6 +313,7 @@ function _saveTabState(scopeId) {
   tabStates[scopeId] = {
     fileStatuses: { ...fileStatuses },
     availableResults: new Set(availableResults),
+    preparedResults: new Set(preparedResults),
     cachedFilterOptions: { ...cachedFilterOptions },
     selectedFilters: { bolag: [...selectedFilters.bolag], ordertyp: [...selectedFilters.ordertyp] },
     currentJobId,
@@ -310,6 +330,7 @@ function _loadTabState(scopeId) {
   if (!s) return;
   fileStatuses = { ...s.fileStatuses };
   availableResults = new Set(s.availableResults);
+  preparedResults = new Set(s.preparedResults || []);
   cachedFilterOptions = { ...s.cachedFilterOptions };
   selectedFilters = { bolag: [...s.selectedFilters.bolag], ordertyp: [...s.selectedFilters.ordertyp] };
   currentJobId = s.currentJobId || null;
@@ -405,12 +426,16 @@ function resetFrontendState(options = {}) {
   cachedFilterOptions = {};
   selectedFilters = { bolag: [], ordertyp: [] };
   availableResults.clear();
+  preparedResults.clear();
   currentJobId = null;
   currentJobType = null;
   currentJobState = null;
   lastLogEventId = 0;
   currentLogText = "";
   currentKalltypSummaryRows = [];
+  resultBuildQueue = [];
+  activeResultBuild = null;
+  autoOpenResultKeys.clear();
 
   [...FILE_SLOTS, ...PROG_SLOTS, ...WMS_SLOTS].forEach(slot => {
     setBadge(slot.key, "Ej fil", false);
@@ -965,19 +990,153 @@ async function fetchAskCsvToSlot(fileKey, slotLabel) {
 // Filter
 // ---------------------------------------------------------------------------
 
+function normalizeFilterOptions(options) {
+  return {
+    bolag: Array.isArray(options?.bolag) ? [...options.bolag] : [],
+    ordertyp: Array.isArray(options?.ordertyp) ? [...options.ordertyp] : [],
+  };
+}
+
+function normalizeServerSelectedFilters(selected) {
+  return {
+    bolag: Array.isArray(selected?.bolag) ? [...selected.bolag] : null,
+    ordertyp: Array.isArray(selected?.ordertyp) ? [...selected.ordertyp] : null,
+  };
+}
+
+function orderedSelectedValues(values, selected) {
+  const selectedSet = new Set(Array.isArray(selected) ? selected : []);
+  return values.filter(value => selectedSet.has(value));
+}
+
+function arraysEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function filtersMatchServerSelection(filters, serverSelected, options) {
+  const normalizedOptions = normalizeFilterOptions(options);
+  const normalizedServer = normalizeServerSelectedFilters(serverSelected);
+  for (const key of ["bolag", "ordertyp"]) {
+    const values = normalizedOptions[key];
+    const expected = orderedSelectedValues(values, filters[key]);
+    if (values.length === 0) {
+      if (Array.isArray(normalizedServer[key]) && normalizedServer[key].length > 0) {
+        return false;
+      }
+      continue;
+    }
+    if (!Array.isArray(normalizedServer[key])) {
+      return false;
+    }
+    const actual = orderedSelectedValues(values, normalizedServer[key]);
+    if (!arraysEqual(actual, expected)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function reconcileSelectedFilters(options, serverSelected) {
+  const nextOptions = normalizeFilterOptions(options);
+  const previousOptions = normalizeFilterOptions(cachedFilterOptions);
+  const normalizedServer = normalizeServerSelectedFilters(serverSelected);
+  const currentSelected = {
+    bolag: Array.isArray(selectedFilters.bolag) ? [...selectedFilters.bolag] : [],
+    ordertyp: Array.isArray(selectedFilters.ordertyp) ? [...selectedFilters.ordertyp] : [],
+  };
+  const reconciled = { bolag: [], ordertyp: [] };
+
+  ["bolag", "ordertyp"].forEach(key => {
+    const values = nextOptions[key];
+    if (values.length === 0) {
+      reconciled[key] = [];
+      return;
+    }
+
+    const previousVisible = previousOptions[key];
+    const hasPriorClientState = previousVisible.length > 0 || currentSelected[key].length > 0;
+    const baseSelected = Array.isArray(normalizedServer[key]) ? normalizedServer[key] : currentSelected[key];
+
+    if (!hasPriorClientState && normalizedServer[key] === null) {
+      reconciled[key] = [...values];
+      return;
+    }
+
+    const preserved = orderedSelectedValues(values, baseSelected);
+    if (!hasPriorClientState) {
+      reconciled[key] = preserved;
+      return;
+    }
+
+    const preservedSet = new Set(preserved);
+    const newValues = values.filter(value => !previousVisible.includes(value) && !preservedSet.has(value));
+    reconciled[key] = [...preserved, ...newValues];
+  });
+
+  return reconciled;
+}
+
+async function persistFilters(filters, options = {}) {
+  const { quiet = false } = options;
+  const normalizedFilters = {
+    bolag: Array.isArray(filters?.bolag) ? [...filters.bolag] : [],
+    ordertyp: Array.isArray(filters?.ordertyp) ? [...filters.ordertyp] : [],
+  };
+
+  selectedFilters = normalizedFilters;
+
+  try {
+    await fetchWithSessionRecovery(`${API}/api/filters/${sessionId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(normalizedFilters),
+    }, "sparning av filter");
+  } catch (_e) {
+    // Tyst fel
+  }
+
+  _saveTabState(getSessionScopeId());
+  await refreshOrdersaldoButtonState({ recompute: true });
+
+  if (!quiet) {
+    appendLog(
+      `Filter uppdaterat: bolag=[${normalizedFilters.bolag.join(",")}], ordertyp=[${normalizedFilters.ordertyp.join(",")}]`
+    );
+  }
+}
+
 async function refreshFilterOptions() {
   try {
     const resp = await fetchWithSessionRecovery(`${API}/api/filters/${sessionId}`, {}, "hämtning av filter");
     const data = await resp.json();
-    cachedFilterOptions = data;
-    renderFilterCard(data);
+    const options = normalizeFilterOptions(data?.options ?? data);
+    const serverSelected = data?.selected ?? null;
+    const nextSelected = reconcileSelectedFilters(options, serverSelected);
+    const shouldPersist = !filtersMatchServerSelection(nextSelected, serverSelected, options);
+
+    cachedFilterOptions = options;
+    selectedFilters = nextSelected;
+    renderFilterCard(options);
+    _saveTabState(getSessionScopeId());
+
+    if (shouldPersist) {
+      await persistFilters(nextSelected, { quiet: true });
+    }
   } catch (e) {
     // Tyst fel
   }
 }
 
 function renderFilterCard(options) {
-  const normalized = { ...(options || {}) };
+  const normalized = normalizeFilterOptions(options);
   const card = document.getElementById("filter-card");
   const content = document.getElementById("filter-content");
   if (!card || !content) return;
@@ -1032,7 +1191,8 @@ function buildFilterGroup(key, title, values) {
     const id = `filter-${key}-${val.replace(/\W/g, "_")}`;
     const div = document.createElement("div");
     div.className = "form-check form-check-sm";
-    const isChecked = selectedFilters[key].length === 0 || selectedFilters[key].includes(val);
+    const activeValues = Array.isArray(selectedFilters[key]) ? selectedFilters[key] : [];
+    const isChecked = activeValues.includes(val);
     div.innerHTML = `
       <input class="form-check-input filter-check" type="checkbox" id="${id}"
              data-group="${key}" value="${val}" ${isChecked ? "checked" : ""}>
@@ -1045,48 +1205,18 @@ function buildFilterGroup(key, title, values) {
 }
 
 async function saveFilters() {
-  // Preserve hidden groups (e.g. if Ordertyp group is temporarily unavailable
-  // after file refresh) so we don't accidentally reset those selections.
-  const filters = {
-    bolag: Array.isArray(selectedFilters.bolag) ? [...selectedFilters.bolag] : [],
-    ordertyp: Array.isArray(selectedFilters.ordertyp) ? [...selectedFilters.ordertyp] : [],
-  };
-  const groupSeen = { bolag: false, ordertyp: false };
-  const groupValues = { bolag: [], ordertyp: [] };
+  const filters = { bolag: [], ordertyp: [] };
 
   document.querySelectorAll(".filter-check").forEach(cb => {
     if (cb.checked) {
       const group = cb.dataset.group;
-      if (groupValues[group] !== undefined) {
-        groupSeen[group] = true;
-        groupValues[group].push(cb.value);
-      }
-    } else {
-      const group = cb.dataset.group;
-      if (groupValues[group] !== undefined) {
-        groupSeen[group] = true;
+      if (filters[group] !== undefined) {
+        filters[group].push(cb.value);
       }
     }
   });
 
-  for (const key of Object.keys(groupSeen)) {
-    if (groupSeen[key]) {
-      filters[key] = groupValues[key];
-    }
-  }
-
-  selectedFilters = filters;
-  try {
-    await fetchWithSessionRecovery(`${API}/api/filters/${sessionId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(filters),
-    }, "sparning av filter");
-  } catch (_e) {
-    // Tyst fel
-  }
-  await refreshOrdersaldoButtonState({ recompute: true });
-  appendLog(`Filter uppdaterat: bolag=[${filters.bolag.join(",")}], ordertyp=[${filters.ordertyp.join(",")}]`);
+  await persistFilters(filters);
 }
 
 function setButtonLockState(btn, locked, hintText) {
@@ -1472,7 +1602,132 @@ function getActiveMainPage() {
 
 function activateResultButton(key) {
   availableResults.add(key);
+  if (DEFERRED_RESULT_KEYS.has(key)) {
+    preparedResults.add(key);
+  }
   renderResultButtons();
+}
+
+function syncDeferredResultTracking() {
+  const activeKey = activeResultBuild?.key || null;
+  resultBuildQueue = resultBuildQueue.filter((key, index, arr) => (
+    DEFERRED_RESULT_KEYS.has(key)
+    && preparedResults.has(key)
+    && !availableResults.has(key)
+    && key !== activeKey
+    && arr.indexOf(key) === index
+  ));
+  autoOpenResultKeys = new Set(
+    Array.from(autoOpenResultKeys).filter(key => preparedResults.has(key) || availableResults.has(key))
+  );
+}
+
+function getResultBuildState(key) {
+  if (availableResults.has(key)) return "ready";
+  if (activeResultBuild && activeResultBuild.scopeId === getSessionScopeId() && activeResultBuild.key === key) {
+    return "building";
+  }
+  if (resultBuildQueue.includes(key)) return "queued";
+  if (preparedResults.has(key)) return "prepared";
+  return "locked";
+}
+
+function queueDefaultDeferredResultBuilds() {
+  if (currentJobState === "queued" || currentJobState === "running") {
+    return;
+  }
+  const activeKey = activeResultBuild?.scopeId === getSessionScopeId() ? activeResultBuild.key : null;
+  BACKGROUND_RESULT_BUILD_ORDER.forEach(key => {
+    if (!preparedResults.has(key) || availableResults.has(key) || key === activeKey || resultBuildQueue.includes(key)) {
+      return;
+    }
+    resultBuildQueue.push(key);
+  });
+  syncDeferredResultTracking();
+  processDeferredResultQueue().catch(() => {});
+}
+
+function prioritizeDeferredResultBuild(key, options = {}) {
+  const { autoOpen = false } = options;
+  const label = RESULT_LABELS[key] || key;
+  if (availableResults.has(key)) {
+    if (autoOpen) {
+      downloadResult(key);
+    }
+    return true;
+  }
+  if (!preparedResults.has(key)) {
+    return false;
+  }
+  if (autoOpen) {
+    autoOpenResultKeys.add(key);
+  }
+  if (activeResultBuild && activeResultBuild.scopeId === getSessionScopeId() && activeResultBuild.key === key) {
+    appendLog(`${label} laddas redan och öppnas när den är klar.`);
+    return true;
+  }
+  resultBuildQueue = [key, ...resultBuildQueue.filter(item => item !== key)];
+  syncDeferredResultTracking();
+  if (activeResultBuild && activeResultBuild.scopeId === getSessionScopeId() && activeResultBuild.key !== key) {
+    const currentLabel = RESULT_LABELS[activeResultBuild.key] || activeResultBuild.key;
+    appendLog(`${label} prioriterad. Startar så snart ${currentLabel} är klar.`);
+  }
+  renderResultButtons();
+  processDeferredResultQueue().catch(() => {});
+  return true;
+}
+
+async function processDeferredResultQueue() {
+  if (activeResultBuild || currentJobState === "queued" || currentJobState === "running") {
+    return;
+  }
+  syncDeferredResultTracking();
+  const nextKey = resultBuildQueue.shift();
+  if (!nextKey) {
+    renderResultButtons();
+    return;
+  }
+  if (!preparedResults.has(nextKey) || availableResults.has(nextKey)) {
+    await processDeferredResultQueue();
+    return;
+  }
+
+  const scopeId = getSessionScopeId();
+  const buildSessionId = sessionId;
+  activeResultBuild = { scopeId, key: nextKey, sessionId: buildSessionId };
+  renderResultButtons();
+
+  try {
+    const resp = await fetchWithSessionRecovery(
+      `${API}/api/result/build/${buildSessionId}/${nextKey}`,
+      { method: "POST" },
+      `skapande av ${RESULT_LABELS[nextKey] || nextKey}`
+    );
+    const data = await resp.json().catch(() => ({}));
+    if (data.available === false) {
+      preparedResults.delete(nextKey);
+      appendLog(`${RESULT_LABELS[nextKey] || nextKey}: inget resultat att öppna.`);
+    } else {
+      preparedResults.add(nextKey);
+      availableResults.add(nextKey);
+      if (autoOpenResultKeys.has(nextKey)) {
+        autoOpenResultKeys.delete(nextKey);
+        downloadResultForSession(buildSessionId, nextKey);
+      }
+    }
+  } catch (e) {
+    appendLog(`FEL vid skapande av ${RESULT_LABELS[nextKey] || nextKey}: ${e}`);
+  } finally {
+    if (activeResultBuild && activeResultBuild.key === nextKey && activeResultBuild.scopeId === scopeId) {
+      activeResultBuild = null;
+    }
+    syncDeferredResultTracking();
+    renderResultButtons();
+    _saveTabState(scopeId);
+    if (scopeId === getSessionScopeId()) {
+      queueDefaultDeferredResultBuilds();
+    }
+  }
 }
 
 async function refreshResultStatus() {
@@ -1480,6 +1735,8 @@ async function refreshResultStatus() {
     const resp = await fetchWithSessionRecovery(`${API}/api/run/status/${sessionId}`, {}, "hämtning av resultatstatus");
     const data = await resp.json();
     availableResults = new Set(data.results || []);
+    preparedResults = new Set(data.prepared_results || []);
+    syncDeferredResultTracking();
     currentJobId = data.current_job_id || null;
     currentJobType = data.current_job_type || null;
     currentJobState = data.current_job_state || null;
@@ -1487,6 +1744,7 @@ async function refreshResultStatus() {
     syncActionButtonsState();
     if (!(data.running || currentJobState === "queued" || currentJobState === "running")) {
       ["allokering", "hib-koppling", "orderkontroll", "dispatchkontroll", "eftersok"].forEach(resetJobButton);
+      queueDefaultDeferredResultBuilds();
     }
     _saveTabState(getSessionScopeId());
   } catch (e) {
@@ -1494,12 +1752,17 @@ async function refreshResultStatus() {
   }
 }
 
-function createResultButton(key, isReady) {
+function createResultButton(key) {
   const label = RESULT_LABELS[key] || `Öppna ${key}`;
   const tooltipInfo = getResultTooltipInfo(key);
+  const isReady = availableResults.has(key);
+  const isPrepared = preparedResults.has(key);
+  const buildState = getResultBuildState(key);
   const btn = document.createElement("button");
   btn.className = "btn btn-sm action-btn action-btn-open";
-  btn.textContent = label;
+  btn.textContent = buildState === "building"
+    ? `${label} laddar...`
+    : (buildState === "queued" ? `${label} väntar...` : label);
   btn.dataset.resultKey = key;
   btn.setAttribute("data-bs-toggle", "tooltip");
   btn.onclick = () => openResult(key);
@@ -1520,6 +1783,18 @@ function createResultButton(key, isReady) {
       );
     }
     setButtonLockState(btn, false, "");
+  } else if (isPrepared) {
+    setButtonLockState(btn, false, "");
+    btn.title = buildRequirementTitle(
+      buildState === "building"
+        ? `${label} byggs just nu i bakgrunden. Klicka för att öppna den så fort den är klar.`
+        : `${label} är redo att byggas. Klicka för att prioritera den; övriga väntar tills din valda fil är klar.`,
+      tooltipInfo.requiredLabels,
+      {
+        optionalLabels: tooltipInfo.optionalLabels,
+        actionLabel: tooltipInfo.actionLabel,
+      }
+    );
   } else {
     setButtonLockState(
       btn,
@@ -1569,21 +1844,21 @@ function renderResultButtons() {
 
   OPEN_RESULT_ORDER.forEach(key => {
     const hasPrognosInput = key === "prognos" && (fileStatuses.prognos || fileStatuses.campaign);
-    if (!availableResults.has(key) && !hasPrognosInput) {
+    if (!availableResults.has(key) && !preparedResults.has(key) && !hasPrognosInput) {
       return;
     }
     const container = resultContainerForKey(key);
     if (!container) return;
-    container.appendChild(createResultButton(key, true));
+    container.appendChild(createResultButton(key));
   });
 
   // Visar oväntade/extra resultatnycklar om backend returnerar fler.
-  Array.from(availableResults)
+  Array.from(new Set([...availableResults, ...preparedResults]))
     .filter(key => !OPEN_RESULT_ORDER.includes(key))
     .forEach(key => {
       const container = resultContainerForKey(key) || allokeringContainer || kontrollerContainer || saldoContainer || eftersokContainer;
       if (!container) return;
-      container.appendChild(createResultButton(key, true));
+      container.appendChild(createResultButton(key));
     });
 
   updateResultContainerVisibility(allokeringContainer);
@@ -1625,6 +1900,10 @@ function openResult(key) {
     generateAndOpenPrognosResult();
     return;
   }
+  if (DEFERRED_RESULT_KEYS.has(key) && preparedResults.has(key) && !availableResults.has(key)) {
+    prioritizeDeferredResultBuild(key, { autoOpen: true });
+    return;
+  }
   if (!availableResults.has(key)) {
     appendLog(OPEN_BUTTON_HINTS[key] || `Resultat '${key}' är inte tillgängligt än.`);
     return;
@@ -1632,10 +1911,14 @@ function openResult(key) {
   downloadResult(key);
 }
 
-function downloadResult(key) {
+function downloadResultForSession(targetSessionId, key) {
   const token = localStorage.getItem("allok_auth_token") || "";
   const params = new URLSearchParams({ token });
-  window.open(`${API}/api/download/${sessionId}/${key}?${params.toString()}`, "_blank");
+  window.open(`${API}/api/download/${targetSessionId}/${key}?${params.toString()}`, "_blank");
+}
+
+function downloadResult(key) {
+  downloadResultForSession(sessionId, key);
 }
 
 // ---------------------------------------------------------------------------

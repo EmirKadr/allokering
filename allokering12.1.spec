@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['allokera12.py'],
+    ['allokering12.1.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='allokera12',
+    name='allokering12.1',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

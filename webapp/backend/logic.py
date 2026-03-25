@@ -1059,6 +1059,38 @@ def open_prognos_vs_autoplock_excel(report_df: pd.DataFrame, meta: Optional[dict
 # HIB-koppling
 # ---------------------------------------------------------------------------
 
+def _hib_orders_with_today_origin(kund_df: pd.DataFrame) -> set[str]:
+    """Returnera HIB-ordrar vars Ursprungsdatum är samma som dagens kördatum."""
+    if (
+        not isinstance(kund_df, pd.DataFrame)
+        or kund_df.empty
+        or "Ordernr" not in kund_df.columns
+        or "Ordertyp" not in kund_df.columns
+        or "Ursprungsdatum" not in kund_df.columns
+    ):
+        return set()
+
+    try:
+        parsed = smart_to_datetime(kund_df["Ursprungsdatum"])
+        today = pd.Timestamp.now().date()
+        mask = (
+            kund_df["Ordertyp"].astype(str).str.strip().str.upper().eq("HIB")
+            & parsed.notna()
+            & parsed.dt.date.eq(today)
+        )
+    except Exception:
+        today_str = pd.Timestamp.now().strftime("%Y-%m-%d")
+        mask = (
+            kund_df["Ordertyp"].astype(str).str.strip().str.upper().eq("HIB")
+            & kund_df["Ursprungsdatum"].astype(str).str.strip().eq(today_str)
+        )
+
+    if not mask.any():
+        return set()
+
+    return set(kund_df.loc[mask, "Ordernr"].astype(str).str.strip())
+
+
 def compute_hib_koppling(details_df: pd.DataFrame, overview_df: pd.DataFrame) -> pd.DataFrame:
     """Analysera ordrar och identifiera HIB-ordrar som behöver ändras."""
     details = details_df.copy()
@@ -1118,6 +1150,9 @@ def compute_hib_koppling(details_df: pd.DataFrame, overview_df: pd.DataFrame) ->
     for kund_nr, kund_df in ov.groupby("Kund nr"):
         store_df = kund_df[kund_df["Ordertyp"] == "N"].copy()
         hib_df = kund_df[kund_df["Ordertyp"] == "HIB"].copy()
+        ignored_hib_orders = _hib_orders_with_today_origin(kund_df)
+        if ignored_hib_orders:
+            hib_df = hib_df[~hib_df["Ordernr"].astype(str).str.strip().isin(ignored_hib_orders)].copy()
         if not store_df.empty:
             store_df = store_df.drop_duplicates(subset=["Ordernr"]).reset_index(drop=True)
         if not hib_df.empty:
@@ -1318,6 +1353,9 @@ def compute_missed_departures(details_df: pd.DataFrame, overview_df: pd.DataFram
         for kund_nr, kund_df in ov.groupby("Kund nr"):
             store_df = kund_df[kund_df["Ordertyp"] == "N"].copy()
             hib_df = kund_df[kund_df["Ordertyp"] == "HIB"].copy()
+            ignored_hib_orders = _hib_orders_with_today_origin(kund_df)
+            if ignored_hib_orders:
+                hib_df = hib_df[~hib_df["Ordernr"].astype(str).str.strip().isin(ignored_hib_orders)].copy()
             if not store_df.empty:
                 store_df = store_df.drop_duplicates(subset=["Ordernr"]).reset_index(drop=True)
             if not hib_df.empty:
@@ -1837,10 +1875,12 @@ def calculate_refill(
 # Filter-hjälp
 # ---------------------------------------------------------------------------
 
-def apply_value_filters(df: pd.DataFrame, active_filters: Dict[str, List[str]]) -> pd.DataFrame:
+def apply_value_filters(df: pd.DataFrame, active_filters: Dict[str, Optional[List[str]]]) -> pd.DataFrame:
     """
     Filtrera ett DataFrame baserat på aktiva filter.
     active_filters: {"bolag": ["B01","B02"], "ordertyp": ["N","HIB"]}
+    Ett filtervärde på None betyder "ej initierat ännu", medan [] betyder
+    att användaren uttryckligen har avmarkerat allt i gruppen.
     """
     if not active_filters or df.empty:
         return df
@@ -1864,11 +1904,13 @@ def apply_value_filters(df: pd.DataFrame, active_filters: Dict[str, List[str]]) 
 
     result = df.copy()
     for filter_key, selected_values in active_filters.items():
-        if not selected_values:
+        if selected_values is None:
             continue
         col = _find_filter_col(result, filter_key)
         if col is None:
             continue
+        if not selected_values:
+            return result.iloc[0:0].copy()
         result = result[result[col].astype(str).str.strip().isin([str(v) for v in selected_values])].copy()
     return result
 

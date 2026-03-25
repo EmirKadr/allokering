@@ -111,12 +111,15 @@ def _build_fixture_files(base: Path) -> Dict[str, Path]:
 
     files["prognos"] = _write_prognos_xlsx(base / "prognos.xlsx")
     files["campaign"] = _write_campaign_xlsx(base / "campaign.xlsx")
+    today_origin = pd.Timestamp.now().date().isoformat()
 
     files["orders_controls"] = _write_csv(
         base / "orders_controls.csv",
         [
             {"Status": 33, "Order nr": "STORE1", "Kund.1": "Butik A", "Artikel": "X100", "Beställt": 1, "Plock": 0, "Zon": "A", "Bolag": "GG"},
             {"Status": 33, "Order nr": "HIB1", "Kund.1": "Butik A", "Artikel": "X200", "Beställt": 1, "Plock": 0, "Zon": "A", "Bolag": "GG"},
+            {"Status": 33, "Order nr": "HIBTODAY", "Kund.1": "Butik A", "Artikel": "X201", "Beställt": 1, "Plock": 0, "Zon": "A", "Bolag": "GG"},
+            {"Status": 35, "Order nr": "HIBMISSTODAY", "Kund.1": "Butik A", "Artikel": "X202", "Beställt": 1, "Plock": 0, "Zon": "A", "Bolag": "GG"},
             {"Status": 33, "Order nr": "DP1", "Kund.1": "Butik D", "Artikel": "X300", "Beställt": 1, "Plock": 0, "Zon": "A", "Bolag": "GG"},
         ],
         columns=["Status", "Order nr", "Kund.1", "Artikel", "Beställt", "Plock", "Zon", "Bolag"],
@@ -151,6 +154,34 @@ def _build_fixture_files(base: Path) -> Dict[str, Path]:
                 "Kund nr": "C100",
                 "Kund": "Butik A",
                 "Sändningsnr": "SHIP-HIB",
+                "Bolag": "GG",
+            },
+            {
+                "Ordernr": "HIBTODAY",
+                "Status": 33,
+                "Transportör": "Carrier A",
+                "Orderdatum": "2026-03-18",
+                "Ursprungsdatum": today_origin,
+                "Zon": "A",
+                "Multi": "",
+                "Ordertyp": "HIB",
+                "Kund nr": "C100",
+                "Kund": "Butik A",
+                "Sändningsnr": "SHIP-HIB-TODAY",
+                "Bolag": "GG",
+            },
+            {
+                "Ordernr": "HIBMISSTODAY",
+                "Status": 35,
+                "Transportör": "Carrier A",
+                "Orderdatum": "2026-03-18",
+                "Ursprungsdatum": today_origin,
+                "Zon": "A",
+                "Multi": "",
+                "Ordertyp": "HIB",
+                "Kund nr": "C100",
+                "Kund": "Butik A",
+                "Sändningsnr": "SHIP-MISS-TODAY",
                 "Bolag": "GG",
             },
             {
@@ -348,7 +379,8 @@ class WebAppRegressionTest(unittest.TestCase):
                 if state == "failed":
                     self.fail(f"Jobbet misslyckades: {last_status}")
                 if expected_result:
-                    self.assertIn(expected_result, last_status.get("results", []), last_status)
+                    available_results = set(last_status.get("results", [])) | set(last_status.get("prepared_results", []))
+                    self.assertIn(expected_result, available_results, last_status)
                 return last_status
             time.sleep(0.25)
         self.fail(f"Timeout medan jobbet kördes: {last_status}")
@@ -392,26 +424,45 @@ class WebAppRegressionTest(unittest.TestCase):
 
         filter_resp = self.client.get(f"/api/filters/{allok_sid}", headers=self.headers)
         self.assertEqual(filter_resp.status_code, 200, filter_resp.text)
-        self.assertIn("GG", filter_resp.json().get("bolag", []))
+        filter_payload = filter_resp.json()
+        self.assertIn("GG", filter_payload.get("options", {}).get("bolag", []))
+        self.assertIsNone(filter_payload.get("selected", {}).get("bolag"))
+        self.assertIsNone(filter_payload.get("selected", {}).get("ordertyp"))
+
+        clear_filter_resp = self.client.post(
+            f"/api/filters/{allok_sid}",
+            headers=self.headers,
+            json={"bolag": [], "ordertyp": None},
+        )
+        self.assertEqual(clear_filter_resp.status_code, 200, clear_filter_resp.text)
+
+        empty_refresh_resp = self.client.post(f"/api/ordersaldo/refresh/{allok_sid}", headers=self.headers)
+        self.assertEqual(empty_refresh_resp.status_code, 200, empty_refresh_resp.text)
+        self.assertEqual(empty_refresh_resp.json()["list1_count"], 0)
+        self.assertEqual(empty_refresh_resp.json()["list2_count"], 0)
 
         set_filter_resp = self.client.post(
             f"/api/filters/{allok_sid}",
             headers=self.headers,
-            json={"bolag": ["GG"], "ordertyp": []},
+            json={"bolag": ["GG"], "ordertyp": None},
         )
         self.assertEqual(set_filter_resp.status_code, 200, set_filter_resp.text)
 
         run_allok = self.client.post(f"/api/run/allokering/{allok_sid}", headers=self.headers)
         self.assertEqual(run_allok.status_code, 202, run_allok.text)
         allok_status = self._wait_for_job(allok_sid, expected_result="allokerade")
-        self.assertIn("refill", allok_status["results"])
+        self.assertIn("refill", set(allok_status.get("results", [])) | set(allok_status.get("prepared_results", [])))
 
+        build_allok_resp = self.client.post(f"/api/result/build/{allok_sid}/allokerade", headers=self.headers)
+        self.assertEqual(build_allok_resp.status_code, 200, build_allok_resp.text)
         allok_book = self._download_excel(allok_sid, "allokerade")
         allok_sheet = next(iter(allok_book.values()))
         kalltyp_col = _find_column(allok_sheet, "Källtyp")
         self.assertEqual(sorted(set(allok_sheet[kalltyp_col].dropna().astype(str))), ["AUTOSTORE", "HELPALL"])
         self.assertEqual(len(allok_sheet), 3)
 
+        build_refill_resp = self.client.post(f"/api/result/build/{allok_sid}/refill", headers=self.headers)
+        self.assertEqual(build_refill_resp.status_code, 200, build_refill_resp.text)
         refill_book = self._download_excel(allok_sid, "refill")
         self.assertTrue(any(not sheet.empty for sheet in refill_book.values()))
 
@@ -457,6 +508,15 @@ class WebAppRegressionTest(unittest.TestCase):
         self.assertEqual(str(hib_row[ship_col]).strip(), "SHIP-STORE")
         self.assertEqual(str(hib_row[date_col]).strip(), "2026-03-17")
         self.assertEqual(str(hib_row[zone_col]).strip(), "F")
+        self.assertNotIn("HIBTODAY", hib_sheet[order_col].astype(str).tolist())
+
+        try:
+            missed_sheet = _find_sheet(hib_book, "Missade avgångar")
+        except KeyError:
+            missed_sheet = pd.DataFrame()
+        if not missed_sheet.empty:
+            missed_order_col = _find_column(missed_sheet, "ordernummer")
+            self.assertNotIn("HIBMISSTODAY", missed_sheet[missed_order_col].astype(str).tolist())
 
         orderkontroll_resp = self.client.post(f"/api/run/orderkontroll/{control_sid}", headers=self.headers)
         self.assertEqual(orderkontroll_resp.status_code, 202, orderkontroll_resp.text)

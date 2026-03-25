@@ -41,6 +41,15 @@ from job_queue import (
     get_session_status,
 )
 from worker_runtime import process_claimed_job
+from allokering_result_cache import (
+    ALLOKERING_RESULT_KEYS,
+    get_prepared_results,
+    invalidate_allokering_cache,
+    load_dataframe as load_allokering_dataframe,
+    load_manifest as load_allokering_manifest,
+    save_manifest as save_allokering_manifest,
+    store_dataframe as store_allokering_dataframe,
+)
 from auth import (
     VALID_LISTS,
     create_auth_session,
@@ -150,6 +159,7 @@ ASK_FETCHABLE_FILE_KEYS = {
 }
 FILTER_SCAN_TEXT_EXTENSIONS = {".csv", ".txt", ".tsv"}
 ORDERSALDO_INVALIDATION_KEYS = {"orders"}
+ALLOKERING_INVALIDATION_KEYS = {"orders", "buffer", "automation", "item", "wms_booking"}
 
 
 def _file_cache_signature(path: str) -> tuple[int, int]:
@@ -182,6 +192,8 @@ def _handle_session_file_change(session: SessionData, file_key: str, old_path: O
     _clear_filter_cache_entry(session, session.files.get(file_key))
     if file_key in ORDERSALDO_INVALIDATION_KEYS:
         _invalidate_ordersaldo_cache(session)
+    if file_key in ALLOKERING_INVALIDATION_KEYS:
+        invalidate_allokering_cache(session)
     if file_key in {"prognos", "campaign", "automation", "buffer"}:
         _invalidate_result_cache(session, "prognos")
 
@@ -374,8 +386,8 @@ async def _generate_prognos_result(session: SessionData) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class FilterBody(BaseModel):
-    bolag: List[str] = []
-    ordertyp: List[str] = []
+    bolag: Optional[List[str]] = None
+    ordertyp: Optional[List[str]] = None
 
 
 class EftersokBody(BaseModel):
@@ -861,7 +873,10 @@ def api_list_files(request: Request, sid: str):
 @app.get("/api/filters/{sid}")
 def api_get_filter_options(request: Request, sid: str):
     session = _get_owned_session(request, sid)
-    return _collect_filter_options(session)
+    return {
+        "options": _collect_filter_options(session),
+        "selected": session.active_filters,
+    }
 
 
 @app.post("/api/filters/{sid}")
@@ -869,6 +884,7 @@ def api_set_filters(request: Request, sid: str, body: FilterBody):
     session = _get_owned_session(request, sid)
     session.active_filters = {"bolag": body.bolag, "ordertyp": body.ordertyp}
     _invalidate_ordersaldo_cache(session)
+    invalidate_allokering_cache(session)
     return {"ok": True}
 
 
@@ -999,6 +1015,15 @@ async def api_build_prognos_result(request: Request, sid: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/result/build/{sid}/{result_key}")
+async def api_build_allokering_result(request: Request, sid: str, result_key: str):
+    session = _get_owned_session(request, sid)
+    try:
+        return await _build_allokering_result(session, result_key)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Jobbkörningar
 # ---------------------------------------------------------------------------
@@ -1012,76 +1037,132 @@ def _start_job(session: SessionData, coro):
     return True
 
 
-async def _generate_excel_files(session: SessionData, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path):
-    """Generera Excel-filer i bakgrunden efter att allokeringen är klar."""
+def _build_prepared_allokering_results(result: pd.DataFrame, near: pd.DataFrame) -> list[str]:
+    prepared: list[str] = []
+    if isinstance(result, pd.DataFrame) and not result.empty:
+        prepared.extend(["allokerade", "pallplatser", "refill"])
+    if isinstance(near, pd.DataFrame) and not near.empty:
+        prepared.append("nearmiss")
+    return prepared
+
+
+async def _store_allokering_artifacts(
+    session: SessionData,
+    result: pd.DataFrame,
+    near: pd.DataFrame,
+    buffer_raw: pd.DataFrame,
+    saldo_norm: Optional[pd.DataFrame],
+    not_putaway_norm: Optional[pd.DataFrame],
+) -> dict:
     loop = asyncio.get_event_loop()
+    prepared_results = _build_prepared_allokering_results(result, near)
+    meta = {
+        "allokerade_rows": int(len(result)) if isinstance(result, pd.DataFrame) else 0,
+        "nearmiss_rows": int(len(near)) if isinstance(near, pd.DataFrame) else 0,
+    }
+    await loop.run_in_executor(None, lambda: store_allokering_dataframe(session, "result", result))
+    await loop.run_in_executor(None, lambda: store_allokering_dataframe(session, "near", near))
+    await loop.run_in_executor(None, lambda: store_allokering_dataframe(session, "buffer_raw", buffer_raw))
+    await loop.run_in_executor(None, lambda: store_allokering_dataframe(session, "saldo_norm", saldo_norm))
+    await loop.run_in_executor(None, lambda: store_allokering_dataframe(session, "not_putaway_norm", not_putaway_norm))
+    await loop.run_in_executor(None, lambda: save_allokering_manifest(session, prepared_results, meta))
+    return {"prepared_results": prepared_results, "meta": meta}
 
-    def log(msg: str):
-        session.log_queue.put_nowait(msg)
 
-    try:
-        # Allokerade (viktigast - genereras först)
-        allok_path = os.path.join(session.results_dir, "allokerade.xlsx")
-        await loop.run_in_executor(None, lambda: save_df_to_excel(result, "allokerade", allok_path))
-        session.results["allokerade"] = allok_path
-        log("__RESULT:allokerade__")
+async def _refresh_ordersaldo_after_allokering(session: SessionData, orders_path: Optional[str]) -> None:
+    if not orders_path:
+        return
+    loop = asyncio.get_event_loop()
+    list1, list2 = await loop.run_in_executor(
+        None, lambda: refresh_ordersaldo(orders_path, session.active_filters),
+    )
+    session.ordersaldo_list1 = list1
+    session.ordersaldo_list2 = list2
 
-        # Near-miss
-        if not near.empty:
-            nearmiss_path = os.path.join(session.results_dir, "nearmiss.xlsx")
-            await loop.run_in_executor(None, lambda: save_df_to_excel(near, "nearmiss", nearmiss_path))
-            session.results["nearmiss"] = nearmiss_path
-            log("__RESULT:nearmiss__")
 
-        # Pallplatser + Refill parallellt (oberoende beräkningar)
-        async def _gen_pallplatser():
-            try:
-                ps = await loop.run_in_executor(None, lambda: compute_pallet_spaces(result))
-                if ps is not None and not ps.empty:
-                    ps_path = os.path.join(session.results_dir, "pallplatser.xlsx")
-                    await loop.run_in_executor(None, lambda: save_df_to_excel(ps, "pallplatser", ps_path))
-                    session.results["pallplatser"] = ps_path
-                    log("__RESULT:pallplatser__")
-            except Exception as e:
-                log(f"Pallplatser kunde inte ber\u00e4knas: {e}")
+async def _build_allokering_result(session: SessionData, result_key: str) -> dict:
+    if result_key not in ALLOKERING_RESULT_KEYS:
+        raise RuntimeError(f"Ogiltig resultatnyckel: {result_key}")
 
-        async def _gen_refill():
-            try:
-                hp_df, as_df = await loop.run_in_executor(None, lambda: calculate_refill(
-                    result, buffer_raw, saldo_df=saldo_norm, not_putaway_df=not_putaway_norm
-                ))
-                has_refill = (hp_df is not None and not hp_df.empty) or (as_df is not None and not as_df.empty)
-                if has_refill:
-                    refill_sheets = {}
-                    if hp_df is not None and not hp_df.empty:
-                        refill_sheets["P\u00e5fyllning HP"] = hp_df
-                    if as_df is not None and not as_df.empty:
-                        refill_sheets["P\u00e5fyllning AutoStore"] = as_df
-                    refill_path = os.path.join(session.results_dir, "refill.xlsx")
-                    await loop.run_in_executor(None, lambda: save_df_to_excel(refill_sheets, "refill", refill_path))
-                    session.results["refill"] = refill_path
-                    log("__RESULT:refill__")
-                    log(f"Auto-refill klar: HP {len(hp_df)} rader, AUTOSTORE {len(as_df)} rader.")
-            except Exception as e:
-                log(f"Refill misslyckades: {e}")
+    existing_path = session.results.get(result_key)
+    if existing_path and os.path.exists(existing_path):
+        return {"ok": True, "result_key": result_key, "available": True, "cached": True}
 
-        await asyncio.gather(_gen_pallplatser(), _gen_refill())
+    manifest = load_allokering_manifest(session)
+    prepared_results = list(manifest.get("prepared_results") or [])
+    if result_key not in prepared_results:
+        raise RuntimeError("Resultatet är inte förberett ännu. Kör allokering först.")
 
-        # Ordersaldo
-        try:
-            if orders_path:
-                list1, list2 = await loop.run_in_executor(
-                    None, lambda: refresh_ordersaldo(orders_path, session.active_filters),
-                )
-                session.ordersaldo_list1 = list1
-                session.ordersaldo_list2 = list2
-                if list1 or list2:
-                    log(f"Ordersaldo: {len(list1)} kompletta ordrar, {len(list2)} artiklar med p\u00e5fyllningsbehov.")
-        except Exception as e:
-            log(f"Varning: Ordersaldo-ber\u00e4kning misslyckades: {e}")
+    loop = asyncio.get_event_loop()
+    result_df = await loop.run_in_executor(None, lambda: load_allokering_dataframe(session, "result"))
+    if result_df is None or result_df.empty:
+        raise RuntimeError("Allokeringsresultatet saknas. Kör allokering igen.")
 
-    except Exception as e:
-        log(f"Varning: Excel-generering misslyckades delvis: {e}")
+    rows = 0
+    available = False
+
+    if result_key == "allokerade":
+        rows = int(len(result_df))
+        out_path = os.path.join(session.results_dir, "allokerade.xlsx")
+        await loop.run_in_executor(None, lambda: save_df_to_excel(result_df, "allokerade", out_path))
+        session.results["allokerade"] = out_path
+        available = True
+    elif result_key == "nearmiss":
+        near_df = await loop.run_in_executor(None, lambda: load_allokering_dataframe(session, "near"))
+        if isinstance(near_df, pd.DataFrame) and not near_df.empty:
+            rows = int(len(near_df))
+            out_path = os.path.join(session.results_dir, "nearmiss.xlsx")
+            await loop.run_in_executor(None, lambda: save_df_to_excel(near_df, "nearmiss", out_path))
+            session.results["nearmiss"] = out_path
+            available = True
+    elif result_key == "pallplatser":
+        pallet_spaces_df = await loop.run_in_executor(None, lambda: compute_pallet_spaces(result_df.copy()))
+        if isinstance(pallet_spaces_df, pd.DataFrame) and not pallet_spaces_df.empty:
+            rows = int(len(pallet_spaces_df))
+            out_path = os.path.join(session.results_dir, "pallplatser.xlsx")
+            await loop.run_in_executor(None, lambda: save_df_to_excel(pallet_spaces_df, "pallplatser", out_path))
+            session.results["pallplatser"] = out_path
+            available = True
+    elif result_key == "refill":
+        buffer_raw = await loop.run_in_executor(None, lambda: load_allokering_dataframe(session, "buffer_raw"))
+        saldo_norm = await loop.run_in_executor(None, lambda: load_allokering_dataframe(session, "saldo_norm"))
+        not_putaway_norm = await loop.run_in_executor(None, lambda: load_allokering_dataframe(session, "not_putaway_norm"))
+        if buffer_raw is None or buffer_raw.empty:
+            raise RuntimeError("Buffertunderlaget saknas. Kör allokering igen.")
+        hp_df, as_df = await loop.run_in_executor(
+            None,
+            lambda: calculate_refill(
+                result_df.copy(),
+                buffer_raw.copy(),
+                saldo_df=(saldo_norm.copy() if isinstance(saldo_norm, pd.DataFrame) else None),
+                not_putaway_df=(not_putaway_norm.copy() if isinstance(not_putaway_norm, pd.DataFrame) else None),
+            ),
+        )
+        has_refill = (isinstance(hp_df, pd.DataFrame) and not hp_df.empty) or (
+            isinstance(as_df, pd.DataFrame) and not as_df.empty
+        )
+        if has_refill:
+            rows = int(len(hp_df)) + int(len(as_df))
+            refill_sheets = {}
+            if isinstance(hp_df, pd.DataFrame) and not hp_df.empty:
+                refill_sheets["Påfyllning HP"] = hp_df
+            if isinstance(as_df, pd.DataFrame) and not as_df.empty:
+                refill_sheets["Påfyllning AutoStore"] = as_df
+            out_path = os.path.join(session.results_dir, "refill.xlsx")
+            await loop.run_in_executor(None, lambda: save_df_to_excel(refill_sheets, "refill", out_path))
+            session.results["refill"] = out_path
+            available = True
+
+    if not available:
+        prepared_results = [key for key in prepared_results if key != result_key]
+        await loop.run_in_executor(
+            None,
+            lambda: save_allokering_manifest(session, prepared_results, manifest.get("meta") or {}),
+        )
+        return {"ok": True, "result_key": result_key, "available": False, "rows": 0}
+
+    session.log_queue.put_nowait(f"__RESULT:{result_key}__")
+    return {"ok": True, "result_key": result_key, "available": True, "rows": rows}
 
 
 async def _job_allokering(session: SessionData):
@@ -1220,10 +1301,20 @@ async def _job_allokering(session: SessionData):
         except Exception as _e_kt:
             log(f"Summering per K\u00e4lltyp kunde inte ber\u00e4knas: {_e_kt}")
 
-        log("Allokeringen \u00e4r klar.")
-        await _generate_excel_files(
-            session, result, near, buffer_raw, saldo_norm, not_putaway_norm, orders_path
+        artifact_info = await _store_allokering_artifacts(
+            session, result, near, buffer_raw, saldo_norm, not_putaway_norm
         )
+        for prepared_key in artifact_info.get("prepared_results") or []:
+            log(f"__PREPARED:{prepared_key}__")
+        log("Allokeringen \u00e4r klar.")
+        try:
+            await _refresh_ordersaldo_after_allokering(session, orders_path)
+            list1 = session.ordersaldo_list1
+            list2 = session.ordersaldo_list2
+            if list1 or list2:
+                log(f"Ordersaldo: {len(list1)} kompletta ordrar, {len(list2)} artiklar med p\u00e5fyllningsbehov.")
+        except Exception as e:
+            log(f"Varning: Ordersaldo-ber\u00e4kning misslyckades: {e}")
         log("__DONE__")
         session.running = False
 
@@ -1959,14 +2050,9 @@ def api_debug_columns(request: Request, sid: str, file_key: str):
 @app.post("/api/session/reset-results/{sid}")
 async def api_reset_results(request: Request, sid: str):
     session = _get_owned_session(request, sid)
-    # Rensa resultatfiler från disk
-    for path in session.results.values():
-        try:
-            if path and os.path.exists(path):
-                os.remove(path)
-        except Exception:
-            pass
-    session.results.clear()
+    invalidate_allokering_cache(session)
+    for result_key in list(session.results.keys()):
+        _invalidate_result_cache(session, result_key)
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
     session.filter_scan_cache.clear()
@@ -1986,14 +2072,9 @@ async def api_reset_all(request: Request, sid: str):
         except Exception:
             pass
     session.files.clear()
-    # Rensa resultatfiler
-    for path in list(session.results.values()):
-        try:
-            if path and os.path.exists(path):
-                os.remove(path)
-        except Exception:
-            pass
-    session.results.clear()
+    invalidate_allokering_cache(session)
+    for result_key in list(session.results.keys()):
+        _invalidate_result_cache(session, result_key)
     session.ordersaldo_list1 = []
     session.ordersaldo_list2 = []
     session.filter_scan_cache.clear()

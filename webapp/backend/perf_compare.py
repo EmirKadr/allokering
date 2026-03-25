@@ -25,7 +25,7 @@ REPO_ROOT = Path(r"C:\allokering")
 WEBAPP_BACKEND = REPO_ROOT / "webapp" / "backend"
 CURRENT_LOGIC_PATH = WEBAPP_BACKEND / "logic.py"
 CURRENT_MAIN_PATH = WEBAPP_BACKEND / "main.py"
-REFERENCE_APP_PATH = REPO_ROOT / "allokera12.py"
+REFERENCE_APP_PATH = REPO_ROOT / "allokering12.1.py"
 TESTDATA_DIR = REPO_ROOT / "testdata"
 
 
@@ -194,7 +194,7 @@ def compare_csv_reader(head_logic, current_logic, paths: Dict[str, Path]) -> lis
 
 
 def compare_xlsx_readers(reference_app, current_logic, paths: Dict[str, Path]) -> None:
-    print("\nXLSX-läsning mot allokera12.py")
+    print("\nXLSX-läsning mot allokering12.1.py")
     for key, path in paths.items():
         if key == "prognos":
             ref_df, ref_time = best_time(lambda p=path: reference_app.read_prognos_xlsx(str(p)), repeat=2)
@@ -298,7 +298,7 @@ def load_shared_inputs(head_logic, paths: Dict[str, Path]) -> Dict[str, pd.DataF
 
 
 def compare_logic_workflows(head_logic, current_logic, reference_app, data: Dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    print("\nKärnflöden mot allokera12.py")
+    print("\nKärnflöden mot allokering12.1.py")
 
     ref_alloc, ref_alloc_time = best_time(
         lambda: reference_app.allocate(data["orders"].copy(), data["buffer"].copy()),
@@ -319,17 +319,17 @@ def compare_logic_workflows(head_logic, current_logic, reference_app, data: Dict
     print_timing(TimingResult("allocate", head_alloc_time, cur_alloc_time))
     same_alloc, detail_alloc = frames_match(ref_alloc_df, cur_alloc_df)
     same_near, detail_near = frames_match(ref_near_df, cur_near_df)
-    print(f"  allokering mot allokera12.py: {'OK' if same_alloc else 'AVVIKER'}{f' | {detail_alloc}' if detail_alloc else ''}")
-    print(f"  near-miss mot allokera12.py: {'OK' if same_near else 'AVVIKER'}{f' | {detail_near}' if detail_near else ''}")
+    print(f"  allokering mot allokering12.1.py: {'OK' if same_alloc else 'AVVIKER'}{f' | {detail_alloc}' if detail_alloc else ''}")
+    print(f"  near-miss mot allokering12.1.py: {'OK' if same_near else 'AVVIKER'}{f' | {detail_near}' if detail_near else ''}")
     same_head_alloc, detail_head_alloc = frames_match(ref_alloc_df, head_alloc_df)
     same_head_near, detail_head_near = frames_match(ref_near_df, head_near_df)
-    print(f"  HEAD mot allokera12.py: allokering {'OK' if same_head_alloc else 'AVVIKER'}{f' | {detail_head_alloc}' if detail_head_alloc else ''}")
-    print(f"  HEAD mot allokera12.py: near-miss {'OK' if same_head_near else 'AVVIKER'}{f' | {detail_head_near}' if detail_head_near else ''}")
+    print(f"  HEAD mot allokering12.1.py: allokering {'OK' if same_head_alloc else 'AVVIKER'}{f' | {detail_head_alloc}' if detail_head_alloc else ''}")
+    print(f"  HEAD mot allokering12.1.py: near-miss {'OK' if same_head_near else 'AVVIKER'}{f' | {detail_head_near}' if detail_head_near else ''}")
 
     ref_reclass = reference_app.App._reclassify_skrymmande(ref_alloc_df.copy(), None)
     cur_reclass = current_logic._reclassify_skrymmande(cur_alloc_df.copy(), None)
     same_reclass, detail_reclass = frames_match(ref_reclass, cur_reclass)
-    print(f"_reclassify_skrymmande mot allokera12.py: {'OK' if same_reclass else 'AVVIKER'}{f' | {detail_reclass}' if detail_reclass else ''}")
+    print(f"_reclassify_skrymmande mot allokering12.1.py: {'OK' if same_reclass else 'AVVIKER'}{f' | {detail_reclass}' if detail_reclass else ''}")
 
     ref_spaces, ref_spaces_time = best_time(lambda: reference_app.compute_pallet_spaces(ref_reclass.copy()), repeat=1)
     cur_spaces, cur_spaces_time = best_time(lambda: current_logic.compute_pallet_spaces(cur_reclass.copy()), repeat=1)
@@ -362,8 +362,8 @@ def compare_logic_workflows(head_logic, current_logic, reference_app, data: Dict
     print_timing(TimingResult("calculate_refill", ref_refill_time, cur_refill_time))
     same_hp, detail_hp = frames_match(ref_hp_df, cur_hp_df)
     same_as, detail_as = frames_match(ref_as_df, cur_as_df)
-    print(f"  refill HP mot allokera12.py: {'OK' if same_hp else 'AVVIKER'}{f' | {detail_hp}' if detail_hp else ''}")
-    print(f"  refill AutoStore mot allokera12.py: {'OK' if same_as else 'AVVIKER'}{f' | {detail_as}' if detail_as else ''}")
+    print(f"  refill HP mot allokering12.1.py: {'OK' if same_hp else 'AVVIKER'}{f' | {detail_hp}' if detail_hp else ''}")
+    print(f"  refill AutoStore mot allokering12.1.py: {'OK' if same_as else 'AVVIKER'}{f' | {detail_as}' if detail_as else ''}")
 
     ref_hib, ref_hib_time = best_time(
         lambda: reference_app.compute_hib_koppling(data["orders"].copy(), data["overview"].copy()),
@@ -393,7 +393,7 @@ def compare_logic_workflows(head_logic, current_logic, reference_app, data: Dict
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Jämför prestanda och resultat mellan HEAD, nuvarande logic.py och allokera12.py.")
+    parser = argparse.ArgumentParser(description="Jämför prestanda och resultat mellan HEAD, nuvarande logic.py och allokering12.1.py.")
     parser.add_argument(
         "--skip-excel",
         action="store_true",
@@ -407,7 +407,7 @@ def main() -> None:
         head_logic = load_head_logic_module(tmp_dir)
         current_logic = load_module_from_path("logic_current_benchmark", CURRENT_LOGIC_PATH)
         current_main = load_module_from_path("main_current_benchmark", CURRENT_MAIN_PATH)
-        reference_app = load_module_from_path("allokera12_reference_benchmark", REFERENCE_APP_PATH)
+        reference_app = load_module_from_path("allokering12_1_reference_benchmark", REFERENCE_APP_PATH)
 
         compare_csv_reader(head_logic, current_logic, paths)
         compare_xlsx_readers(reference_app, current_logic, paths)

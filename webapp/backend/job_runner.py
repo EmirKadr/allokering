@@ -4,8 +4,10 @@ import os
 from typing import Any, Dict, Optional
 
 try:
+    from .allokering_result_cache import invalidate_allokering_cache
     from .session_store import SessionData, get_session
 except ImportError:
+    from allokering_result_cache import invalidate_allokering_cache
     from session_store import SessionData, get_session
 
 
@@ -28,11 +30,13 @@ def _clear_result_key(session: SessionData, result_key: str) -> None:
 
 
 def prepare_job_artifacts(session: SessionData, job_type: str) -> None:
-    for result_key in JOB_RESULT_KEYS.get(job_type, ()):
-        _clear_result_key(session, result_key)
     if job_type == "allokering":
+        invalidate_allokering_cache(session)
         session.ordersaldo_list1 = []
         session.ordersaldo_list2 = []
+        return
+    for result_key in JOB_RESULT_KEYS.get(job_type, ()):
+        _clear_result_key(session, result_key)
 
 
 async def run_job(job: Dict[str, Any]) -> Optional[str]:
