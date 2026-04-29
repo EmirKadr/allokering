@@ -1,0 +1,10 @@
+"""Application identity and release metadata."""
+
+APP_NAME = "Allokering"
+APP_VERSION = "12.1.0"
+APP_VERSION_DISPLAY = "12.1"
+APP_BASE_TITLE = "Buffertpallar → Order-allokering (GUI)"
+APP_TITLE = f"{APP_BASE_TITLE} — {APP_VERSION_DISPLAY}"
+GITHUB_REPO = "EmirKadr/allokering"
+GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+UPDATE_DISABLED_ENV = "ALLOKERING_DISABLE_UPDATE_CHECK"

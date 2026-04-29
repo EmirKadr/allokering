@@ -45,13 +45,16 @@ ytterligare förbättrad HIB‑koppling och cache‑hantering.
 
 from __future__ import annotations
 
+import argparse
 import re
 import shutil
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
 import importlib.util
-import unicodedata
+import webbrowser
+from pathlib import Path
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -66,6 +69,40 @@ import os
 import sys
 import subprocess
 import numpy as np
+
+from app_info import (
+    APP_NAME,
+    APP_TITLE,
+    APP_VERSION,
+    GITHUB_RELEASES_URL,
+    UPDATE_DISABLED_ENV,
+)
+from update_service import UpdateInfo, check_for_update, download_update_installer
+
+
+SILENT_UPDATE_ARGS = [
+    "/VERYSILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+    "/CLOSEAPPLICATIONS",
+    "/FORCECLOSEAPPLICATIONS",
+]
+
+
+def _bundle_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent
+
+
+def _runtime_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _resource_path(*parts: str) -> Path:
+    return _bundle_root().joinpath(*parts)
 
 def read_prognos_xlsx(path: str) -> pd.DataFrame:
     """
@@ -170,7 +207,6 @@ def read_campaign_xlsx(path: str) -> pd.DataFrame:
 
 
 # Uppdaterad programversion 12.1
-APP_TITLE = "Buffertpallar → Order-allokering (GUI) — 12.1"
 DEFAULT_OUTPUT = "allocated_orders.csv"
 
 INVALID_LOC_PREFIXES: Tuple[str, ...] = ("AA",)
@@ -178,6 +214,15 @@ INVALID_LOC_EXACT: set[str] = {"TRANSIT", "TRANSIT_ERROR", "MISSING", "UT2"}
 
 ALLOC_BUFFER_STATUSES: set[int] = {29, 30, 32}
 REFILL_BUFFER_STATUSES: set[int] = {29, 30}
+
+# Vecka 27 - tak/hus -> tillåtna matchande gräsklippare (per order krävs minst lika många gräsklippare som tak)
+VECKA27_ROOF_TO_MOWERS: dict[str, frozenset[str]] = {
+    "2002039": frozenset({"2003511", "2003512", "2002034", "2002035", "2002036"}),
+    "2001926": frozenset({"2003708", "2003709"}),
+    "2005080": frozenset({"2003482", "2003483", "2003484", "2003485", "2003486"}),
+    "2001928": frozenset({"2001921", "2001922", "2001923"}),
+    "2003711": frozenset({"2003710"}),
+}
 
 NEAR_MISS_PCT: float = 0.30  # 30 % över behov
 
@@ -347,6 +392,25 @@ def _open_df_in_excel(df, label: str = "data") -> str:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.csv")
         path = tmp.name; tmp.close()
         (df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)).to_csv(path, index=False, encoding="utf-8-sig")
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+    return path
+
+
+def _open_text_in_editor(text: str, label: str = "rapport") -> str:
+    """Skriv text till temporär .txt-fil och öppna i system-editor. Returnerar sökvägen."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.txt")
+    path = tmp.name
+    tmp.close()
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
     try:
         if os.name == "nt":
             os.startfile(path)  # type: ignore[attr-defined]
@@ -1334,7 +1398,7 @@ def _safe_str_series(s: pd.Series) -> pd.Series:
     """
     Returnera en strängserie där varje värde är trimmat och NaN ersätts med tom sträng.
     """
-    return s.astype(str).fillna("").str.strip()
+    return s.fillna("").astype(str).str.strip()
 
 
 def _str_to_num(x) -> float:
@@ -2098,9 +2162,10 @@ def calculate_refill(allocated_df: pd.DataFrame,
 
 
 class App(ttk.Frame):
-    def __init__(self, master):
+    def __init__(self, master, enable_update_checks: bool = True):
         super().__init__(master)
         self.master = master
+        self.enable_update_checks = enable_update_checks
         self.pack(fill="both", expand=True)
         # Set up a default style for the application
         style = ttk.Style(self)
@@ -2178,6 +2243,15 @@ class App(ttk.Frame):
         self._open_button_hints: dict[ttk.Button, str] = {}
         self._hover_tooltip: Optional[tk.Toplevel] = None
         self._hover_tooltip_label: Optional[tk.Label] = None
+        self._update_check_in_progress = False
+        self._update_download_in_progress = False
+        self._update_cancel_event: Optional[threading.Event] = None
+        self._update_progress_window: Optional[tk.Toplevel] = None
+        self._update_progress_value = tk.IntVar(value=0)
+        self._update_status_var = tk.StringVar(value="")
+
+        self._setup_menu()
+        self._set_window_icon()
 
         # Build the GUI widgets
         self._create_widgets()
@@ -2189,9 +2263,255 @@ class App(ttk.Frame):
             self.update_file_status_icons()
         except Exception:
             pass
+        self._schedule_update_check()
 
     def _log(self, msg: str, level: str = "info") -> None:
         logprintln(self.log, msg)
+
+    def _setup_menu(self) -> None:
+        menu = tk.Menu(self.master)
+        help_menu = tk.Menu(menu, tearoff=0)
+        help_menu.add_command(
+            label="Sök efter uppdateringar",
+            command=lambda: self._check_for_updates(manual=True),
+        )
+        help_menu.add_command(
+            label="Öppna releasesida",
+            command=lambda: webbrowser.open(GITHUB_RELEASES_URL),
+        )
+        help_menu.add_separator()
+        help_menu.add_command(label=f"Om {APP_NAME}", command=self._show_about_dialog)
+        menu.add_cascade(label="Hjälp", menu=help_menu)
+        self.master.configure(menu=menu)
+
+    def _set_window_icon(self) -> None:
+        candidates = [
+            _resource_path("app.ico"),
+            Path(__file__).resolve().parent / "packaging" / "windows" / "app.ico",
+        ]
+        for icon_path in candidates:
+            if not icon_path.exists():
+                continue
+            try:
+                self.master.iconbitmap(default=str(icon_path))
+                return
+            except Exception:
+                continue
+
+    def _show_about_dialog(self) -> None:
+        messagebox.showinfo(APP_NAME, f"{APP_NAME}\nVersion {APP_VERSION}")
+
+    def _automatic_update_checks_enabled(self) -> bool:
+        return self.enable_update_checks and os.environ.get(UPDATE_DISABLED_ENV) != "1"
+
+    def _schedule_update_check(self) -> None:
+        if self._automatic_update_checks_enabled():
+            self.after(2500, lambda: self._check_for_updates(manual=False))
+
+    def _check_for_updates(self, manual: bool = False) -> None:
+        if self._update_check_in_progress:
+            if manual:
+                messagebox.showinfo(APP_NAME, "Söker redan efter uppdateringar.")
+            return
+
+        self._update_check_in_progress = True
+        threading.Thread(
+            target=self._check_for_updates_worker,
+            args=(manual,),
+            daemon=True,
+        ).start()
+
+    def _check_for_updates_worker(self, manual: bool) -> None:
+        info: Optional[UpdateInfo] = None
+        error: Optional[str] = None
+        try:
+            info = check_for_update(current_version=APP_VERSION)
+        except Exception as exc:
+            error = str(exc)
+        self.after(
+            0,
+            lambda: self._finish_update_check(manual=manual, info=info, error=error),
+        )
+
+    def _finish_update_check(
+        self,
+        *,
+        manual: bool,
+        info: Optional[UpdateInfo],
+        error: Optional[str],
+    ) -> None:
+        self._update_check_in_progress = False
+        if error:
+            if manual:
+                messagebox.showwarning(
+                    APP_NAME,
+                    f"Kunde inte söka efter uppdatering.\n\n{error}",
+                )
+            return
+        if info is None:
+            if manual:
+                messagebox.showinfo(
+                    APP_NAME,
+                    f"Du kör senaste versionen av {APP_NAME}.",
+                )
+            return
+        self._on_update_available(info, manual=manual)
+
+    def _on_update_available(self, info: UpdateInfo, manual: bool) -> None:
+        if not info.installer_url:
+            open_release = messagebox.askyesno(
+                "Uppdatering finns",
+                (
+                    f"Version {info.version} finns tillgänglig, men releasen saknar "
+                    "en Setup.exe-fil.\n\nVill du öppna releasesidan?"
+                ),
+            )
+            if open_release:
+                webbrowser.open(info.release_url)
+            return
+
+        install_now = messagebox.askyesno(
+            "Uppdatering finns",
+            (
+                f"Version {info.version} finns tillgänglig.\n\n"
+                "Vill du ladda ner och installera uppdateringen nu? "
+                "Appen stängs automatiskt medan uppdateringen installeras."
+            ),
+        )
+        if install_now:
+            self._download_update(info)
+        elif manual:
+            self._log("Uppdatering hittad men användaren avstod just nu.")
+
+    def _download_update(self, info: UpdateInfo) -> None:
+        if self._update_download_in_progress:
+            messagebox.showinfo(APP_NAME, "Uppdateringen laddas redan ner.")
+            return
+
+        self._update_download_in_progress = True
+        self._update_cancel_event = threading.Event()
+        self._update_progress_value.set(0)
+        self._update_status_var.set("Laddar ner uppdatering...")
+        self._show_update_progress()
+
+        target_dir = Path(tempfile.gettempdir()) / APP_NAME / "updates"
+        threading.Thread(
+            target=self._download_update_worker,
+            args=(info, target_dir, self._update_cancel_event),
+            daemon=True,
+        ).start()
+
+    def _show_update_progress(self) -> None:
+        window = tk.Toplevel(self.master)
+        window.title("Uppdatering")
+        window.transient(self.master)
+        window.resizable(False, False)
+        window.grab_set()
+        window.protocol("WM_DELETE_WINDOW", self._cancel_update_download)
+
+        frame = ttk.Frame(window, padding=16)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, textvariable=self._update_status_var).pack(anchor="w")
+        ttk.Progressbar(
+            frame,
+            maximum=100,
+            variable=self._update_progress_value,
+            length=320,
+            mode="determinate",
+        ).pack(fill="x", pady=(12, 8))
+        ttk.Button(frame, text="Avbryt", command=self._cancel_update_download).pack(
+            anchor="e"
+        )
+        self._update_progress_window = window
+
+    def _cancel_update_download(self) -> None:
+        if self._update_cancel_event is not None:
+            self._update_cancel_event.set()
+        self._update_status_var.set("Avbryter nedladdning...")
+
+    def _download_update_worker(
+        self,
+        info: UpdateInfo,
+        target_dir: Path,
+        cancel_event: threading.Event,
+    ) -> None:
+        try:
+            installer_path = download_update_installer(
+                info,
+                target_dir=target_dir,
+                progress_cb=lambda value: self.after(
+                    0, lambda value=value: self._update_progress_value.set(value)
+                ),
+                stop_flag=cancel_event.is_set,
+            )
+        except Exception as exc:
+            cancelled = cancel_event.is_set()
+            error_message = str(exc)
+            self.after(
+                0,
+                lambda error_message=error_message, cancelled=cancelled: self._finish_update_download(
+                    installer_path=None,
+                    error=error_message,
+                    cancelled=cancelled,
+                ),
+            )
+            return
+
+        self.after(
+            0,
+            lambda: self._finish_update_download(
+                installer_path=installer_path,
+                error=None,
+                cancelled=False,
+            ),
+        )
+
+    def _finish_update_download(
+        self,
+        *,
+        installer_path: Optional[Path],
+        error: Optional[str],
+        cancelled: bool,
+    ) -> None:
+        self._close_update_progress()
+        self._update_download_in_progress = False
+        self._update_cancel_event = None
+
+        if cancelled:
+            messagebox.showinfo(APP_NAME, "Nedladdningen avbröts.")
+            return
+        if error:
+            messagebox.showwarning(
+                APP_NAME,
+                f"Kunde inte ladda ner uppdateringen.\n\n{error}",
+            )
+            return
+        if installer_path is None:
+            messagebox.showwarning(APP_NAME, "Installeraren kunde inte hittas.")
+            return
+
+        if self._start_silent_update(installer_path):
+            self.master.after(150, self.master.destroy)
+
+    def _close_update_progress(self) -> None:
+        if self._update_progress_window is not None:
+            try:
+                self._update_progress_window.grab_release()
+            except Exception:
+                pass
+            self._update_progress_window.destroy()
+            self._update_progress_window = None
+
+    def _start_silent_update(self, installer_path: Path) -> bool:
+        try:
+            subprocess.Popen([str(installer_path), *SILENT_UPDATE_ARGS])
+        except Exception as exc:
+            messagebox.showerror(
+                APP_NAME,
+                f"Kunde inte starta installeraren:\n{installer_path}\n\n{exc}",
+            )
+            return False
+        return True
 
     def _create_widgets(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -2496,6 +2816,22 @@ class App(ttk.Frame):
             state="disabled",
         )
         self.ordersaldo_copy_list2_btn.pack(side="left", padx=4)
+        self.vecka27_btn = ttk.Button(
+            ordersaldo_frame,
+            text="Vecka 27",
+            command=self.run_vecka27_check,
+            style="Warning.TButton",
+            state="disabled",
+        )
+        self.vecka27_btn.pack(side="left", padx=4)
+        self.lyx_btn = ttk.Button(
+            ordersaldo_frame,
+            text="LYX",
+            command=self.run_lyx,
+            style="Warning.TButton",
+            state="disabled",
+        )
+        self.lyx_btn.pack(side="left", padx=4)
         self.reset_cache_btn = ttk.Button(ordersaldo_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
         self.reset_cache_btn.pack(side="left", padx=(16, 4))
         self._action_requirements = {
@@ -2516,6 +2852,10 @@ class App(ttk.Frame):
             ],
             self.eftersok_btn: [
                 ("wms_receive", "Mottagningslogg (CSV)"),
+            ],
+            self.lyx_btn: [
+                ("buffer", "Buffertpallar (CSV)"),
+                ("automation", "Saldo inkl. automation (CSV)"),
             ],
         }
         for action_btn in self._action_requirements:
@@ -3294,16 +3634,22 @@ class App(ttk.Frame):
         self.ordersaldo_list1_values = []
         self.ordersaldo_list2_values = []
 
-        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
-        if not path:
+        def _disable_all() -> None:
             self.ordersaldo_copy_list1_btn.configure(state="disabled")
             self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            try:
+                self.vecka27_btn.configure(state="disabled")
+            except Exception:
+                pass
+
+        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        if not path:
+            _disable_all()
             return
 
         df = self._read_tabular_for_filter_scan(path)
         if not isinstance(df, pd.DataFrame) or df.empty:
-            self.ordersaldo_copy_list1_btn.configure(state="disabled")
-            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            _disable_all()
             return
 
         try:
@@ -3312,8 +3658,7 @@ class App(ttk.Frame):
             pass
 
         if df.empty:
-            self.ordersaldo_copy_list1_btn.configure(state="disabled")
-            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            _disable_all()
             return
 
         used: set[str] = set()
@@ -3327,6 +3672,14 @@ class App(ttk.Frame):
         if demand_col:
             used.add(demand_col)
         pick_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["pick"], used)
+
+        # Vecka 27 behöver bara order + artikel + antal (inte pick).
+        try:
+            self.vecka27_btn.configure(
+                state="normal" if (order_col and article_col and demand_col) else "disabled"
+            )
+        except Exception:
+            pass
 
         if not order_col or not article_col or not demand_col or not pick_col:
             self.ordersaldo_copy_list1_btn.configure(state="disabled")
@@ -3383,6 +3736,153 @@ class App(ttk.Frame):
         except Exception:
             pass
         messagebox.showinfo(APP_TITLE, f"{copied_count} artikelnummer kopierade.")
+
+    def run_lyx(self) -> None:
+        """LYX: Kopiera artikelnummer där plocksaldo < 20 % av median buffertantal."""
+        saldo_path = self.automation_var.get().strip()
+        buffer_path = self.buffer_var.get().strip()
+        if not saldo_path or not buffer_path:
+            messagebox.showinfo(APP_TITLE, "Ladda upp saldofil och buffertpallar-fil först.")
+            return
+        try:
+            saldo_df = _clean_columns(pd.read_csv(saldo_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
+            buffer_df = _clean_columns(pd.read_csv(buffer_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
+
+            art_col = find_col(saldo_df, ["artikel", "artnr", "art.nr", "artikelnummer", "sku"])
+            saldo_col = find_col(saldo_df, ["plocksaldo", "plock saldo", "plock-saldo",
+                                            "tillgängligt plock", "tillgangligt plock", "plock"], required=False)
+            plats_col = find_col(saldo_df, ["plockplats", "huvudplock", "mainpick",
+                                            "hyllplats", "bin", "location", "lagerplats"], required=False)
+            bolag_col = find_col(saldo_df, ["bolag", "company", "bolagskod"], required=False)
+
+            if saldo_col is None:
+                messagebox.showerror(APP_TITLE, "Kunde inte hitta plocksaldo-kolumnen i saldofilen.")
+                return
+
+            mask = pd.Series(True, index=saldo_df.index)
+            if plats_col:
+                mask &= _safe_str_series(saldo_df[plats_col]).ne("")
+            if bolag_col:
+                mask &= _safe_str_series(saldo_df[bolag_col]).str.upper() == "MG"
+
+            saldo_filt = saldo_df[mask].copy()
+            if saldo_filt.empty:
+                messagebox.showinfo(APP_TITLE, "Ingen data kvar efter filtrering (Bolag=MG & Plockplats ej tom).")
+                return
+
+            saldo_filt["_art"] = _safe_str_series(saldo_filt[art_col])
+            saldo_filt["_saldo"] = saldo_filt[saldo_col].map(to_num)
+
+            buf_art_col = find_col(buffer_df, ["artikel", "artnr", "art.nr", "artikelnummer"])
+            buf_antal_col = find_col(buffer_df, ["antal", "qty", "quantity", "kolli"])
+
+            buffer_df = buffer_df.copy()
+            buffer_df["_art"] = _safe_str_series(buffer_df[buf_art_col])
+            buffer_df["_antal"] = buffer_df[buf_antal_col].map(to_num)
+            buf_filt = buffer_df[buffer_df["_art"].isin(set(saldo_filt["_art"]))]
+            buf_median = buf_filt.groupby("_art")["_antal"].median()
+
+            saldo_filt["_median"] = saldo_filt["_art"].map(buf_median)
+            lyx_mask = saldo_filt["_median"].notna() & (saldo_filt["_saldo"] < saldo_filt["_median"] * 0.20)
+            lyx_arts = sorted(saldo_filt.loc[lyx_mask, "_art"].unique().tolist())
+
+            if not lyx_arts:
+                messagebox.showinfo(APP_TITLE, "Inga artiklar med plocksaldo < 20 % av median buffertantal.")
+                return
+
+            self.master.clipboard_clear()
+            self.master.clipboard_append("\n".join(lyx_arts))
+            self.master.update()
+            messagebox.showinfo(APP_TITLE, f"{len(lyx_arts)} artikelnummer kopierade.")
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"LYX-beräkning misslyckades:\n{e}")
+
+    @staticmethod
+    def _vecka27_fmt_qty(q: float) -> str:
+        """Formatera antal: heltal utan decimaler, annars float."""
+        try:
+            f = float(q)
+        except Exception:
+            return str(q)
+        return str(int(f)) if f.is_integer() else str(f)
+
+    def run_vecka27_check(self) -> None:
+        """Kontrollera tak/hus vs gräsklippare per order. Vid avvikelse: öppna .txt-fil."""
+        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        if not path:
+            messagebox.showinfo(APP_TITLE, "Ladda upp beställningslinjefilen först.")
+            return
+
+        df = self._read_tabular_for_filter_scan(path)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            messagebox.showinfo(APP_TITLE, "Beställningslinjefilen är tom eller kunde inte läsas.")
+            return
+
+        try:
+            df = self._apply_value_filters(df, "Vecka 27 (beställningslinjer)", log_result=False)
+        except Exception:
+            pass
+
+        if df.empty:
+            messagebox.showinfo(APP_TITLE, "Inga rader kvar efter aktiva filter.")
+            return
+
+        used: set[str] = set()
+        order_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["order"], used)
+        if order_col:
+            used.add(order_col)
+        article_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["article"], used)
+        if article_col:
+            used.add(article_col)
+        demand_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["demand"], used)
+
+        if not order_col or not article_col or not demand_col:
+            messagebox.showerror(
+                APP_TITLE,
+                "Hittar inte order-, artikel- eller antalskolumn i beställningsfilen.",
+            )
+            return
+
+        work = df[[order_col, article_col, demand_col]].copy()
+        work[order_col] = work[order_col].astype(str).str.strip()
+        work[article_col] = work[article_col].astype(str).str.strip()
+        work[demand_col] = work[demand_col].map(to_num).astype(float)
+
+        # Summera per (order, artikel) - en order kan ha samma artikel på flera rader.
+        grp = work.groupby([order_col, article_col])[demand_col].sum(min_count=1)
+
+        deviations: list[str] = []
+        for order_id, sub in grp.groupby(level=0):
+            art_qty: dict[str, float] = {}
+            for (_, art), qty in sub.items():
+                if pd.notna(qty):
+                    art_qty[str(art)] = float(qty)
+            for roof, mowers in VECKA27_ROOF_TO_MOWERS.items():
+                roof_qty = art_qty.get(roof, 0.0)
+                if roof_qty <= 0:
+                    continue  # Tak saknas helt - ingen kontroll, ingen varning.
+                mower_qty = sum(art_qty.get(m, 0.0) for m in mowers)
+                if mower_qty < roof_qty:
+                    mower_list = "/".join(sorted(mowers))
+                    deviations.append(
+                        f"Order {order_id} har {self._vecka27_fmt_qty(roof_qty)} st av {roof} "
+                        f"men endast {self._vecka27_fmt_qty(mower_qty)} st gräsklippare av {mower_list}."
+                    )
+
+        if not deviations:
+            messagebox.showinfo(APP_TITLE, "Allt stämmer för Vecka 27.")
+            try:
+                self._log("Vecka 27: inga avvikelser.")
+            except Exception:
+                pass
+            return
+
+        body = "Hej Lina!\n" + "\n".join(deviations) + "\nHur gör vi med denna/dessa?\n"
+        try:
+            tmp_path = _open_text_in_editor(body, label="vecka27")
+            self._log(f"Vecka 27: {len(deviations)} avvikelse(r) - öppnade {tmp_path}")
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte öppna Vecka 27-rapport:\n{e}")
 
     def _on_eftersok_input_changed(self, *_args) -> None:
         """Uppdatera blå knappstatus när inköpsnummer/artikelnummer ändras."""
@@ -3599,18 +4099,28 @@ class App(ttk.Frame):
         """Ladda WMSAnalyzerUpdated från wms_sök79.py."""
         if self._wms_analyzer_cls is not None:
             return self._wms_analyzer_cls
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        module_path = ""
-        def _ascii_lower(value: str) -> str:
-            normalized = unicodedata.normalize("NFKD", str(value))
-            return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
-        for fname in os.listdir(base_dir):
-            fname_low = _ascii_lower(fname)
-            if fname_low == "wms_sok79.py":
-                module_path = os.path.join(base_dir, fname)
+        search_roots: list[Path] = []
+        for root in (_runtime_root(), _bundle_root(), Path(__file__).resolve().parent):
+            if root not in search_roots:
+                search_roots.append(root)
+            exempelkod_dir = root / "exempelkod"
+            if exempelkod_dir not in search_roots:
+                search_roots.append(exempelkod_dir)
+
+        module_path: Optional[Path] = None
+        for root in search_roots:
+            for filename in ("wms_sok79.py", "wms_sök79.py"):
+                candidate = root / filename
+                if candidate.exists():
+                    module_path = candidate
+                    break
+            if module_path is not None:
                 break
-        if not module_path or not os.path.exists(module_path):
-            raise FileNotFoundError(f"Hittar inte wms_sök79.py i: {base_dir}")
+
+        if module_path is None:
+            raise FileNotFoundError(
+                "Hittar inte wms_sök79.py i appmappen eller exempelkod."
+            )
         spec = importlib.util.spec_from_file_location("wms_sok79_module", module_path)
         if spec is None or spec.loader is None:
             raise ImportError(f"Kunde inte ladda filen: {module_path}")
@@ -5108,13 +5618,32 @@ class App(ttk.Frame):
                 pass
 
 
-def main() -> None:
+def _parse_args(argv: Optional[list[str]] = None):
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--version", action="store_true")
+    return parser.parse_known_args(argv)[0]
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    args = _parse_args(argv)
+    if args.version:
+        print(APP_VERSION)
+        return
+
     root_class = TkinterDnD.Tk if TkinterDnD else tk.Tk
     root = root_class()
     root.title(APP_TITLE)
-    app = App(root)
     root.geometry("1360x860")
+    if args.smoke_test:
+        root.withdraw()
+    _app = App(root, enable_update_checks=not args.smoke_test)
+    if args.smoke_test:
+        root.update_idletasks()
+        root.update()
+        root.destroy()
+        return
     root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
