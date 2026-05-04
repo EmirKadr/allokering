@@ -3853,6 +3853,8 @@ class App(ttk.Frame):
 
         deviations: list[str] = []
         for order_id, sub in grp.groupby(level=0):
+            if not str(order_id).upper().startswith("PR"):
+                continue
             art_qty: dict[str, float] = {}
             for (_, art), qty in sub.items():
                 if pd.notna(qty):
