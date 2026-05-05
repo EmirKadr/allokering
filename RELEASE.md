@@ -15,6 +15,11 @@ ska bara göras när Emir uttryckligen ber om det, till exempel:
 - "tagga och publicera ny version"
 - "nu ska kollegan få en uppdatering"
 
+Om inget annat uttryckligen önskas ska nya releaser i första hand planeras till
+natten. När en release planeras ska datum och klockslag skrivas ut exakt, till
+exempel `2026-05-06 02:00` lokal tid, så att det inte blir oklart vad "inatt"
+eller liknande betyder.
+
 ## Vad som händer vid release
 
 När en tagg som `v12.2.0` pushas startar GitHub Actions-workflowen
