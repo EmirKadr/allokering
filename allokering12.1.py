@@ -933,6 +933,71 @@ def find_col(df: pd.DataFrame, candidates: List[str], required: bool = True, def
         raise KeyError(f"Hittar inte kolumnerna {candidates} i {list(df.columns)}")
     return default
 
+def _find_lyx_median_csv() -> Optional[Path]:
+    candidates = [
+        _resource_path("LYX Mestergruppen", "artikel_median.csv"),
+        _runtime_root() / "LYX Mestergruppen" / "artikel_median.csv",
+        Path(__file__).resolve().parent / "LYX Mestergruppen" / "artikel_median.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+def compute_lyx_articles(saldo_df: pd.DataFrame, median_df: pd.DataFrame) -> Tuple[list[str], int]:
+    """
+    Returnera artikelnummer där (plocksaldo + utbeställt) är högst 20 % av
+    median buffertantalet. Returvärdet är (artikellista, antal filtrerade rader).
+    """
+    saldo_df = _clean_columns(saldo_df.copy())
+    median_df = _clean_columns(median_df.copy())
+
+    art_col = find_col(saldo_df, ["artikel", "artnr", "art.nr", "artikelnummer", "sku"])
+    saldo_col = find_col(
+        saldo_df,
+        ["plocksaldo", "plock saldo", "plock-saldo", "tillgängligt plock", "tillgangligt plock", "plock"],
+        required=False,
+    )
+    plats_col = find_col(
+        saldo_df,
+        ["plockplats", "huvudplock", "mainpick", "hyllplats", "bin", "location", "lagerplats"],
+        required=False,
+    )
+    bolag_col = find_col(saldo_df, ["bolag", "company", "bolagskod"], required=False)
+    utbest_col = find_col(saldo_df, ["utbeställt", "utbestallt"], required=False)
+
+    if saldo_col is None:
+        raise KeyError("Kunde inte hitta plocksaldo-kolumnen i saldofilen.")
+
+    mask = pd.Series(True, index=saldo_df.index)
+    if plats_col:
+        mask &= _safe_str_series(saldo_df[plats_col]).ne("")
+    if bolag_col:
+        mask &= _safe_str_series(saldo_df[bolag_col]).str.upper() == "MG"
+
+    saldo_filt = saldo_df[mask].copy()
+    if saldo_filt.empty:
+        return [], 0
+
+    saldo_filt["_art"] = _safe_str_series(saldo_filt[art_col])
+    saldo_filt["_saldo"] = saldo_filt[saldo_col].map(to_num).fillna(0)
+    if utbest_col:
+        saldo_filt["_utbest"] = saldo_filt[utbest_col].map(to_num).fillna(0)
+    else:
+        saldo_filt["_utbest"] = 0.0
+    saldo_filt["_total"] = saldo_filt["_saldo"] + saldo_filt["_utbest"]
+
+    med_art_col = find_col(median_df, ["artikelnummer", "artikel", "artnr", "art.nr", "sku"])
+    med_val_col = find_col(median_df, ["median"])
+    median_df["_art"] = _safe_str_series(median_df[med_art_col])
+    median_df["_median"] = median_df[med_val_col].map(to_num)
+    median_map = median_df.dropna(subset=["_median"]).set_index("_art")["_median"]
+
+    saldo_filt["_median"] = saldo_filt["_art"].map(median_map)
+    lyx_mask = saldo_filt["_median"].notna() & (saldo_filt["_total"] <= saldo_filt["_median"] * 0.20)
+    lyx_arts = sorted(saldo_filt.loc[lyx_mask, "_art"].unique().tolist())
+    return lyx_arts, len(saldo_filt)
+
 def logprintln(txt_widget: tk.Text, msg: str) -> None:
     txt_widget.configure(state="normal")
     txt_widget.insert("end", msg + "\n")
@@ -2854,7 +2919,6 @@ class App(ttk.Frame):
                 ("wms_receive", "Mottagningslogg (CSV)"),
             ],
             self.lyx_btn: [
-                ("buffer", "Buffertpallar (CSV)"),
                 ("automation", "Saldo inkl. automation (CSV)"),
             ],
         }
@@ -3738,56 +3802,27 @@ class App(ttk.Frame):
         messagebox.showinfo(APP_TITLE, f"{copied_count} artikelnummer kopierade.")
 
     def run_lyx(self) -> None:
-        """LYX: Kopiera artikelnummer där plocksaldo < 20 % av median buffertantal."""
+        """LYX: Kopiera artikelnummer där (plocksaldo + utbeställt) ≤ 20 % av median buffertantal."""
         saldo_path = self.automation_var.get().strip()
-        buffer_path = self.buffer_var.get().strip()
-        if not saldo_path or not buffer_path:
-            messagebox.showinfo(APP_TITLE, "Ladda upp saldofil och buffertpallar-fil först.")
+        if not saldo_path:
+            messagebox.showinfo(APP_TITLE, "Ladda upp saldofil först.")
             return
+
+        median_csv = _find_lyx_median_csv()
+        if median_csv is None:
+            messagebox.showerror(APP_TITLE, "Kunde inte hitta artikel_median.csv (LYX Mestergruppen).")
+            return
+
         try:
             saldo_df = _clean_columns(pd.read_csv(saldo_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
-            buffer_df = _clean_columns(pd.read_csv(buffer_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
-
-            art_col = find_col(saldo_df, ["artikel", "artnr", "art.nr", "artikelnummer", "sku"])
-            saldo_col = find_col(saldo_df, ["plocksaldo", "plock saldo", "plock-saldo",
-                                            "tillgängligt plock", "tillgangligt plock", "plock"], required=False)
-            plats_col = find_col(saldo_df, ["plockplats", "huvudplock", "mainpick",
-                                            "hyllplats", "bin", "location", "lagerplats"], required=False)
-            bolag_col = find_col(saldo_df, ["bolag", "company", "bolagskod"], required=False)
-
-            if saldo_col is None:
-                messagebox.showerror(APP_TITLE, "Kunde inte hitta plocksaldo-kolumnen i saldofilen.")
-                return
-
-            mask = pd.Series(True, index=saldo_df.index)
-            if plats_col:
-                mask &= _safe_str_series(saldo_df[plats_col]).ne("")
-            if bolag_col:
-                mask &= _safe_str_series(saldo_df[bolag_col]).str.upper() == "MG"
-
-            saldo_filt = saldo_df[mask].copy()
-            if saldo_filt.empty:
+            median_df = _clean_columns(pd.read_csv(str(median_csv), dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
+            lyx_arts, filtered_row_count = compute_lyx_articles(saldo_df, median_df)
+            if filtered_row_count == 0:
                 messagebox.showinfo(APP_TITLE, "Ingen data kvar efter filtrering (Bolag=MG & Plockplats ej tom).")
                 return
 
-            saldo_filt["_art"] = _safe_str_series(saldo_filt[art_col])
-            saldo_filt["_saldo"] = saldo_filt[saldo_col].map(to_num)
-
-            buf_art_col = find_col(buffer_df, ["artikel", "artnr", "art.nr", "artikelnummer"])
-            buf_antal_col = find_col(buffer_df, ["antal", "qty", "quantity", "kolli"])
-
-            buffer_df = buffer_df.copy()
-            buffer_df["_art"] = _safe_str_series(buffer_df[buf_art_col])
-            buffer_df["_antal"] = buffer_df[buf_antal_col].map(to_num)
-            buf_filt = buffer_df[buffer_df["_art"].isin(set(saldo_filt["_art"]))]
-            buf_median = buf_filt.groupby("_art")["_antal"].median()
-
-            saldo_filt["_median"] = saldo_filt["_art"].map(buf_median)
-            lyx_mask = saldo_filt["_median"].notna() & (saldo_filt["_saldo"] < saldo_filt["_median"] * 0.20)
-            lyx_arts = sorted(saldo_filt.loc[lyx_mask, "_art"].unique().tolist())
-
             if not lyx_arts:
-                messagebox.showinfo(APP_TITLE, "Inga artiklar med plocksaldo < 20 % av median buffertantal.")
+                messagebox.showinfo(APP_TITLE, "Inga artiklar med (plocksaldo + utbeställt) ≤ 20 % av median buffertantal.")
                 return
 
             self.master.clipboard_clear()
@@ -4650,7 +4685,7 @@ class App(ttk.Frame):
             instr_lines = [
                 "\nInstruktion:",
                 "Ändras i följande ordning",
-                "1. Ordernummer",
+                "1. Orderdatum",
                 "2. Sändningsnummer",
                 "3. Zon F på orderlinjerna",
                 "4. Samma multi på alla Hibar till samma butik",
@@ -4680,7 +4715,7 @@ class App(ttk.Frame):
             try:
                 instr_lines = [
                     "Ändras i följande ordning",
-                    "1. Ordernummer",
+                    "1. Orderdatum",
                     "2. Sändningsnummer",
                     "3. Zon F på orderlinjerna",
                     "4. Samma multi på alla Hibar till samma butik",
