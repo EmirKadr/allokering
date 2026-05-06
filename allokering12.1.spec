@@ -11,6 +11,8 @@ extra_datas = [
     (str(project_root / "wms_sok79.py"), "."),
     (str(project_root / "packaging" / "windows" / "app.ico"), "."),
     (str(project_root / "lowfreqdata" / "buffertpall" / "artikel_max.csv"), "lowfreqdata/buffertpall"),
+    (str(project_root / "lowfreqdata" / "buffertpall" / "observations.csv.gz"), "lowfreqdata/buffertpall"),
+    (str(project_root / "hjalp"), "hjalp"),
 ]
 
 a = Analysis(

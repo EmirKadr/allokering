@@ -1,0 +1,9 @@
+Kör allokering
+
+Startar hela allokeringsprocessen. Appen läser beställningslinjerna och buffertpallarna och räknar ut vilka pallar som täcker vilka order.
+
+Kräver:
+• Beställningslinjer (CSV)
+• Buffertpallar (CSV)
+
+Resultatet öppnas med knapparna i raden "Öppna..." nedanför. Du ser även en summering i tabellen längst ner.

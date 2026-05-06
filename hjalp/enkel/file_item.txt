@@ -1,0 +1,5 @@
+Item option
+
+Artikelmasterfil med information om staplingsbarhet. Används för att avgöra hur pallar kan staplas vid pallplatsberäkning.
+
+Valfri fil – om den inte laddas antas alla artiklar vara staplingsbara.

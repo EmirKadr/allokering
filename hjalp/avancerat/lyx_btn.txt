@@ -1,0 +1,14 @@
+LYX – teknisk beskrivning
+
+compute_lyx_articles(saldo_df, max_df) filtrerar på:
+• Bolag == "MG"
+• Plockplats är ifylld
+• Plocksaldo + Utbestallt >= max (från artikel_max.csv)
+
+artikel_max.csv byggs från observations.csv.gz via _recompute_artikel_max():
+• Samlar pallid + antal för status-30-pallar (BUFFER_SCHEMA status)
+• Grupperar per artikelnummer
+• Tillämpar Tukey IQR-filter: tar bort pallar med antal > Q3 + 1.5×IQR
+• max-kolumnen = högsta kvarvarande antal
+
+Observationer synkas med GitHub-branchen data/community-observations för att bygga upp historisk statistik över tid.

@@ -1,0 +1,5 @@
+Öppna dispatchkontroll
+
+Öppnar resultatet av dispatchkontrollen i Excel. Visar pallar med felaktigt eller saknat ordernummer/sändningsnummer.
+
+Knappen är grå tills du kört kontrollen.

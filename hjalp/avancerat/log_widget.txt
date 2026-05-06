@@ -1,0 +1,11 @@
+Logg – teknisk beskrivning
+
+Loggen är ett tk.Text-widget i disabled-läge. Skrivning sker via logprintln(self.log, msg) som:
+1. Sätter state="normal"
+2. Infogar tidsstämpel + meddelande + nyrad
+3. Scrollar till slutet (see "end")
+4. Sätter state="disabled"
+
+Anrop från bakgrundstrådar sker alltid via master.after(0, lambda: self._log(...)) för att hålla sig på GUI-tråden (tkinter är inte trådsäkert).
+
+Loggnivåer: "info" (standard), inga fler nivåer implementerade i nuläget.

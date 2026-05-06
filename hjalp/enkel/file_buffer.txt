@@ -1,0 +1,7 @@
+Buffertpallar
+
+Filen från WMS som listar alla pallar i buffertlagret. Används för att räkna ut vilka pallar som kan täcka order.
+
+Innehåller: artikel, antal, lagerplats, pallid, datum och status.
+
+Appen samlar automatiskt information om pallstorlekar varje gång du laddar denna fil – det förbättrar LYX-beräkningarna över tid.

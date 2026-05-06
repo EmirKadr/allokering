@@ -1,0 +1,7 @@
+Beställningslinjer
+
+Ladda upp filen med kundernas beställningar. Appen hittar automatiskt rätt kolumner.
+
+Filen ska innehålla: artikel, beställt antal, ordernummer och radnummer.
+
+Dra och släpp filen direkt i fönstret eller klicka på statuslabeln för att öppna filväljaren.

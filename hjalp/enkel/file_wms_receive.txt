@@ -1,0 +1,3 @@
+Mottagningslogg (WMS)
+
+Exportfil från WMS med mottagningshändelser. Används av Eftersök för att söka upp artiklar eller inköpsorder i WMS-loggar.

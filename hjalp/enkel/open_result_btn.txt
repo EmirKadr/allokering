@@ -1,0 +1,5 @@
+Öppna allokerade pallar
+
+Öppnar allokeringsresultatet i Excel – en rad per orderrad med information om vilken pall som täcker behovet och varifrån den hämtas.
+
+Knappen är grå tills du kört allokeringen.

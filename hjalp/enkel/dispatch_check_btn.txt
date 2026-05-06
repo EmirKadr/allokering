@@ -1,0 +1,5 @@
+Kontrollera dispatchpallar
+
+Kontrollerar att dispatchpallarna har korrekt ordernummer och sändningsnummer. Flaggar pallar som saknar matchning.
+
+Kräver orderöversikt och dispatchpallar (CSV). Resultatet öppnas med "Öppna dispatchkontroll".

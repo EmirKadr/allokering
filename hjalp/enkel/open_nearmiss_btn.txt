@@ -1,0 +1,5 @@
+Öppna near-miss
+
+Visar pallar som nästan räckte till – de täcker 70–100 % av behovet men inte hela orderraden. Dessa pallar är kandidater för manuell hantering.
+
+Knappen är grå tills du kört allokeringen.

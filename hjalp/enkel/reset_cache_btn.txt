@@ -1,0 +1,5 @@
+Rensa cache
+
+Rensar alla inlästa filer och beräknade resultat från minnet. Gör detta om du vill börja om med nya filer utan att starta om appen.
+
+Filsökvägar i fälten rensas inte – bara de inlästa datan i minnet.

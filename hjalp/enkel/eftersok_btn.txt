@@ -1,0 +1,5 @@
+Eftersök
+
+Söker upp en artikel eller inköpsorder i WMS-loggar (mottagning, bokning, transport och plock).
+
+Fyll i artikelnummer eller inköpsnummer i fälten ovanför och klicka Eftersök. Kräver minst mottagningslogg.

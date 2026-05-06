@@ -1,0 +1,7 @@
+Saldo inkl. automation
+
+Saldofil som visar aktuellt lager per artikel och plockplats, inklusive vad som är utbeställt från automationssystemet (t.ex. Autostore).
+
+Används av LYX-knappen för att identifiera artiklar med för högt saldo.
+
+Innehåller: artikel, plocksaldo, utbeställt och plockplats.

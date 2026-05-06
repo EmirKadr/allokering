@@ -1,0 +1,5 @@
+Öppna refill
+
+Visar påfyllningspallar – buffertpallar som behöver förflyttas till plocklager för att täcka orderbehovet.
+
+Rapporten är uppdelad i Huvudplock (HP) och Autostore (R). Knappen är grå tills du kört allokeringen.

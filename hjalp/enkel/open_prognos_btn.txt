@@ -1,0 +1,5 @@
+Öppna prognos
+
+Öppnar prognosrapporten i Excel – en jämförelse mellan prognos och vad autoplock faktiskt plockat per artikel och vecka.
+
+Knappen aktiveras när en prognos- eller kampanjfil laddats.

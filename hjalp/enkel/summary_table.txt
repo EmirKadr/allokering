@@ -1,0 +1,10 @@
+Summering per Källtyp
+
+Tabellen visar en sammanfattning av allokeringsresultatet, uppdelat på varifrån pallarna hämtas.
+
+Kolumner:
+• Källtyp – varifrån pallen hämtas (t.ex. HELPALL, AUTOSTORE, HUVUDPLOCK)
+• Antal rader – hur många orderrader som täcks av denna källtyp
+• Antal kolli – total kvantitet för dessa rader
+
+Tabellen uppdateras automatiskt när du kör allokeringen.

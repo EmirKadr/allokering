@@ -1,0 +1,7 @@
+Hjälpläge
+
+Du är redan i hjälpläget! Klicka på valfri knapp, tabell eller fil i appen för att få en förklaring av vad den gör.
+
+Slå på "Avancerat" (reglaget uppe till höger) för mer teknisk information.
+
+Tryck ESC eller stäng-knappen (✕) för att lämna hjälpläget.

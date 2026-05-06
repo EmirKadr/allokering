@@ -1,0 +1,5 @@
+Öppna HIB-koppling
+
+Öppnar resultatet av HIB-kopplingen i Excel – vilka pallar från höglager som ska hämtas för respektive sändning.
+
+Knappen är grå tills du kört HIB-koppling.

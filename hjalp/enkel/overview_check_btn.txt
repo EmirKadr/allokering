@@ -1,0 +1,5 @@
+Kontrollera orderöversikt
+
+Kontrollerar att sändningsnummer i orderöversikten matchar kunder och transportörer korrekt. Flaggar avvikelser.
+
+Kräver orderöversikt (CSV). Resultatet öppnas med "Öppna orderkontroll".

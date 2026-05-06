@@ -1,0 +1,5 @@
+Prognos
+
+Excel-fil med försäljningsprognos per artikel och vecka. Används för att jämföra prognos mot vad autoplock faktiskt plockat.
+
+Valfri fil – behövs bara för prognosrapporten.

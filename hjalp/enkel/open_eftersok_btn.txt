@@ -1,0 +1,5 @@
+Öppna Eftersök
+
+Öppnar resultatet av Eftersök i Excel – en sammanställning av alla WMS-händelser för den sökta artikeln eller inköpsordern.
+
+Knappen är grå tills du kört Eftersök.

@@ -1,0 +1,10 @@
+Logg
+
+Här visas vad appen gör i realtid. Varje rad är ett steg i beräkningen – du kan följa processen och se om något gick fel.
+
+Loggen är enbart för läsning och rensas när du stänger appen. Om något oväntat händer, kolla här för felmeddelanden.
+
+Exempel på vad som loggas:
+• Vilka filer som laddats
+• Hur många rader som bearbetats
+• Eventuella varningar eller fel

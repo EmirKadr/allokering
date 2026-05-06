@@ -1,0 +1,5 @@
+Dispatchpallar
+
+Lista över pallar som är dispatchade (förberedda för utleverans). Används av dispatchkontrollen för att verifiera att ordernummer och sändningsnummer stämmer.
+
+Valfri fil – behövs bara för dispatchkontrollen.

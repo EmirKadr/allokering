@@ -1,0 +1,5 @@
+Påfyllnadsprio
+
+Skapar en prioriterad lista över vilka artiklar som ska fyllas på först, baserat på orderbehovet.
+
+Artiklar med störst ouppfyllt behov hamnar högst i listan. Kräver beställningslinjer.

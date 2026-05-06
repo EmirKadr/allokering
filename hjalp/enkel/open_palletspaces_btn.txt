@@ -1,0 +1,5 @@
+Öppna pallplatser
+
+Visar hur många pallplatser varje kund kräver för sin leverans, baserat på antal pallar och staplingsbarhet.
+
+Knappen är grå tills du kört allokeringen.

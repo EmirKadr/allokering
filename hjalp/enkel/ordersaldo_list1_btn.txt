@@ -1,0 +1,5 @@
+Kompletta ordrar
+
+Kopierar en lista med ordrar som är fullständigt täckta av buffertpallar – inga restorderrader.
+
+Listan kopieras till urklipp (Ctrl+V i Excel). Används vanligtvis för att snabbt se vilka kunder som kan levereras direkt.

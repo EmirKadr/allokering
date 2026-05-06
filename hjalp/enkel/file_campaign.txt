@@ -1,0 +1,5 @@
+Kampanjvolymer
+
+Excel-fil med förväntade kampanjvolymer per artikel. Kompletterar prognosfilen med kampanjspecifika mängder.
+
+Valfri fil – behövs bara för prognosrapporten.

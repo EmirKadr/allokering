@@ -1,0 +1,13 @@
+Summering – teknisk beskrivning
+
+Tabellen är ett ttk.Treeview med kolumnerna ktyp, antal_rader, antal_kolli.
+
+Populeras i run_allocation() efter allocate() returnerat allocated_df:
+  grouped = allocated_df.groupby("Källtyp")
+  för varje grupp → räkna rader och summera qty-kolumnen
+
+Källtyper som kan förekomma:
+• HELPALL – manuell plockhylla (zon H)
+• AUTOSTORE – automatiserat binlager (zon A/R)
+• HUVUDPLOCK – huvudplock utan matchad pall (zon A)
+• SKRYMMANDE – skrymmande artikel (zon S)

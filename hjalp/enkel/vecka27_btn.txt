@@ -1,0 +1,5 @@
+Vecka 27
+
+Filtrerar och visar orderrader som tillhör vecka 27-ordrar. Används för att separera och hantera order med specifika leveransveckor.
+
+Kräver att allokering körts först.

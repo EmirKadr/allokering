@@ -1,0 +1,9 @@
+HIB-koppling – teknisk beskrivning
+
+run_koppla() kör run_hib_koppling() som:
+1. Läser orders (ORDER_SCHEMA) och orderöversikt (OVERVIEW_SCHEMA).
+2. Matchar sändningsnummer från översikten mot beställningslinjer.
+3. Filtrerar på ordertyp = HIB (eller angivet prefix).
+4. Grupperar per sändningsnr och returnerar en rapport med artikel, antal, kund och sändningsnr.
+
+Resultatet sparas som temporär XLSX och öppnas i Excel via open_koppla_in_excel().

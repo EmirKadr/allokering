@@ -48,12 +48,17 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
+import platform
+import queue
 import re
 import shutil
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
@@ -79,6 +84,12 @@ from app_info import (
     APP_NAME,
     APP_TITLE,
     APP_VERSION,
+    ANALYTICS_ENABLED_DEFAULT,
+    ANALYTICS_ENABLED_ENV,
+    ANALYTICS_HOST_ENV,
+    ANALYTICS_POSTHOG_HOST,
+    ANALYTICS_POSTHOG_PROJECT_API_KEY,
+    ANALYTICS_PROJECT_API_KEY_ENV,
     GITHUB_RELEASES_URL,
     UPDATE_DISABLED_ENV,
 )
@@ -92,6 +103,177 @@ SILENT_UPDATE_ARGS = [
     "/CLOSEAPPLICATIONS",
     "/FORCECLOSEAPPLICATIONS",
 ]
+
+
+ANALYTICS_CONFIG_KEY_ENABLED = "analytics_enabled"
+ANALYTICS_CONFIG_KEY_DISTINCT_ID = "analytics_distinct_id"
+ANALYTICS_CONFIG_KEY_HOST = "analytics_host"
+ANALYTICS_CONFIG_KEY_PROJECT_API_KEY = "analytics_project_api_key"
+
+
+def _parse_boolish(value: object) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "ja", "on"}:
+        return True
+    if text in {"0", "false", "no", "nej", "off"}:
+        return False
+    return None
+
+
+def _app_config_path() -> Path:
+    appdata = os.environ.get("APPDATA") or str(Path.home())
+    return Path(appdata) / "allokering" / "config.json"
+
+
+def _load_app_config() -> dict:
+    path = _app_config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_app_config(config: dict) -> None:
+    path = _app_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(config, indent=2, ensure_ascii=False, sort_keys=True)
+    path.write_text(payload, encoding="utf-8")
+
+
+def _get_or_create_analytics_distinct_id(config: Optional[dict] = None) -> str:
+    cfg = config if isinstance(config, dict) else _load_app_config()
+    existing = str(cfg.get(ANALYTICS_CONFIG_KEY_DISTINCT_ID, "")).strip()
+    if existing:
+        return existing
+    distinct_id = uuid.uuid4().hex
+    cfg[ANALYTICS_CONFIG_KEY_DISTINCT_ID] = distinct_id
+    try:
+        _save_app_config(cfg)
+    except Exception:
+        pass
+    return distinct_id
+
+
+def _resolve_analytics_settings(enable_analytics: bool = True) -> dict:
+    cfg = _load_app_config()
+    enabled_pref = _parse_boolish(os.environ.get(ANALYTICS_ENABLED_ENV))
+    if enabled_pref is None:
+        enabled_pref = _parse_boolish(cfg.get(ANALYTICS_CONFIG_KEY_ENABLED))
+    if enabled_pref is None:
+        enabled_pref = ANALYTICS_ENABLED_DEFAULT
+
+    host = str(
+        os.environ.get(ANALYTICS_HOST_ENV)
+        or cfg.get(ANALYTICS_CONFIG_KEY_HOST)
+        or ANALYTICS_POSTHOG_HOST
+        or ""
+    ).strip()
+    api_key = str(
+        os.environ.get(ANALYTICS_PROJECT_API_KEY_ENV)
+        or cfg.get(ANALYTICS_CONFIG_KEY_PROJECT_API_KEY)
+        or ANALYTICS_POSTHOG_PROJECT_API_KEY
+        or ""
+    ).strip()
+
+    distinct_id = ""
+    if enable_analytics or enabled_pref:
+        distinct_id = _get_or_create_analytics_distinct_id(config=cfg)
+
+    if not enable_analytics:
+        reason = "Analytics är tillfälligt avstängt för detta körläge."
+    elif not enabled_pref:
+        reason = "Användaren har stängt av anonym användningsstatistik."
+    elif not api_key:
+        reason = "Ingen PostHog project API key är konfigurerad ännu."
+    else:
+        reason = ""
+
+    active = bool(enable_analytics and enabled_pref and api_key and host)
+    return {
+        "active": active,
+        "enabled_preference": bool(enabled_pref),
+        "host": host,
+        "api_key": api_key,
+        "distinct_id": distinct_id,
+        "reason": reason,
+    }
+
+
+class AnalyticsClient:
+    def __init__(self, settings: dict):
+        self.active = bool(settings.get("active"))
+        self.host = str(settings.get("host", "")).rstrip("/")
+        self.api_key = str(settings.get("api_key", "")).strip()
+        self.distinct_id = str(settings.get("distinct_id", "")).strip()
+        self.reason = str(settings.get("reason", "")).strip()
+        self.session_id = uuid.uuid4().hex
+        self._queue: "queue.Queue[object]" = queue.Queue()
+        self._stop_token = object()
+        self._thread: Optional[threading.Thread] = None
+        if self.active:
+            self._thread = threading.Thread(target=self._worker, name="analytics-worker", daemon=True)
+            self._thread.start()
+
+    def capture(self, event: str, properties: Optional[dict] = None) -> None:
+        if not self.active:
+            return
+        props = dict(properties or {})
+        props.setdefault("distinct_id", self.distinct_id)
+        props.setdefault("session_id", self.session_id)
+        props.setdefault("app_name", APP_NAME)
+        props.setdefault("app_version", APP_VERSION)
+        props.setdefault("platform", platform.system())
+        props.setdefault("platform_release", platform.release())
+        props.setdefault("python_version", platform.python_version())
+        props.setdefault("frozen", bool(getattr(sys, "frozen", False)))
+        payload = {
+            "api_key": self.api_key,
+            "event": event,
+            "properties": props,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+        try:
+            self._queue.put_nowait(payload)
+        except Exception:
+            pass
+
+    def shutdown(self, timeout: float = 1.5) -> None:
+        if not self._thread or not self._thread.is_alive():
+            return
+        try:
+            self._queue.put_nowait(self._stop_token)
+        except Exception:
+            return
+        self._thread.join(timeout=max(0.1, timeout))
+
+    def _worker(self) -> None:
+        capture_url = f"{self.host}/capture/"
+        while True:
+            item = self._queue.get()
+            if item is self._stop_token:
+                break
+            try:
+                body = json.dumps(item).encode("utf-8")
+                request = urllib.request.Request(
+                    capture_url,
+                    data=body,
+                    method="POST",
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": "allokering-analytics",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=5):
+                    pass
+            except Exception:
+                continue
 
 
 def _bundle_root() -> Path:
@@ -126,6 +308,16 @@ def _bufferpall_runtime_dir() -> Path:
 
 def _bufferpall_source_dir() -> Path:
     return Path(__file__).resolve().parent.joinpath(*BUFFERPALL_PATH_PARTS)
+
+
+def _seed_bufferpall_runtime_file(filename: str) -> Path:
+    runtime_path = _bufferpall_runtime_dir() / filename
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+
+    resource_path = _bufferpall_resource_path(filename)
+    if not runtime_path.exists() and resource_path.exists() and resource_path.resolve() != runtime_path.resolve():
+        shutil.copy2(resource_path, runtime_path)
+    return runtime_path
 
 def read_prognos_xlsx(path: str) -> pd.DataFrame:
     """
@@ -415,6 +607,78 @@ def _open_df_in_excel(df, label: str = "data") -> str:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.csv")
         path = tmp.name; tmp.close()
         (df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)).to_csv(path, index=False, encoding="utf-8-sig")
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+    return path
+
+
+def _open_df_in_excel_with_bold_cells(
+    df,
+    *,
+    sheet_name: str,
+    label: str,
+    bold_cells: Optional[set[tuple[int, int]]] = None,
+    bold_sheet_name: Optional[str] = None,
+) -> str:
+    """Skriv en Excel-fil och fetstila utvalda dataceller i vald sheet."""
+    import importlib
+
+    bold_targets = {(int(r), int(c)) for r, c in (bold_cells or set()) if r >= 0 and c >= 0}
+    if isinstance(df, dict):
+        sheet_map = {
+            (str(name)[:31] or "Sheet1"): (value if isinstance(value, pd.DataFrame) else pd.DataFrame(value))
+            for name, value in df.items()
+        }
+        target_sheet = str(bold_sheet_name or sheet_name)[:31] or "Sheet1"
+        if target_sheet not in sheet_map and sheet_map:
+            target_sheet = next(iter(sheet_map))
+    else:
+        safe_sheet = str(sheet_name)[:31] or "Sheet1"
+        sheet_map = {safe_sheet: (df if isinstance(df, pd.DataFrame) else pd.DataFrame(df))}
+        target_sheet = safe_sheet
+
+    if importlib.util.find_spec("openpyxl"):
+        from openpyxl.styles import Font
+
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.xlsx")
+        path = tmp.name
+        tmp.close()
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            for name, out_df in sheet_map.items():
+                out_df.to_excel(writer, sheet_name=name, index=False)
+            if target_sheet in writer.sheets:
+                out_df = sheet_map[target_sheet]
+                ws = writer.sheets[target_sheet]
+                bold_font = Font(bold=True)
+                for row_idx, col_idx in bold_targets:
+                    if row_idx >= len(out_df.index) or col_idx >= len(out_df.columns):
+                        continue
+                    ws.cell(row=row_idx + 2, column=col_idx + 1).font = bold_font
+    elif importlib.util.find_spec("xlsxwriter"):
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.xlsx")
+        path = tmp.name
+        tmp.close()
+        with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
+            for name, out_df in sheet_map.items():
+                out_df.to_excel(writer, sheet_name=name, index=False)
+            if target_sheet in writer.sheets:
+                out_df = sheet_map[target_sheet]
+                ws = writer.sheets[target_sheet]
+                bold_format = writer.book.add_format({"bold": True})
+                for row_idx, col_idx in bold_targets:
+                    if row_idx >= len(out_df.index) or col_idx >= len(out_df.columns):
+                        continue
+                    ws.write(row_idx + 1, col_idx, out_df.iat[row_idx, col_idx], bold_format)
+    else:
+        raise RuntimeError("Saknar Excel-skrivare (installera 'openpyxl' eller 'xlsxwriter').")
+
     try:
         if os.name == "nt":
             os.startfile(path)  # type: ignore[attr-defined]
@@ -958,8 +1222,8 @@ def find_col(df: pd.DataFrame, candidates: List[str], required: bool = True, def
 
 def _find_lyx_max_csv() -> Optional[Path]:
     candidates = [
+        _seed_bufferpall_runtime_file("artikel_max.csv"),
         _bufferpall_resource_path("artikel_max.csv"),
-        _bufferpall_runtime_dir() / "artikel_max.csv",
         _bufferpall_source_dir() / "artikel_max.csv",
     ]
     for candidate in candidates:
@@ -976,6 +1240,9 @@ ORDERSALDO_COLUMN_CANDIDATES: Dict[str, List[str]] = {
 }
 
 PAFYLLNADSPRIO_COLUMNS: List[str] = ["ALLA", "PRIO 1", "PRIO 2", "PRIO 3", "PRIO 4", "PRIO 5"]
+LASTNINGSFONSTER_PRIO_COLUMNS: List[str] = ["PRIO", "LASTNINGSFÖNSTER"]
+LASTNINGSFONSTER_UNKNOWN_SORT = pd.Timestamp("2262-04-11 23:47:00")
+LASTNINGSFONSTER_UNKNOWN_LABEL = "Saknar lastningsfönster"
 
 
 def _ordersaldo_norm(value: str) -> str:
@@ -1115,8 +1382,17 @@ def _classify_pafyllnadsprio(underskott: float, reference_value: float) -> Tuple
     return "PRIO 5", False
 
 
+def _build_pafyllnadsprio_dataframe(groups: Dict[str, List[str]]) -> pd.DataFrame:
+    max_len = max((len(values) for values in groups.values()), default=0)
+    padded = {
+        column: values + [""] * (max_len - len(values))
+        for column, values in groups.items()
+    }
+    return pd.DataFrame(padded, columns=PAFYLLNADSPRIO_COLUMNS)
+
+
 def build_pafyllnadsprio_report(shortage_df: pd.DataFrame, max_df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    """Bygg Excel-data för Påfyllnadsprio från underskottsartiklar och artikel_max."""
+    """Bygg enkel fallback-rapport för Påfyllnadsprio utan lastningsfönster."""
     groups = {column: [] for column in PAFYLLNADSPRIO_COLUMNS}
     if not isinstance(shortage_df, pd.DataFrame) or shortage_df.empty:
         return pd.DataFrame(columns=PAFYLLNADSPRIO_COLUMNS), 0
@@ -1135,12 +1411,246 @@ def build_pafyllnadsprio_report(shortage_df: pd.DataFrame, max_df: pd.DataFrame)
             missing_reference_count += 1
         groups[prio].append(article)
 
-    max_len = max((len(values) for values in groups.values()), default=0)
-    padded = {
-        column: values + [""] * (max_len - len(values))
-        for column, values in groups.items()
-    }
-    return pd.DataFrame(padded, columns=PAFYLLNADSPRIO_COLUMNS), missing_reference_count
+    return _build_pafyllnadsprio_dataframe(groups), missing_reference_count
+
+
+def _combine_orderdatum_and_laststart(orderdatum_value: object, laststart_value: object) -> pd.Timestamp | pd.NaT:
+    """Kombinera datum från Orderdatum med klockslag från Laststarttid."""
+    order_ts = pd.to_datetime(orderdatum_value, errors="coerce", dayfirst=False)
+    if pd.isna(order_ts):
+        return pd.NaT
+    match = re.search(r"(\d{1,2}):(\d{2})", str(laststart_value or "").strip())
+    if not match:
+        return pd.NaT
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    try:
+        return pd.Timestamp(
+            year=int(order_ts.year),
+            month=int(order_ts.month),
+            day=int(order_ts.day),
+            hour=hour,
+            minute=minute,
+        )
+    except Exception:
+        return pd.NaT
+
+
+def _format_lastningsfonster_label(window_ts: pd.Timestamp) -> str:
+    if pd.isna(window_ts):
+        return LASTNINGSFONSTER_UNKNOWN_LABEL
+    return pd.Timestamp(window_ts).strftime("%Y-%m-%d %H:%M")
+
+
+def _prepare_lastningsfonster_overview(overview_df: pd.DataFrame) -> pd.DataFrame:
+    """Normalisera orderöversikten till en order -> lastningsfönster-tabell."""
+    overview = _clean_columns(overview_df.copy())
+    order_col = find_col(overview, ["ordernr", "ordernummer", "order number", "order no", "orderid", "order"])
+    orderdatum_col = find_col(overview, ["orderdatum", "order datum", "order date", "orderdate"])
+    laststart_col = find_col(
+        overview,
+        ["laststarttid", "laststart tid", "laststart", "laststart time", "last start time"],
+    )
+
+    tmp = pd.DataFrame({
+        "_order": overview[order_col].astype(str).str.strip(),
+        "_orderdatum": overview[orderdatum_col],
+        "_laststart": overview[laststart_col],
+    })
+    tmp = tmp[tmp["_order"] != ""].copy()
+    if tmp.empty:
+        return pd.DataFrame(columns=["_order", "_window_sort", "_window_label", "_prio", "_missing_window"])
+
+    tmp["_window_sort"] = [
+        _combine_orderdatum_and_laststart(orderdatum_value, laststart_value)
+        for orderdatum_value, laststart_value in zip(tmp["_orderdatum"], tmp["_laststart"])
+    ]
+
+    rows: List[dict] = []
+    for order, grp in tmp.groupby("_order", sort=True):
+        valid = grp.dropna(subset=["_window_sort"]).sort_values("_window_sort")
+        if not valid.empty:
+            window_ts = pd.Timestamp(valid.iloc[0]["_window_sort"])
+            rows.append({
+                "_order": str(order).strip(),
+                "_window_sort": window_ts,
+                "_window_label": _format_lastningsfonster_label(window_ts),
+                "_missing_window": False,
+            })
+        else:
+            rows.append({
+                "_order": str(order).strip(),
+                "_window_sort": LASTNINGSFONSTER_UNKNOWN_SORT,
+                "_window_label": LASTNINGSFONSTER_UNKNOWN_LABEL,
+                "_missing_window": True,
+            })
+
+    out = pd.DataFrame(rows)
+    valid_windows = sorted(
+        {pd.Timestamp(value) for value in out.loc[~out["_missing_window"], "_window_sort"].tolist()}
+    )
+    prio_map: Dict[pd.Timestamp, str] = {}
+    for idx, window_ts in enumerate(valid_windows):
+        prio_map[window_ts] = f"PRIO {idx + 1}" if idx < 4 else "PRIO 5"
+    out["_prio"] = out["_window_sort"].map(prio_map).fillna("PRIO 5")
+    return out[["_order", "_window_sort", "_window_label", "_prio", "_missing_window"]]
+
+
+def _build_lastningsfonster_prio_dataframe(overview_windows: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+    """Bygg en enkel översikt över vilka lastningsfönster som motsvarar PRIO 1-4."""
+    if not isinstance(overview_windows, pd.DataFrame) or overview_windows.empty:
+        return pd.DataFrame(columns=LASTNINGSFONSTER_PRIO_COLUMNS), []
+
+    prio_map = (
+        overview_windows.loc[
+            (~overview_windows["_missing_window"]) & (overview_windows["_prio"].isin(PAFYLLNADSPRIO_COLUMNS[1:5])),
+            ["_window_sort", "_window_label", "_prio"],
+        ]
+        .drop_duplicates()
+        .sort_values(["_window_sort", "_prio", "_window_label"])
+    )
+    if prio_map.empty:
+        return pd.DataFrame(columns=LASTNINGSFONSTER_PRIO_COLUMNS), []
+
+    rows: List[dict] = []
+    log_lines: List[str] = []
+    for _, row in prio_map.iterrows():
+        prio = str(row["_prio"]).strip()
+        label = str(row["_window_label"]).strip()
+        rows.append({"PRIO": prio, "LASTNINGSFÖNSTER": label})
+        log_lines.append(f"{prio} = {label}")
+
+    return pd.DataFrame(rows, columns=LASTNINGSFONSTER_PRIO_COLUMNS), log_lines
+
+
+def build_pafyllnadsprio_lastningsfonster_report(
+    orders_df: pd.DataFrame,
+    shortage_df: pd.DataFrame,
+    overview_df: pd.DataFrame,
+    max_df: pd.DataFrame,
+    *,
+    column_names: Optional[Dict[str, Optional[str]]] = None,
+) -> Tuple[pd.DataFrame, set[tuple[int, int]], List[str], int, pd.DataFrame]:
+    """Bygg Påfyllnadsprio med lastningsfönster där samma artikel kan ligga i flera PRIO-kolumner."""
+    groups = {column: [] for column in PAFYLLNADSPRIO_COLUMNS}
+    empty_window_map = pd.DataFrame(columns=LASTNINGSFONSTER_PRIO_COLUMNS)
+    if not isinstance(shortage_df, pd.DataFrame) or shortage_df.empty:
+        return pd.DataFrame(columns=PAFYLLNADSPRIO_COLUMNS), set(), [], 0, empty_window_map
+
+    orders_work = _clean_columns(orders_df.copy())
+    cols = column_names or _find_ordersaldo_columns(orders_work)
+    order_col = cols.get("order")
+    article_col = cols.get("article")
+    demand_col = cols.get("demand")
+    if not order_col or not article_col or not demand_col:
+        raise KeyError("Hittar inte order-, artikel- eller antalskolumn i beställningsfilen.")
+
+    overview_windows = _prepare_lastningsfonster_overview(overview_df)
+    demand_rows = pd.DataFrame({
+        "_order": orders_work[order_col].astype(str).str.strip(),
+        "_article": orders_work[article_col].astype(str).str.strip(),
+        "_qty": orders_work[demand_col].map(to_num).astype(float),
+    })
+    demand_rows = demand_rows[(demand_rows["_article"] != "") & (demand_rows["_qty"] > 0)].copy()
+    if demand_rows.empty:
+        return pd.DataFrame(columns=PAFYLLNADSPRIO_COLUMNS), set(), [], 0, empty_window_map
+
+    demand_rows = demand_rows.merge(
+        overview_windows,
+        how="left",
+        left_on="_order",
+        right_on="_order",
+    )
+    demand_rows["_window_sort"] = pd.to_datetime(demand_rows["_window_sort"], errors="coerce")
+    demand_rows["_window_sort"] = demand_rows["_window_sort"].fillna(LASTNINGSFONSTER_UNKNOWN_SORT)
+    demand_rows["_window_label"] = demand_rows["_window_label"].fillna(LASTNINGSFONSTER_UNKNOWN_LABEL)
+    demand_rows["_prio"] = demand_rows["_prio"].fillna("PRIO 5")
+    demand_by_window = (
+        demand_rows.groupby(["_article", "_window_sort", "_window_label", "_prio"], as_index=False)["_qty"]
+        .sum()
+        .sort_values(["_article", "_window_sort", "_window_label"])
+    )
+    window_map_df, window_map_log_lines = _build_lastningsfonster_prio_dataframe(overview_windows)
+
+    max_map = _build_article_max_map(max_df)
+    prio_counts: Dict[str, Dict[str, int]] = {prio: {} for prio in PAFYLLNADSPRIO_COLUMNS[1:]}
+    log_lines: List[str] = []
+    missing_reference_count = 0
+
+    work = shortage_df.copy()
+    work.index = work.index.map(lambda value: str(value).strip())
+    work = work[work.index != ""].sort_index()
+
+    for article, row in work.iterrows():
+        groups["ALLA"].append(article)
+        reference_value = max_map.get(article, 0.0)
+        try:
+            reference_float = float(reference_value)
+        except Exception:
+            reference_float = 0.0
+        if pd.isna(reference_float) or reference_float <= 0:
+            missing_reference_count += 1
+            prio_counts["PRIO 5"][article] = max(prio_counts["PRIO 5"].get(article, 0), 1)
+            log_lines.append(f"Artikel {article} saknar referensvärde och placerades i PRIO 5.")
+            continue
+
+        article_windows = demand_by_window[demand_by_window["_article"] == article].copy()
+        if article_windows.empty:
+            prio_counts["PRIO 5"][article] = max(prio_counts["PRIO 5"].get(article, 0), 1)
+            log_lines.append(f"Artikel {article} saknar matchning mot lastningsfönster och placerades i PRIO 5.")
+            continue
+
+        available_start = float(to_num(row.get("Tillgängligt saldo (Plock)", 0.0))) - float(
+            to_num(row.get("Utbeställt", 0.0))
+        )
+        cumulative_need = 0.0
+        previous_total_pallets = 0
+        event_found = False
+
+        for _, window_row in article_windows.iterrows():
+            qty = float(window_row["_qty"])
+            if qty <= 0:
+                continue
+            cumulative_need += qty
+            cumulative_shortage = max(0.0, cumulative_need - available_start)
+            total_pallets = int(math.ceil(cumulative_shortage / reference_float)) if cumulative_shortage > 0 else 0
+            new_pallets = max(0, total_pallets - previous_total_pallets)
+            previous_total_pallets = total_pallets
+            if new_pallets <= 0:
+                continue
+
+            event_found = True
+            prio = str(window_row["_prio"])
+            prio_counts[prio][article] = max(prio_counts[prio].get(article, 0), new_pallets)
+            pall_text = "pall" if new_pallets == 1 else "pallar"
+            log_lines.append(
+                f"Artikel {article} behöver {new_pallets} {pall_text} i lastningsfönster "
+                f"{window_row['_window_label']} ({prio})."
+            )
+
+        if not event_found:
+            prio_counts["PRIO 5"][article] = max(prio_counts["PRIO 5"].get(article, 0), 1)
+            log_lines.append(f"Artikel {article} saknar beräknat påfyllningsfönster och placerades i PRIO 5.")
+
+    bold_cells: set[tuple[int, int]] = set()
+    for col_idx, prio in enumerate(PAFYLLNADSPRIO_COLUMNS[1:], start=1):
+        counts = prio_counts[prio]
+        multi_articles = sorted(
+            [article for article, pallet_count in counts.items() if pallet_count > 1],
+            key=lambda article: (-counts[article], article),
+        )
+        single_articles = sorted(article for article, pallet_count in counts.items() if pallet_count <= 1)
+        ordered_articles = multi_articles + single_articles
+        groups[prio] = ordered_articles
+        for row_idx, article in enumerate(ordered_articles):
+            if counts.get(article, 0) > 1:
+                bold_cells.add((row_idx, col_idx))
+
+    if window_map_log_lines:
+        log_lines.append("Lastningsfönster per prio:")
+        log_lines.extend(window_map_log_lines)
+
+    return _build_pafyllnadsprio_dataframe(groups), bold_cells, log_lines, missing_reference_count, window_map_df
 
 
 # ----------------------------------------------------------------------
@@ -1156,15 +1666,11 @@ GITHUB_OBS_FILE = "lowfreqdata/buffertpall/observations.csv.gz"
 
 def _observations_path() -> Path:
     """Returnera lokalt path for observations.csv.gz."""
-    base = _bufferpall_runtime_dir()
-    base.mkdir(parents=True, exist_ok=True)
-    return base / OBSERVATIONS_FILENAME
+    return _seed_bufferpall_runtime_file(OBSERVATIONS_FILENAME)
 
 
 def _artikel_max_path() -> Path:
-    base = _bufferpall_runtime_dir()
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "artikel_max.csv"
+    return _seed_bufferpall_runtime_file("artikel_max.csv")
 
 
 def _read_observations(path: Path) -> pd.DataFrame:
@@ -1259,8 +1765,7 @@ def update_observations_from_buffer(buffer_raw: pd.DataFrame) -> Tuple[int, pd.D
 
 
 def _github_token_path() -> Path:
-    appdata = os.environ.get("APPDATA") or str(Path.home())
-    return Path(appdata) / "allokering" / "config.json"
+    return _app_config_path()
 
 
 def _load_github_token() -> Optional[str]:
@@ -2680,11 +3185,54 @@ def calculate_refill(allocated_df: pd.DataFrame,
     return refill_hp_df, refill_autostore_df
 
 
+class SlideToggle(tk.Canvas):
+    """Enkel iOS-liknande slide-toggle. Kör callback(bool) vid klick."""
+
+    def __init__(self, parent, command=None, width=50, height=24, **kwargs):
+        super().__init__(parent, width=width, height=height,
+                         highlightthickness=0, **kwargs)
+        self._on = False
+        self._command = command
+        self._w = width
+        self._h = height
+        self._draw()
+        self.bind("<Button-1>", self._toggle)
+
+    def _draw(self) -> None:
+        self.delete("all")
+        w, h = self._w, self._h
+        r = h // 2
+        bg = "#CC2222" if self._on else "#999999"
+        # Bakgrundskapsel
+        self.create_oval(0, 0, h, h, fill=bg, outline="")
+        self.create_oval(w - h, 0, w, h, fill=bg, outline="")
+        self.create_rectangle(r, 0, w - r, h, fill=bg, outline="")
+        # Vit cirkel
+        pad = 3
+        cx = w - r if self._on else r
+        self.create_oval(cx - r + pad, pad, cx + r - pad, h - pad, fill="white", outline="")
+
+    def _toggle(self, _event=None) -> None:
+        self._on = not self._on
+        self._draw()
+        if self._command:
+            self._command(self._on)
+
+    @property
+    def value(self) -> bool:
+        return self._on
+
+    def set(self, state: bool) -> None:
+        self._on = state
+        self._draw()
+
+
 class App(ttk.Frame):
-    def __init__(self, master, enable_update_checks: bool = True):
+    def __init__(self, master, enable_update_checks: bool = True, enable_analytics: bool = True):
         super().__init__(master)
         self.master = master
         self.enable_update_checks = enable_update_checks
+        self.enable_analytics = enable_analytics
         self.pack(fill="both", expand=True)
         # Set up a default style for the application
         style = ttk.Style(self)
@@ -2765,6 +3313,18 @@ class App(ttk.Frame):
         self._update_progress_window: Optional[tk.Toplevel] = None
         self._update_progress_value = tk.IntVar(value=0)
         self._update_status_var = tk.StringVar(value="")
+        self._help_mode: str = ""  # "" | "enkel" | "avancerat"
+        self._help_overlay: Optional[tk.Canvas] = None
+        self._help_popup: Optional[tk.Toplevel] = None
+        self._help_bar: Optional[tk.Toplevel] = None
+        self._help_toggle: Optional[SlideToggle] = None
+        self._HELP_REGISTRY: dict[int, str] = {}
+        self._analytics_settings: dict = {}
+        self._analytics_client = AnalyticsClient({"active": False, "reason": "Analytics inte initierat."})
+        self._session_started_at = time.monotonic()
+
+        self._initialize_analytics()
+        self.master.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._setup_menu()
         self._set_window_icon()
@@ -2779,8 +3339,43 @@ class App(ttk.Frame):
             self.update_file_status_icons()
         except Exception:
             pass
+        self._track_event(
+            "app_started",
+            automatic_update_checks=self._automatic_update_checks_enabled(),
+        )
         self._schedule_update_check()
         threading.Thread(target=fetch_observations_from_github, daemon=True).start()
+
+    def _initialize_analytics(self) -> None:
+        self._rebuild_analytics_client()
+
+    def _rebuild_analytics_client(self) -> None:
+        try:
+            self._analytics_client.shutdown(timeout=1.0)
+        except Exception:
+            pass
+        self._analytics_settings = _resolve_analytics_settings(enable_analytics=self.enable_analytics)
+        self._analytics_client = AnalyticsClient(self._analytics_settings)
+
+    def _track_event(self, event: str, **properties) -> None:
+        try:
+            self._analytics_client.capture(event, properties)
+        except Exception:
+            pass
+
+    def _track_feature(self, feature: str, action: str, **properties) -> None:
+        payload = {"feature": feature, "action": action}
+        payload.update(properties)
+        self._track_event("feature_usage", **payload)
+
+    def _on_close(self) -> None:
+        try:
+            session_seconds = int(max(0, round(time.monotonic() - self._session_started_at)))
+            self._track_event("app_closed", session_seconds=session_seconds)
+            self._analytics_client.shutdown(timeout=1.5)
+        except Exception:
+            pass
+        self.master.destroy()
 
     def _log(self, msg: str, level: str = "info") -> None:
         logprintln(self.log, msg)
@@ -3315,6 +3910,8 @@ class App(ttk.Frame):
             state="disabled",
         )
         self.eftersok_btn.pack(side="left", padx=4)
+        self.hjälp_btn = ttk.Button(run_frame, text="? Hjälp", command=self._toggle_help_mode)
+        self.hjälp_btn.pack(side="left", padx=(16, 4))
 
         # Egna knappar för listor, på separat rad (likt Chromium-layouten).
         ordersaldo_frame = ttk.Frame(self)
@@ -3385,7 +3982,6 @@ class App(ttk.Frame):
             ],
             self.pafyllnadsprio_btn: [
                 ("orders", "Bestallningslinjer (CSV)"),
-                ("automation", "Saldo inkl. automation (CSV)"),
             ],
         }
         for action_btn in self._action_requirements:
@@ -3468,6 +4064,35 @@ class App(ttk.Frame):
         # Starta med en balanserad delning så handtaget går att dra både upp/ner direkt.
         self.after(120, self._set_log_splitter_default_position)
 
+        # Hjälp-registry: id(widget) → ämnesnamn för hjälptexten
+        reg = self._HELP_REGISTRY
+        reg[id(self.run_btn)] = "run_btn"
+        reg[id(self.koppla_btn)] = "koppla_btn"
+        reg[id(self.overview_check_btn)] = "overview_check_btn"
+        reg[id(self.dispatch_check_btn)] = "dispatch_check_btn"
+        reg[id(self.eftersok_btn)] = "eftersok_btn"
+        reg[id(self.hjälp_btn)] = "hjalp_btn"
+        reg[id(self.lyx_btn)] = "lyx_btn"
+        reg[id(self.ordersaldo_copy_list1_btn)] = "ordersaldo_list1_btn"
+        reg[id(self.ordersaldo_copy_list2_btn)] = "ordersaldo_list2_btn"
+        reg[id(self.vecka27_btn)] = "vecka27_btn"
+        reg[id(self.pafyllnadsprio_btn)] = "pafyllnadsprio_btn"
+        reg[id(self.reset_cache_btn)] = "reset_cache_btn"
+        reg[id(self.open_result_btn)] = "open_result_btn"
+        reg[id(self.open_nearmiss_btn)] = "open_nearmiss_btn"
+        reg[id(self.open_palletspaces_btn)] = "open_palletspaces_btn"
+        reg[id(self.open_prognos_btn)] = "open_prognos_btn"
+        reg[id(self.open_refill_btn)] = "open_refill_btn"
+        reg[id(self.open_koppla_btn)] = "open_koppla_btn"
+        reg[id(self.open_overview_check_btn)] = "open_overview_check_btn"
+        reg[id(self.open_dispatch_check_btn)] = "open_dispatch_check_btn"
+        reg[id(self.open_eftersok_btn)] = "open_eftersok_btn"
+        reg[id(self.log)] = "log_widget"
+        reg[id(self.summary_table)] = "summary_table"
+        # Filuppladdnings-labels – alla pekar på samma ämne för sin filtyp
+        for ft, (lbl, _btn) in self.file_status_widgets.items():
+            reg[id(lbl)] = f"file_{ft}"
+
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
         self._orders_raw: pd.DataFrame | None = None
@@ -3517,7 +4142,7 @@ class App(ttk.Frame):
     def pick_orders(self) -> None:
         path = filedialog.askopenfilename(title="Välj beställningsrader (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
         if path:
-            self.orders_var.set(path)
+            self._set_file_path("orders", path, source="picker")
             try:
                 self.update_file_status_icons()
             except Exception:
@@ -3526,7 +4151,7 @@ class App(ttk.Frame):
     def pick_automation(self) -> None:
         path = filedialog.askopenfilename(title="Välj Saldo inkl. automation (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
         if path:
-            self.automation_var.set(path)
+            self._set_file_path("automation", path, source="picker")
             try:
                 self.update_file_status_icons()
             except Exception:
@@ -3535,7 +4160,7 @@ class App(ttk.Frame):
     def pick_buffer(self) -> None:
         path = filedialog.askopenfilename(title="Välj buffertpallar (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
         if path:
-            self.buffer_var.set(path)
+            self._set_file_path("buffer", path, source="picker")
             try:
                 self.update_file_status_icons()
             except Exception:
@@ -3578,13 +4203,195 @@ class App(ttk.Frame):
                 err = str(e)
                 self.master.after(0, lambda: self._log(f"[Observations] GitHub-push misslyckades: {err}"))
 
+    # ------------------------------------------------------------------ #
+    #  Hjälpläge                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _toggle_help_mode(self) -> None:
+        if self._help_mode:
+            self._exit_help_mode()
+        else:
+            self._enter_help_mode("enkel")
+
+    def _enter_help_mode(self, mode: str) -> None:
+        self._help_mode = mode
+        self.hjälp_btn.configure(text="✕ Stäng hjälp")
+        self._show_help_overlay()
+        self._build_help_bar()
+        self.master.bind("<Escape>", lambda _e: self._exit_help_mode())
+
+    def _exit_help_mode(self) -> None:
+        self._help_mode = ""
+        self.hjälp_btn.configure(text="? Hjälp")
+        self._remove_help_overlay()
+        self._close_help_popup()
+        self._close_help_bar()
+        try:
+            self.master.unbind("<Escape>")
+        except Exception:
+            pass
+
+    def _show_help_overlay(self) -> None:
+        self._remove_help_overlay()
+        canvas = tk.Canvas(self, highlightthickness=0, cursor="question_arrow")
+        canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._help_overlay = canvas
+        self._redraw_overlay()
+        canvas.bind("<Button-1>", self._on_help_click)
+        canvas.bind("<Configure>", lambda _e: self._redraw_overlay())
+
+    def _redraw_overlay(self) -> None:
+        canvas = self._help_overlay
+        if canvas is None:
+            return
+        canvas.delete("all")
+        w = canvas.winfo_width() or self.winfo_width()
+        h = canvas.winfo_height() or self.winfo_height()
+        color = "#CC2222" if self._help_mode == "avancerat" else "#555555"
+        canvas.create_rectangle(0, 0, w, h, fill=color, stipple="gray50", outline="")
+
+    def _remove_help_overlay(self) -> None:
+        if self._help_overlay is not None:
+            try:
+                self._help_overlay.destroy()
+            except Exception:
+                pass
+            self._help_overlay = None
+
+    def _on_help_click(self, event) -> None:
+        overlay = self._help_overlay
+        if overlay is None:
+            return
+        # Sänk overlay tillfälligt så winfo_containing hittar widget under
+        overlay.lower()
+        target = self.winfo_containing(event.x_root, event.y_root)
+        overlay.lift()
+        topic = self._HELP_REGISTRY.get(id(target)) if target else None
+        self._show_help_popup(topic, event.x_root, event.y_root)
+
+    def _get_help_text(self, topic: str) -> str:
+        folder = "avancerat" if self._help_mode == "avancerat" else "enkel"
+        for base in [_resource_path(f"hjalp/{folder}/{topic}.txt"),
+                     _resource_path(f"hjalp/enkel/{topic}.txt")]:
+            if base.exists():
+                try:
+                    return base.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+        return "Ingen hjälptext hittades för det här elementet."
+
+    def _show_help_popup(self, topic: Optional[str], x_root: int, y_root: int) -> None:
+        self._close_help_popup()
+        text = self._get_help_text(topic) if topic else "Klicka på en knapp eller ett fält för mer information."
+        title = topic.replace("_", " ").title() if topic else "Hjälp"
+
+        popup = tk.Toplevel(self.master)
+        popup.wm_title(title)
+        popup.wm_attributes("-topmost", True)
+        popup.resizable(False, False)
+        self._help_popup = popup
+
+        # Positionera nära klicket men håll den inom skärmen
+        pw, ph = 360, 200
+        sx = self.master.winfo_screenwidth()
+        sy = self.master.winfo_screenheight()
+        px = min(x_root + 12, sx - pw - 8)
+        py = min(y_root + 12, sy - ph - 8)
+        popup.geometry(f"{pw}x{ph}+{px}+{py}")
+
+        frm = tk.Frame(popup, bg="#1f2933", padx=10, pady=8)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text=title, bg="#1f2933", fg="white",
+                 font=("Arial", 11, "bold"), anchor="w").pack(fill="x")
+        tk.Frame(frm, bg="#444444", height=1).pack(fill="x", pady=(4, 6))
+
+        txt = tk.Text(frm, wrap="word", bg="#1f2933", fg="#e0e0e0",
+                      font=("Arial", 10), relief="flat", height=7,
+                      state="normal", cursor="arrow")
+        txt.insert("1.0", text)
+        txt.configure(state="disabled")
+        txt.pack(fill="both", expand=True)
+
+        close_btn = tk.Button(frm, text="✕ Stäng", command=self._close_help_popup,
+                              bg="#444444", fg="white", relief="flat",
+                              activebackground="#666666", activeforeground="white",
+                              padx=8, pady=2)
+        close_btn.pack(anchor="e", pady=(6, 0))
+
+        popup.bind("<Escape>", lambda _e: self._exit_help_mode())
+        popup.protocol("WM_DELETE_WINDOW", self._close_help_popup)
+
+    def _close_help_popup(self) -> None:
+        if self._help_popup is not None:
+            try:
+                self._help_popup.destroy()
+            except Exception:
+                pass
+            self._help_popup = None
+
+    def _build_help_bar(self) -> None:
+        self._close_help_bar()
+        bar = tk.Toplevel(self.master)
+        bar.wm_overrideredirect(True)
+        bar.wm_attributes("-topmost", True)
+        self._help_bar = bar
+
+        frm = tk.Frame(bar, bg="#2D2D2D", padx=8, pady=6)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="Hjälpläge aktivt", bg="#2D2D2D", fg="white",
+                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 12))
+
+        tk.Label(frm, text="Avancerat", bg="#2D2D2D", fg="#AAAAAA",
+                 font=("Arial", 9)).pack(side="left")
+        toggle = SlideToggle(frm, command=self._on_advanced_toggle, bg="#2D2D2D")
+        toggle.pack(side="left", padx=(4, 12))
+        self._help_toggle = toggle
+
+        tk.Button(frm, text="✕", command=self._exit_help_mode,
+                  bg="#CC2222", fg="white", relief="flat",
+                  activebackground="#AA0000", activeforeground="white",
+                  font=("Arial", 10, "bold"), width=2).pack(side="left")
+
+        bar.bind("<Escape>", lambda _e: self._exit_help_mode())
+        self._reposition_help_bar()
+        bar.bind("<Configure>", lambda _e: None)
+
+    def _reposition_help_bar(self) -> None:
+        if self._help_bar is None:
+            return
+        self._help_bar.update_idletasks()
+        bw = self._help_bar.winfo_reqwidth()
+        bh = self._help_bar.winfo_reqheight()
+        wx = self.master.winfo_rootx()
+        wy = self.master.winfo_rooty()
+        ww = self.master.winfo_width()
+        x = wx + ww - bw - 8
+        y = wy + 8
+        self._help_bar.geometry(f"+{x}+{y}")
+
+    def _close_help_bar(self) -> None:
+        if self._help_bar is not None:
+            try:
+                self._help_bar.destroy()
+            except Exception:
+                pass
+            self._help_bar = None
+            self._help_toggle = None
+
+    def _on_advanced_toggle(self, state: bool) -> None:
+        self._help_mode = "avancerat" if state else "enkel"
+        self._redraw_overlay()
+        self._close_help_popup()
+
     def pick_item(self) -> None:
         """
         Öppna dialog för att välja item-fil (CSV) med staplingsbar-uppgift.
         """
         path = filedialog.askopenfilename(title="Välj item-fil (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
         if path:
-            self.item_var.set(path)
+            self._set_file_path("item", path, source="picker")
             try:
                 self.update_file_status_icons()
             except Exception:
@@ -3599,7 +4406,7 @@ class App(ttk.Frame):
         """
         path = filedialog.askopenfilename(title="Välj orderöversikt (CSV)", filetypes=[("CSV", "*.csv"), ("Alla filer","*.*")])
         if path:
-            self.overview_var.set(path)
+            self._set_file_path("overview", path, source="picker")
             try:
                 self.update_file_status_icons()
             except Exception:
@@ -3810,39 +4617,31 @@ class App(ttk.Frame):
                 continue
             file_type = self._detect_file_type(p)
             if file_type == "orders":
-                self.orders_var.set(p)
+                self._set_file_path("orders", p, source="drag_drop")
             elif file_type == "buffer":
-                self.buffer_var.set(p)
+                self._set_file_path("buffer", p, source="drag_drop")
             elif file_type == "automation":
-                self.automation_var.set(p)
+                self._set_file_path("automation", p, source="drag_drop")
             elif file_type == "item":
-                self.item_var.set(p)
+                self._set_file_path("item", p, source="drag_drop")
             elif file_type == "prognos":
-                self.prognos_var.set(p)
-                try:
-                    self._load_prognos(p)
-                except Exception:
-                    pass
+                self._set_file_path("prognos", p, source="drag_drop")
             elif file_type == "campaign":
-                self.campaign_var.set(p)
-                try:
-                    self._load_campaign(p)
-                except Exception:
-                    pass
+                self._set_file_path("campaign", p, source="drag_drop")
             elif file_type == "overview":
-                self.overview_var.set(p)
+                self._set_file_path("overview", p, source="drag_drop")
             elif file_type == "dispatch":
-                self.dispatch_var.set(p)
+                self._set_file_path("dispatch", p, source="drag_drop")
             elif file_type == "wms_receive":
-                self.wms_receive_var.set(p)
+                self._set_file_path("wms_receive", p, source="drag_drop")
             elif file_type == "wms_booking":
-                self.wms_booking_var.set(p)
+                self._set_file_path("wms_booking", p, source="drag_drop")
             elif file_type == "wms_trans":
-                self.wms_trans_var.set(p)
+                self._set_file_path("wms_trans", p, source="drag_drop")
             elif file_type == "wms_pick":
-                self.wms_pick_var.set(p)
+                self._set_file_path("wms_pick", p, source="drag_drop")
             elif file_type == "wms_correct":
-                self.wms_correct_var.set(p)
+                self._set_file_path("wms_correct", p, source="drag_drop")
             else:
                 self._log(f"Okänd filtyp: {p}")
 
@@ -4290,6 +5089,7 @@ class App(ttk.Frame):
     def run_lyx(self) -> None:
         """LYX: Kopiera artikelnummer där (plocksaldo + utbeställt) ≤ 20 % av max buffertantal."""
         saldo_path = self.automation_var.get().strip()
+        self._track_feature("lyx", "run_started")
         if not saldo_path:
             messagebox.showinfo(APP_TITLE, "Ladda upp saldofil först.")
             return
@@ -4314,6 +5114,7 @@ class App(ttk.Frame):
             self.master.clipboard_clear()
             self.master.clipboard_append("\n".join(lyx_arts))
             self.master.update()
+            self._track_feature("lyx", "run_completed", copied_articles=int(len(lyx_arts)))
             messagebox.showinfo(APP_TITLE, f"{len(lyx_arts)} artikelnummer kopierade.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"LYX-beräkning misslyckades:\n{e}")
@@ -4321,13 +5122,9 @@ class App(ttk.Frame):
     def run_pafyllnadsprio(self) -> None:
         """Beräkna Påfyllnadsprio och öppna resultatet i en temporär Excel-fil."""
         orders_path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        self._track_feature("pafyllnadsprio", "run_started")
         if not orders_path:
             messagebox.showinfo(APP_TITLE, "Ladda upp beställningslinjer först.")
-            return
-
-        saldo_path = self.automation_var.get().strip() if hasattr(self, "automation_var") else ""
-        if not saldo_path:
-            messagebox.showinfo(APP_TITLE, "Ladda upp saldofil först.")
             return
 
         max_csv = _find_lyx_max_csv()
@@ -4337,14 +5134,18 @@ class App(ttk.Frame):
 
         try:
             orders_df = self._load_ordersaldo_source_df("Påfyllnadsprio (beställningslinjer)")
-            if not isinstance(orders_df, pd.DataFrame):
+            if not isinstance(orders_df, pd.DataFrame) or orders_df.empty:
                 messagebox.showinfo(APP_TITLE, "Beställningslinjefilen är tom eller kunde inte läsas.")
                 return
 
             column_names = _find_ordersaldo_columns(orders_df, self.ordersaldo_column_candidates)
+            saldo_path = self.automation_var.get().strip() if hasattr(self, "automation_var") else ""
+            if not saldo_path:
+                self._log("Påfyllnadsprio: ingen saldofil uppladdad, utbeställt antas vara 0.")
+            utbest_map = self._load_ordersaldo_utbest_map()
             _, shortage_df = compute_ordersaldo_data(
                 orders_df,
-                utbest_map=self._load_ordersaldo_utbest_map(),
+                utbest_map=utbest_map,
                 column_names=column_names,
             )
             if shortage_df.empty:
@@ -4352,8 +5153,71 @@ class App(ttk.Frame):
                 return
 
             max_df = _clean_columns(pd.read_csv(str(max_csv), dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
+            overview_path = self.overview_var.get().strip() if hasattr(self, "overview_var") else ""
+
+            if overview_path:
+                try:
+                    overview_df = self._read_tabular_for_filter_scan(overview_path)
+                    if not isinstance(overview_df, pd.DataFrame) or overview_df.empty:
+                        raise ValueError("Orderöversikten är tom eller kunde inte läsas.")
+                    try:
+                        overview_df = self._apply_value_filters(
+                            overview_df,
+                            "Påfyllnadsprio (orderöversikt)",
+                            log_result=False,
+                        )
+                    except Exception:
+                        pass
+                    if overview_df.empty:
+                        raise ValueError("Inga rader kvar efter aktiva filter i orderöversikten.")
+
+                    report_df, bold_cells, log_lines, missing_reference_count, window_map_df = build_pafyllnadsprio_lastningsfonster_report(
+                        orders_df,
+                        shortage_df,
+                        overview_df,
+                        max_df,
+                        column_names=column_names,
+                    )
+                    path = _open_df_in_excel_with_bold_cells(
+                        {
+                            "Påfyllnadsprio": report_df,
+                            "Lastningsfönster": window_map_df,
+                        },
+                        sheet_name="Påfyllnadsprio",
+                        bold_sheet_name="Påfyllnadsprio",
+                        label="pafyllnadsprio",
+                        bold_cells=bold_cells,
+                    )
+                    self._log("Påfyllnadsprio: använder lastningsfönster från orderöversikten.")
+                    self._log(f"Öppnade Påfyllnadsprio i Excel (temporär fil): {path}")
+                    for line in log_lines:
+                        self._log(f"[Påfyllnadsprio] {line}")
+                    if missing_reference_count:
+                        messagebox.showinfo(
+                            APP_TITLE,
+                            (
+                                "För bättre träff, ladda upp buffertpallar.csv. "
+                                f"{missing_reference_count} artiklar saknade referensvärde och placerades i PRIO 5."
+                            ),
+                        )
+                    return
+                except Exception as overview_error:
+                    self._log(
+                        "Påfyllnadsprio: kunde inte använda orderöversikten för lastningsfönster "
+                        f"({overview_error}). Använder fallback utan orderöversikt."
+                    )
+                    messagebox.showwarning(
+                        APP_TITLE,
+                        (
+                            "Orderöversikten kunde inte användas för lastningsfönster.\n"
+                            "Påfyllnadsprio körs i fallback-läge utan orderöversikt.\n\n"
+                            f"{overview_error}"
+                        ),
+                    )
+
             report_df, missing_reference_count = build_pafyllnadsprio_report(shortage_df, max_df)
             path = _open_df_in_excel({"Påfyllnadsprio": report_df}, label="pafyllnadsprio")
+            self._log("Påfyllnadsprio: använder fallback utan orderöversikt.")
             self._log(f"Öppnade Påfyllnadsprio i Excel (temporär fil): {path}")
             if missing_reference_count:
                 messagebox.showinfo(
@@ -4380,6 +5244,7 @@ class App(ttk.Frame):
     def run_vecka27_check(self) -> None:
         """Kontrollera tak/hus vs gräsklippare per order. Vid avvikelse: öppna .txt-fil."""
         path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        self._track_feature("vecka27_check", "run_started")
         if not path:
             messagebox.showinfo(APP_TITLE, "Ladda upp beställningslinjefilen först.")
             return
@@ -4443,6 +5308,7 @@ class App(ttk.Frame):
                     )
 
         if not deviations:
+            self._track_feature("vecka27_check", "run_completed", deviation_count=0)
             messagebox.showinfo(APP_TITLE, "Allt stämmer för Vecka 27.")
             try:
                 self._log("Vecka 27: inga avvikelser.")
@@ -4454,6 +5320,7 @@ class App(ttk.Frame):
         try:
             tmp_path = _open_text_in_editor(body, label="vecka27")
             self._log(f"Vecka 27: {len(deviations)} avvikelse(r) - öppnade {tmp_path}")
+            self._track_feature("vecka27_check", "run_completed", deviation_count=int(len(deviations)))
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte öppna Vecka 27-rapport:\n{e}")
 
@@ -4590,6 +5457,45 @@ class App(ttk.Frame):
         except Exception:
             pass
 
+    def _set_file_path(self, file_type: str, path: str, source: str = "dialog") -> None:
+        path = str(path or "").strip()
+        if not path:
+            return
+
+        var = self.file_vars.get(file_type)
+        if var is not None:
+            var.set(path)
+        elif file_type == "wms_receive":
+            self.wms_receive_var.set(path)
+        elif file_type == "wms_booking":
+            self.wms_booking_var.set(path)
+        elif file_type == "wms_trans":
+            self.wms_trans_var.set(path)
+        elif file_type == "wms_pick":
+            self.wms_pick_var.set(path)
+        elif file_type == "wms_correct":
+            self.wms_correct_var.set(path)
+        else:
+            return
+
+        if file_type == "prognos":
+            try:
+                self._load_prognos(path)
+            except Exception:
+                pass
+        elif file_type == "campaign":
+            try:
+                self._load_campaign(path)
+            except Exception:
+                pass
+
+        self._track_event(
+            "input_selected",
+            file_type=file_type,
+            source=source,
+            extension=Path(path).suffix.lower(),
+        )
+
     def clear_file(self, file_type: str) -> None:
         """
         Töm filvalet för angiven filtyp och uppdatera ikonerna.
@@ -4627,39 +5533,31 @@ class App(ttk.Frame):
             p = str(p)
             file_type = self._detect_file_type(p)
             if file_type == "orders":
-                self.orders_var.set(p)
+                self._set_file_path("orders", p, source="file_dialog")
             elif file_type == "buffer":
-                self.buffer_var.set(p)
+                self._set_file_path("buffer", p, source="file_dialog")
             elif file_type == "automation":
-                self.automation_var.set(p)
+                self._set_file_path("automation", p, source="file_dialog")
             elif file_type == "item":
-                self.item_var.set(p)
+                self._set_file_path("item", p, source="file_dialog")
             elif file_type == "prognos":
-                self.prognos_var.set(p)
-                try:
-                    self._load_prognos(p)
-                except Exception:
-                    pass
+                self._set_file_path("prognos", p, source="file_dialog")
             elif file_type == "campaign":
-                self.campaign_var.set(p)
-                try:
-                    self._load_campaign(p)
-                except Exception:
-                    pass
+                self._set_file_path("campaign", p, source="file_dialog")
             elif file_type == "overview":
-                self.overview_var.set(p)
+                self._set_file_path("overview", p, source="file_dialog")
             elif file_type == "dispatch":
-                self.dispatch_var.set(p)
+                self._set_file_path("dispatch", p, source="file_dialog")
             elif file_type == "wms_receive":
-                self.wms_receive_var.set(p)
+                self._set_file_path("wms_receive", p, source="file_dialog")
             elif file_type == "wms_booking":
-                self.wms_booking_var.set(p)
+                self._set_file_path("wms_booking", p, source="file_dialog")
             elif file_type == "wms_trans":
-                self.wms_trans_var.set(p)
+                self._set_file_path("wms_trans", p, source="file_dialog")
             elif file_type == "wms_pick":
-                self.wms_pick_var.set(p)
+                self._set_file_path("wms_pick", p, source="file_dialog")
             elif file_type == "wms_correct":
-                self.wms_correct_var.set(p)
+                self._set_file_path("wms_correct", p, source="file_dialog")
             else:
                 try:
                     self._log(f"Okänd filtyp: {p}")
@@ -4676,10 +5574,6 @@ class App(ttk.Frame):
         for root in (_runtime_root(), _bundle_root(), Path(__file__).resolve().parent):
             if root not in search_roots:
                 search_roots.append(root)
-            exempelkod_dir = root / "exempelkod"
-            if exempelkod_dir not in search_roots:
-                search_roots.append(exempelkod_dir)
-
         module_path: Optional[Path] = None
         for root in search_roots:
             for filename in ("wms_sok79.py", "wms_sök79.py"):
@@ -4692,7 +5586,7 @@ class App(ttk.Frame):
 
         if module_path is None:
             raise FileNotFoundError(
-                "Hittar inte wms_sök79.py i appmappen eller exempelkod."
+                "Hittar inte wms_sök79.py i appmappen."
             )
         spec = importlib.util.spec_from_file_location("wms_sok79_module", module_path)
         if spec is None or spec.loader is None:
@@ -4718,6 +5612,7 @@ class App(ttk.Frame):
             messagebox.showwarning(APP_TITLE, "Ladda minst Mottagningslogg (CSV) för att köra Eftersök.")
             return
 
+        self._track_feature("eftersok", "run_started")
         self.last_eftersok_df = None
         self.last_eftersok_report = None
         self.last_eftersok_path = None
@@ -4738,6 +5633,7 @@ class App(ttk.Frame):
         try:
             analyzer_cls = self._load_wms_analyzer_class()
         except Exception as e:
+            self._track_feature("eftersok", "run_failed", stage="load_analyzer")
             messagebox.showerror(APP_TITLE, f"Kunde inte ladda wms_sök79.py:\n{e}")
             return
 
@@ -4754,6 +5650,7 @@ class App(ttk.Frame):
                 analyzer = analyzer_cls(data_path=tmpdir)
                 report_text = str(analyzer.analyze(purchase, article) or "").strip()
         except Exception as e:
+            self._track_feature("eftersok", "run_failed", stage="analyze")
             messagebox.showerror(APP_TITLE, f"Ett fel uppstod under Eftersök:\n{e}")
             return
 
@@ -4772,6 +5669,7 @@ class App(ttk.Frame):
             pass
         self._log(f"Eftersök klart för inköpsnummer {purchase}, artikelnummer {article}.")
         self._log(f"Eftersök-rader: {len(report_lines)}")
+        self._track_feature("eftersok", "run_completed", report_lines=int(len(report_lines)))
 
     def open_eftersok_in_excel(self) -> None:
         """Öppna senaste Eftersök-resultatet i Excel."""
@@ -4780,6 +5678,7 @@ class App(ttk.Frame):
                 path = _open_df_in_excel({"Eftersök": self.last_eftersok_df.copy()}, label="eftersok")
                 self.last_eftersok_path = path
                 self._log(f"Öppnade Eftersök i Excel (temporär fil): {path}")
+                self._track_feature("eftersok", "opened_result")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna Eftersök i Excel:\n{e}")
         else:
@@ -4813,6 +5712,7 @@ class App(ttk.Frame):
         try:
             path = _open_df_in_excel({"Delade värden": out_df}, label="2000tal_split")
             self._log(f"2000-tal: öppnade temporär Excel-fil: {path}")
+            self._track_feature("chunked_values", "opened_result", rows=int(len(out_df)))
             messagebox.showinfo(APP_TITLE, "Excel-filen öppnades direkt. Spara i Excel om du vill behålla den.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna Excel-filen:\n{e}")
@@ -4823,6 +5723,7 @@ class App(ttk.Frame):
             try:
                 path = _open_df_in_excel({"Allokerade order": self.last_result_df.copy()}, label="allocated_orders")
                 self._log(f"Öppnade resultat i Excel (temporär fil): {path}")
+                self._track_feature("allocation", "opened_result", result_type="allocated_orders")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna resultat i Excel:\n{e}")
         else:
@@ -4839,6 +5740,7 @@ class App(ttk.Frame):
                 label = f"near_miss_{int(NEAR_MISS_PCT * 100)}pct"
                 path = _open_df_in_excel({sheet_name: nm_df}, label=label)
                 self._log(f"Öppnade near-miss (INSTEAD R or A) i Excel (temporär fil): {path}")
+                self._track_feature("allocation", "opened_result", result_type="near_miss")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna near-miss i Excel:\n{e}")
         else:
@@ -4854,6 +5756,7 @@ class App(ttk.Frame):
                 ps_df = self._pallet_spaces_df.copy()
                 path = _open_df_in_excel({"Pallplatser": ps_df}, label="pallplatser")
                 self._log(f"Öppnade pallplatser i Excel (temporär fil): {path}")
+                self._track_feature("allocation", "opened_result", result_type="pallet_spaces")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna pallplatser i Excel:\n{e}")
         else:
@@ -4863,8 +5766,7 @@ class App(ttk.Frame):
         """Visa en filväljare för att välja en prognosfil (XLSX)."""
         path = filedialog.askopenfilename(title="Välj prognos (XLSX)", filetypes=[("Excel", "*.xlsx"), ("Alla filer","*.*")])
         if path:
-            self.prognos_var.set(path)
-            self._load_prognos(path)
+            self._set_file_path("prognos", path, source="picker")
             # Uppdatera statusikoner även om prognosfilen laddas in via egen knapp
             try:
                 self.update_file_status_icons()
@@ -4879,6 +5781,12 @@ class App(ttk.Frame):
         try:
             df = read_prognos_xlsx(path)
             self._prognos_df = df
+            self._track_event(
+                "input_loaded",
+                file_type="prognos",
+                rows=int(len(df)),
+                unique_articles=int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else int(len(df)),
+            )
             try:
                 n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
                 self._log(f"Prognos inläst: {len(df)} rader, {n_art} artiklar.")
@@ -4894,8 +5802,7 @@ class App(ttk.Frame):
         """Visa en filväljare för att välja en kampanjvolymfil (XLSX)."""
         path = filedialog.askopenfilename(title="Välj kampanjvolymer (XLSX)", filetypes=[("Excel", "*.xlsx"), ("Alla filer", "*.*")])
         if path:
-            self.campaign_var.set(path)
-            self._load_campaign(path)
+            self._set_file_path("campaign", path, source="picker")
             # Uppdatera statusikoner även när kampanjfilen laddas in via egen knapp
             try:
                 self.update_file_status_icons()
@@ -4909,6 +5816,12 @@ class App(ttk.Frame):
         try:
             df = read_campaign_xlsx(path)
             self._campaign_norm = df
+            self._track_event(
+                "input_loaded",
+                file_type="campaign",
+                rows=int(len(df)),
+                unique_articles=int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else int(len(df)),
+            )
             try:
                 n_art = int(df["Artikelnummer"].nunique()) if "Artikelnummer" in df.columns else len(df)
                 self._log(f"Kampanjvolymer inlästa: {len(df)} rader, {n_art} artiklar.")
@@ -4999,6 +5912,12 @@ class App(ttk.Frame):
                 if miss:
                     msg += f" PARTIELL: saknar {miss}."
             self._log(msg)
+            self._track_feature(
+                "prognos_report",
+                "opened_result",
+                report_rows=int(len(report_df)),
+                partial=bool(isinstance(meta, dict) and meta.get("partial") == "yes"),
+            )
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna prognosrapporten:\n{e}")
 
@@ -5117,6 +6036,7 @@ class App(ttk.Frame):
                     asr = annotate_refill(asr, self._sales_metrics_df)
                 path = _open_df_in_excel({"Refill HP": hp, "Refill AUTOSTORE": asr}, label="refill")
                 self._log(f"Öppnade påfyllningspallar (cache) i Excel (temporär fil): {path}")
+                self._track_feature("allocation", "opened_result", result_type="refill")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna påfyllningspallar i Excel:\n{e}")
         else:
@@ -5146,17 +6066,20 @@ class App(ttk.Frame):
         if not details_path or not overview_path:
             messagebox.showerror(APP_TITLE, "Välj både beställningslinjer och orderöversikt.")
             return
+        self._track_feature("hib_koppling", "run_started")
         self._log_active_value_filters()
         try:
             # Läs in beställningslinjer
             details_df = pd.read_csv(details_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
         except Exception as e:
+            self._track_feature("hib_koppling", "run_failed", stage="read_details")
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa beställningslinjer:\n{e}")
             return
         try:
             # Läs in orderöversikt
             overview_df = pd.read_csv(overview_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
         except Exception as e:
+            self._track_feature("hib_koppling", "run_failed", stage="read_overview")
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
             return
         try:
@@ -5168,11 +6091,13 @@ class App(ttk.Frame):
         try:
             changes_df = compute_hib_koppling(details_df, overview_df)
         except Exception as e:
+            self._track_feature("hib_koppling", "run_failed", stage="compute_changes")
             messagebox.showerror(APP_TITLE, f"Fel vid beräkning av HIB‑kopplingen:\n{e}")
             return
         try:
             missed_df = compute_missed_departures(details_df, overview_df)
         except Exception as e:
+            self._track_feature("hib_koppling", "run_failed", stage="compute_missed_departures")
             messagebox.showerror(APP_TITLE, f"Fel vid beräkning av missade avgångar:\n{e}")
             missed_df = pd.DataFrame(columns=["ordernummer", "kundnamn", "Missat"])
         # Spara resultat
@@ -5181,6 +6106,7 @@ class App(ttk.Frame):
         # Om varken ändringar eller missade avgångar finns, meddela användaren och stäng av öppna‑knappen
         if (changes_df is None or changes_df.empty) and (missed_df is None or missed_df.empty):
             self.open_koppla_btn.config(state="disabled")
+            self._track_feature("hib_koppling", "run_completed", changes_rows=0, missed_rows=0)
             messagebox.showinfo(APP_TITLE, "Inga HIB‑ordrar behöver ändras eller har missat sin avgång.")
             return
         # Det finns något att visa – aktivera öppna‑knappen
@@ -5238,6 +6164,13 @@ class App(ttk.Frame):
             self._log("HIB‑kopplingen är beräknad och redo att öppnas i Excel.")
 
 
+        self._track_feature(
+            "hib_koppling",
+            "run_completed",
+            changes_rows=int(len(changes_df)) if isinstance(changes_df, pd.DataFrame) else 0,
+            missed_rows=int(len(missed_df)) if isinstance(missed_df, pd.DataFrame) else 0,
+        )
+
     def open_koppla_in_excel(self) -> None:
         """
         Öppna det senast beräknade HIB‑kopplingsresultatet i en temporär
@@ -5268,6 +6201,7 @@ class App(ttk.Frame):
                 path = _open_df_in_excel(sheets, label="hib_koppling")
                 self.last_koppla_path = path
                 self._log(f"Öppnade HIB‑koppling i Excel (temporär fil): {path}")
+                self._track_feature("hib_koppling", "opened_result")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna HIB‑koppling i Excel:\n{e}")
         else:
@@ -5279,6 +6213,7 @@ class App(ttk.Frame):
         eller med olika transportörer. Resultatet loggas och kan öppnas i Excel.
         """
         path = self.overview_var.get().strip()
+        self._track_feature("overview_check", "run_started")
         if not path:
             messagebox.showerror(APP_TITLE, "Välj orderöversikten först.")
             return
@@ -5572,6 +6507,7 @@ class App(ttk.Frame):
             msg = "Inga avvikelser hittades i orderöversikten."
             if missing_hib_cols:
                 msg += "\nHIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ")."
+            self._track_feature("overview_check", "run_completed", shipment_rows=0, hib_rows=0)
             messagebox.showinfo(APP_TITLE, msg)
             return
 
@@ -5600,6 +6536,12 @@ class App(ttk.Frame):
             self._log("Orderkontrollen är beräknad och redo att öppnas i Excel.")
         except Exception:
             pass
+        self._track_feature(
+            "overview_check",
+            "run_completed",
+            shipment_rows=int(len(result_df)) if isinstance(result_df, pd.DataFrame) else 0,
+            hib_rows=int(len(hib_check_df)) if isinstance(hib_check_df, pd.DataFrame) else 0,
+        )
 
     def open_overview_check_in_excel(self) -> None:
         """
@@ -5633,6 +6575,7 @@ class App(ttk.Frame):
                 path = _open_df_in_excel(sheets, label="orderkontroll")
                 self.last_overview_check_path = path
                 self._log(f"Öppnade orderkontroll i Excel (temporär fil): {path}")
+                self._track_feature("overview_check", "opened_result")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna orderkontroll i Excel:\n{e}")
         else:
@@ -5645,6 +6588,7 @@ class App(ttk.Frame):
         """
         overview_path = self.overview_var.get().strip()
         dispatch_path = getattr(self, "dispatch_var", tk.StringVar()).get().strip()
+        self._track_feature("dispatch_check", "run_started")
         if not overview_path or not dispatch_path:
             messagebox.showerror(APP_TITLE, "Välj både orderöversikt och dispatchpallar först.")
             return
@@ -5814,6 +6758,7 @@ class App(ttk.Frame):
         if not diff_rows:
             self.open_dispatch_check_btn.config(state="disabled")
             self.last_dispatch_check_df = pd.DataFrame()
+            self._track_feature("dispatch_check", "run_completed", mismatch_rows=0)
             messagebox.showinfo(APP_TITLE, "Alla sändningsnummer stämmer överens mellan orderöversikten och dispatchpallar.")
             return
         diff_df = pd.DataFrame(diff_rows)
@@ -5841,6 +6786,11 @@ class App(ttk.Frame):
             self._log("Dispatchkontrollen är beräknad och redo att öppnas i Excel.")
         except Exception:
             pass
+        self._track_feature(
+            "dispatch_check",
+            "run_completed",
+            mismatch_rows=int(len(diff_df)) if isinstance(diff_df, pd.DataFrame) else 0,
+        )
 
     def open_dispatch_check_in_excel(self) -> None:
         """
@@ -5851,6 +6801,7 @@ class App(ttk.Frame):
                 path = _open_df_in_excel({"Dispatchkontroll": self.last_dispatch_check_df.copy()}, label="dispatchkontroll")
                 self.last_dispatch_check_path = path
                 self._log(f"Öppnade dispatchkontroll i Excel (temporär fil): {path}")
+                self._track_feature("dispatch_check", "opened_result")
             except Exception as e:
                 messagebox.showerror(APP_TITLE, f"Kunde inte öppna dispatchkontroll i Excel:\n{e}")
         else:
@@ -5968,6 +6919,14 @@ class App(ttk.Frame):
         automation_path = self.automation_var.get().strip()
         item_path = self.item_var.get().strip()
         not_putaway_path = ""
+        self._track_feature(
+            "allocation",
+            "run_started",
+            has_automation=bool(automation_path),
+            has_item=bool(item_path),
+            has_prognos=bool(str(self.prognos_var.get()).strip()),
+            has_campaign=bool(str(self.campaign_var.get()).strip()),
+        )
 
         if not orders_path or not buffer_path:
             messagebox.showerror(APP_TITLE, "Välj både beställningsfil och buffertfil.")
@@ -6019,6 +6978,7 @@ class App(ttk.Frame):
             if isinstance(self._item_raw, pd.DataFrame):
                 self._item_norm = normalize_items(self._item_raw)
         except Exception as e:
+            self._track_feature("allocation", "run_failed", stage="load_inputs")
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa CSV-filerna:\n{e}")
             return
 
@@ -6111,6 +7071,7 @@ class App(ttk.Frame):
             except Exception:
                 self.open_refill_btn.configure(state="disabled")
         except Exception as e:
+            self._track_feature("allocation", "run_failed", stage="allocation")
             messagebox.showerror(APP_TITLE, f"Fel under allokering:\n{e}")
             return
 
@@ -6190,19 +7151,424 @@ class App(ttk.Frame):
             except Exception:
                 pass
 
+        self._track_feature(
+            "allocation",
+            "run_completed",
+            result_rows=int(len(result)) if isinstance(result, pd.DataFrame) else 0,
+            near_miss_rows=int(len(self.last_nearmiss_instead_df)) if isinstance(self.last_nearmiss_instead_df, pd.DataFrame) else 0,
+            pallet_space_rows=int(len(self._pallet_spaces_df)) if isinstance(self._pallet_spaces_df, pd.DataFrame) else 0,
+            refill_hp_rows=int(len(self._last_refill_hp_df)) if isinstance(self._last_refill_hp_df, pd.DataFrame) else 0,
+            refill_autostore_rows=int(len(self._last_refill_autostore_df)) if isinstance(self._last_refill_autostore_df, pd.DataFrame) else 0,
+        )
 
-def _parse_args(argv: Optional[list[str]] = None):
+
+def _read_cli_table(path: str) -> pd.DataFrame:
+    """Las en tabellfil for CLI-kommandon och normalisera kolumnnamn."""
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"Filen finns inte: {target}")
+
+    suffix = target.suffix.lower()
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}:
+        return _clean_columns(pd.read_excel(target, dtype=str))
+
+    try:
+        df = pd.read_csv(target, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+        if df.shape[1] == 1 and len(df):
+            first = str(df.iloc[0, 0])
+            if "\t" in first:
+                df = pd.read_csv(target, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+    except Exception:
+        df = pd.read_csv(target, dtype=str, sep="\t", engine="python", encoding="utf-8-sig")
+    return _clean_columns(df)
+
+
+def _write_cli_dataframe(df: pd.DataFrame, path: str) -> str:
+    """Skriv DataFrame till CSV/XLSX/JSON beroende pa filandelse."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    suffix = target.suffix.lower()
+
+    if suffix == ".xlsx":
+        df.to_excel(target, index=False, engine="openpyxl")
+    elif suffix == ".json":
+        target.write_text(df.to_json(orient="records", force_ascii=False, indent=2), encoding="utf-8")
+    else:
+        df.to_csv(target, index=False, encoding="utf-8-sig")
+    return str(target.resolve())
+
+
+def _write_cli_workbook(sheets: Dict[str, pd.DataFrame], path: str) -> str:
+    """Skriv flera blad till en Excel-fil."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.suffix.lower() != ".xlsx":
+        raise ValueError("Flerbladsutskrift kraver .xlsx som utfil.")
+    with pd.ExcelWriter(target, engine="openpyxl") as writer:
+        for sheet_name, df in sheets.items():
+            df.to_excel(writer, sheet_name=str(sheet_name)[:31] or "Sheet1", index=False)
+    return str(target.resolve())
+
+
+def _write_cli_list(values: list[str], path: str, column_name: str) -> str:
+    """Skriv en lista till TXT, CSV, XLSX eller JSON."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    suffix = target.suffix.lower()
+
+    if suffix in {"", ".txt"}:
+        target.write_text("\n".join(str(value) for value in values), encoding="utf-8")
+        return str(target.resolve())
+    if suffix == ".json":
+        target.write_text(json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8")
+        return str(target.resolve())
+    return _write_cli_dataframe(pd.DataFrame({column_name: values}), str(target))
+
+
+def _emit_cli_summary(summary: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(summary, ensure_ascii=False))
+        return
+    for key, value in summary.items():
+        print(f"{key}: {value}")
+
+
+def _load_utbest_map_from_saldo_path(path: Optional[str]) -> Dict[str, float]:
+    if not path:
+        return {}
+    saldo_df = _read_cli_table(path)
+    return utbest_per_article(saldo_df)
+
+
+def _df_with_named_index(df: pd.DataFrame, index_name: str) -> pd.DataFrame:
+    out = df.copy()
+    out.index = out.index.map(lambda value: str(value).strip())
+    return out.reset_index().rename(columns={"index": index_name})
+
+
+def _merge_item_flags(result_df: pd.DataFrame, item_norm: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(result_df, pd.DataFrame) or result_df.empty:
+        return result_df
+
+    result = result_df.copy()
+    if not isinstance(item_norm, pd.DataFrame) or item_norm.empty:
+        if "Ej Staplingsbar" not in result.columns:
+            result["Ej Staplingsbar"] = ""
+        cols = [c for c in result.columns if c != "Ej Staplingsbar"] + ["Ej Staplingsbar"]
+        return result[cols]
+
+    art_col_res = find_col(result, ORDER_SCHEMA["artikel"], required=True)
+    merged = result.merge(item_norm, how="left", left_on=art_col_res, right_on="Artikel", suffixes=("", "_item"))
+    if "Artikel_item" in merged.columns:
+        merged.drop(columns=["Artikel_item"], inplace=True, errors=False)
+    if "Artikel_y" in merged.columns:
+        merged.drop(columns=["Artikel_y"], inplace=True, errors=False)
+    if "Ej Staplingsbar_y" in merged.columns:
+        merged["Ej Staplingsbar"] = merged["Ej Staplingsbar_y"].fillna("")
+    elif "Ej Staplingsbar_x" in merged.columns:
+        merged["Ej Staplingsbar"] = merged["Ej Staplingsbar_x"].fillna("")
+    elif "Ej Staplingsbar" not in merged.columns:
+        merged["Ej Staplingsbar"] = ""
+    for col in ["Ej Staplingsbar_x", "Ej Staplingsbar_y"]:
+        if col in merged.columns:
+            merged.drop(columns=[col], inplace=True)
+    cols = [c for c in merged.columns if c != "Ej Staplingsbar"] + ["Ej Staplingsbar"]
+    return merged[cols]
+
+
+def _resolve_max_csv_path(explicit_path: Optional[str]) -> Path:
+    if explicit_path:
+        target = Path(explicit_path)
+        if not target.exists():
+            raise FileNotFoundError(f"Filen finns inte: {target}")
+        return target
+
+    found = _find_lyx_max_csv()
+    if found is None:
+        raise FileNotFoundError("Kunde inte hitta lowfreqdata/buffertpall/artikel_max.csv.")
+    return found
+
+
+def _cli_allocate(args: argparse.Namespace) -> int:
+    orders_raw = _read_cli_table(args.orders)
+    buffer_raw = _read_cli_table(args.buffer)
+
+    saldo_norm = None
+    if args.saldo:
+        saldo_norm = normalize_saldo(_read_cli_table(args.saldo))
+
+    item_norm = None
+    if args.items:
+        item_norm = normalize_items(_read_cli_table(args.items))
+
+    not_putaway_norm = None
+    if args.not_putaway:
+        not_putaway_norm = normalize_not_putaway(_read_cli_table(args.not_putaway))
+
+    result_df, near_miss_df = allocate(orders_raw, buffer_raw)
+    result_df = App._reclassify_skrymmande(result_df, saldo_norm)
+    result_df = _merge_item_flags(result_df, item_norm)
+    if near_miss_df.empty and len(near_miss_df.columns) == 0:
+        near_miss_df = pd.DataFrame(
+            columns=[
+                "Artikel",
+                "OrderID",
+                "OrderRad",
+                "PallID",
+                "Källplats",
+                "Mottagen",
+                "Behov_vid_tillfället",
+                "Pall_kvantitet",
+                "Skillnad",
+                "Procentuell skillnad (%)",
+                "Anledning",
+                "Gäller (INSTEAD R/A)",
+            ]
+        )
+
+    output_paths: dict[str, str] = {}
+    if args.result_out:
+        output_paths["result"] = _write_cli_dataframe(result_df, args.result_out)
+    if args.near_miss_out:
+        output_paths["near_miss"] = _write_cli_dataframe(near_miss_df, args.near_miss_out)
+
+    refill_hp_df = None
+    refill_autostore_df = None
+    if args.refill_hp_out or args.refill_autostore_out:
+        refill_hp_df, refill_autostore_df = calculate_refill(
+            result_df,
+            buffer_raw,
+            saldo_df=saldo_norm,
+            not_putaway_df=not_putaway_norm,
+        )
+        if args.refill_hp_out:
+            output_paths["refill_hp"] = _write_cli_dataframe(refill_hp_df, args.refill_hp_out)
+        if args.refill_autostore_out:
+            output_paths["refill_autostore"] = _write_cli_dataframe(refill_autostore_df, args.refill_autostore_out)
+
+    pallet_spaces_df = None
+    if args.pallet_spaces_out:
+        pallet_spaces_df = compute_pallet_spaces(result_df)
+        output_paths["pallet_spaces"] = _write_cli_dataframe(pallet_spaces_df, args.pallet_spaces_out)
+
+    summary = {
+        "command": "allocate",
+        "result_rows": int(len(result_df)),
+        "near_miss_rows": int(len(near_miss_df)),
+        "refill_hp_rows": int(len(refill_hp_df)) if isinstance(refill_hp_df, pd.DataFrame) else 0,
+        "refill_autostore_rows": int(len(refill_autostore_df)) if isinstance(refill_autostore_df, pd.DataFrame) else 0,
+        "pallet_space_rows": int(len(pallet_spaces_df)) if isinstance(pallet_spaces_df, pd.DataFrame) else 0,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_ordersaldo(args: argparse.Namespace) -> int:
+    orders_df = _read_cli_table(args.orders)
+    column_names = _find_ordersaldo_columns(orders_df)
+    complete_orders, shortage_df = compute_ordersaldo_data(
+        orders_df,
+        utbest_map=_load_utbest_map_from_saldo_path(args.saldo),
+        column_names=column_names,
+    )
+
+    output_paths: dict[str, str] = {}
+    if args.complete_orders_out:
+        output_paths["complete_orders"] = _write_cli_list(complete_orders, args.complete_orders_out, "Ordernr")
+    if args.shortage_out:
+        output_paths["shortage"] = _write_cli_dataframe(_df_with_named_index(shortage_df, "Artikel"), args.shortage_out)
+
+    summary = {
+        "command": "ordersaldo",
+        "complete_order_count": int(len(complete_orders)),
+        "shortage_article_count": int(len(shortage_df)),
+        "complete_orders": complete_orders if args.json else None,
+        "shortage_articles": sorted(shortage_df.index.astype(str).tolist()) if args.json else None,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_lyx(args: argparse.Namespace) -> int:
+    saldo_df = _read_cli_table(args.saldo)
+    max_df = _read_cli_table(str(_resolve_max_csv_path(args.max_csv)))
+    articles, filtered_row_count = compute_lyx_articles(saldo_df, max_df)
+
+    output_paths: dict[str, str] = {}
+    if args.output:
+        output_paths["articles"] = _write_cli_list(articles, args.output, "Artikel")
+
+    summary = {
+        "command": "lyx",
+        "filtered_row_count": int(filtered_row_count),
+        "article_count": int(len(articles)),
+        "articles": articles if args.json else None,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_pafyllnadsprio(args: argparse.Namespace) -> int:
+    orders_df = _read_cli_table(args.orders)
+    column_names = _find_ordersaldo_columns(orders_df)
+    _, shortage_df = compute_ordersaldo_data(
+        orders_df,
+        utbest_map=_load_utbest_map_from_saldo_path(args.saldo),
+        column_names=column_names,
+    )
+    max_df = _read_cli_table(str(_resolve_max_csv_path(args.max_csv)))
+
+    mode = "fallback"
+    overview_error = None
+    log_lines: list[str] = []
+    missing_reference_count = 0
+    window_map_df = None
+
+    if args.overview:
+        try:
+            overview_df = _read_cli_table(args.overview)
+            report_df, _bold_cells, log_lines, missing_reference_count, window_map_df = (
+                build_pafyllnadsprio_lastningsfonster_report(
+                    orders_df,
+                    shortage_df,
+                    overview_df,
+                    max_df,
+                    column_names=column_names,
+                )
+            )
+            mode = "lastningsfonster"
+        except Exception as exc:
+            overview_error = str(exc)
+            report_df, missing_reference_count = build_pafyllnadsprio_report(shortage_df, max_df)
+    else:
+        report_df, missing_reference_count = build_pafyllnadsprio_report(shortage_df, max_df)
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        report_path = Path(args.report_out)
+        if isinstance(window_map_df, pd.DataFrame) and report_path.suffix.lower() == ".xlsx":
+            output_paths["report"] = _write_cli_workbook(
+                {
+                    "Påfyllnadsprio": report_df,
+                    "Lastningsfönster": window_map_df,
+                },
+                args.report_out,
+            )
+        else:
+            output_paths["report"] = _write_cli_dataframe(report_df, args.report_out)
+    if args.window_map_out and isinstance(window_map_df, pd.DataFrame):
+        output_paths["window_map"] = _write_cli_dataframe(window_map_df, args.window_map_out)
+
+    summary = {
+        "command": "pafyllnadsprio",
+        "mode": mode,
+        "shortage_article_count": int(len(shortage_df)),
+        "report_rows": int(len(report_df)),
+        "missing_reference_count": int(missing_reference_count),
+        "overview_error": overview_error,
+        "log_lines": log_lines if args.json else None,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_hib_koppling(args: argparse.Namespace) -> int:
+    details_df = _read_cli_table(args.details)
+    overview_df = _read_cli_table(args.overview)
+    changes_df = compute_hib_koppling(details_df, overview_df)
+    missed_df = compute_missed_departures(details_df, overview_df)
+
+    output_paths: dict[str, str] = {}
+    if args.changes_out:
+        output_paths["changes"] = _write_cli_dataframe(changes_df, args.changes_out)
+    if args.missed_out:
+        output_paths["missed"] = _write_cli_dataframe(missed_df, args.missed_out)
+
+    summary = {
+        "command": "hib-koppling",
+        "change_rows": int(len(changes_df)),
+        "missed_rows": int(len(missed_df)),
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--version", action="store_true")
-    return parser.parse_known_args(argv)[0]
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    allocate_parser = subparsers.add_parser("allocate", help="Kor allokering utan GUI.")
+    allocate_parser.add_argument("--orders", required=True, help="Bestallningslinjer CSV/XLSX.")
+    allocate_parser.add_argument("--buffer", required=True, help="Buffertpallar CSV/XLSX.")
+    allocate_parser.add_argument("--saldo", help="Saldo/automation CSV/XLSX.")
+    allocate_parser.add_argument("--items", help="Item option CSV/XLSX.")
+    allocate_parser.add_argument("--not-putaway", help="Ej inlagrade CSV/XLSX.")
+    allocate_parser.add_argument("--result-out", help="Utfil for allokerat resultat.")
+    allocate_parser.add_argument("--near-miss-out", help="Utfil for near-miss.")
+    allocate_parser.add_argument("--refill-hp-out", help="Utfil for refill huvudplock.")
+    allocate_parser.add_argument("--refill-autostore-out", help="Utfil for refill autostore.")
+    allocate_parser.add_argument("--pallet-spaces-out", help="Utfil for pallplatser.")
+    allocate_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    allocate_parser.set_defaults(cli_handler=_cli_allocate)
+
+    ordersaldo_parser = subparsers.add_parser("ordersaldo", help="Berakna kompletta ordrar och underskott.")
+    ordersaldo_parser.add_argument("--orders", required=True, help="Bestallningslinjer CSV/XLSX.")
+    ordersaldo_parser.add_argument("--saldo", help="Saldo/automation CSV/XLSX for Utbestallt.")
+    ordersaldo_parser.add_argument("--complete-orders-out", help="Utfil for kompletta ordernummer.")
+    ordersaldo_parser.add_argument("--shortage-out", help="Utfil for artiklar med underskott.")
+    ordersaldo_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    ordersaldo_parser.set_defaults(cli_handler=_cli_ordersaldo)
+
+    lyx_parser = subparsers.add_parser("lyx", help="Berakna LYX-artiklar utan GUI.")
+    lyx_parser.add_argument("--saldo", required=True, help="Saldofil CSV/XLSX.")
+    lyx_parser.add_argument("--max-csv", help="artikel_max.csv. Default ar lowfreqdata/buffertpall/artikel_max.csv.")
+    lyx_parser.add_argument("--output", help="Utfil for artikelnummer.")
+    lyx_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    lyx_parser.set_defaults(cli_handler=_cli_lyx)
+
+    pafyllnadsprio_parser = subparsers.add_parser("pafyllnadsprio", help="Kor pafyllnadsprio utan GUI.")
+    pafyllnadsprio_parser.add_argument("--orders", required=True, help="Bestallningslinjer CSV/XLSX.")
+    pafyllnadsprio_parser.add_argument("--saldo", help="Saldo/automation CSV/XLSX for Utbestallt.")
+    pafyllnadsprio_parser.add_argument("--overview", help="Orderoversikt CSV/XLSX for lastningsfonster.")
+    pafyllnadsprio_parser.add_argument("--max-csv", help="artikel_max.csv. Default ar lowfreqdata/buffertpall/artikel_max.csv.")
+    pafyllnadsprio_parser.add_argument("--report-out", help="Utfil for rapporten.")
+    pafyllnadsprio_parser.add_argument("--window-map-out", help="Utfil for lastningsfonster-tabell.")
+    pafyllnadsprio_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    pafyllnadsprio_parser.set_defaults(cli_handler=_cli_pafyllnadsprio)
+
+    hib_parser = subparsers.add_parser("hib-koppling", help="Kor HIB-koppling utan GUI.")
+    hib_parser.add_argument("--details", required=True, help="Bestallningslinjer CSV/XLSX.")
+    hib_parser.add_argument("--overview", required=True, help="Orderoversikt CSV/XLSX.")
+    hib_parser.add_argument("--changes-out", help="Utfil for andringar.")
+    hib_parser.add_argument("--missed-out", help="Utfil for missade avgangar.")
+    hib_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    hib_parser.set_defaults(cli_handler=_cli_hib_koppling)
+
+    return parser
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def _parse_args(argv: Optional[list[str]] = None):
+    parser = _build_arg_parser()
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     if args.version:
         print(APP_VERSION)
-        return
+        return 0
+
+    cli_handler = getattr(args, "cli_handler", None)
+    if cli_handler:
+        return int(cli_handler(args) or 0)
 
     root_class = TkinterDnD.Tk if TkinterDnD else tk.Tk
     root = root_class()
@@ -6215,8 +7581,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         root.update_idletasks()
         root.update()
         root.destroy()
-        return
+        return 0
     root.mainloop()
+    return 0
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    raise SystemExit(main(sys.argv[1:]))

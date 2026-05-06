@@ -1,0 +1,5 @@
+Påfyllningsbehov
+
+Kopierar en lista med artiklar som behöver fyllas på i plocklager för att täcka utgående order.
+
+Listan kopieras till urklipp (Ctrl+V i Excel). Används för att planera interna förflyttningar från buffertlager till plocklager.

@@ -1,0 +1,5 @@
+Orderöversikt
+
+Fil med övergripande information om utgående order – sändningsnummer, kund, ordertyp och datum.
+
+Används av HIB-koppling och orderkontroll. Innehåller normalt ett sändningsnummer per rad kopplat till kundorder.

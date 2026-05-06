@@ -1,0 +1,10 @@
+LYX – Lyft ur excess
+
+Identifierar artiklar i saldofilen som har för mycket på lager jämfört med vad som faktiskt behövs.
+
+Kräver:
+• Saldo inkl. automation (CSV)
+
+Appen jämför plocksaldo + utbeställt mot ett beräknat maxvärde per artikel. Artiklar som har mer än max på plockplatsen lyfts fram som kandidater för åtgärd.
+
+Maxvärdena hämtas från artikel_max.csv som byggs upp automatiskt varje gång du laddar buffertpallfilen.

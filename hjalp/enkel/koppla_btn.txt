@@ -1,0 +1,9 @@
+Kör HIB-koppling
+
+Kopplar ihop HIB-pallar (High Bay / Höglager) med kundorder baserat på sändningsnummer.
+
+Kräver:
+• Beställningslinjer (CSV)
+• Orderöversikt (CSV)
+
+Resultatet visar vilka pallar som ska hämtas från HIB för att täcka utgående order. Öppnas med knappen "Öppna HIB-koppling".

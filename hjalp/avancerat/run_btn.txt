@@ -1,0 +1,13 @@
+Kör allokering – teknisk beskrivning
+
+Funktionen run_allocation() orchestrerar hela flödet:
+
+1. Läser orders- och buffer-CSV via normalize_*()-funktioner med fuzzy kolumnmatchning (find_col).
+2. Kör allocate(orders_df, buffer_df) – FIFO-allokering i tre prioritetssteg:
+   • HELPALL (H) → AUTOSTORE (A/R) → HUVUDPLOCK (A)
+3. Kör calculate_refill() för påfyllningsbehov.
+4. Kör compute_pallet_spaces() för pallplatsrapport.
+5. Filtrerar buffert på ALLOC_BUFFER_STATUSES = {29, 30, 32}.
+6. Near-miss detekteras om pall täcker 70–100 % av kvarvarande behov (NEAR_MISS_PCT = 0.30).
+
+Resultat skrivs till temporära CSV-/XLSX-filer och öppnas i Excel.

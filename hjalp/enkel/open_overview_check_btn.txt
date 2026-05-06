@@ -1,0 +1,5 @@
+Öppna orderkontroll
+
+Öppnar resultatet av orderöversiktskontrollen i Excel. Visar avvikelser i sändningsnummer, kunder och transportörer.
+
+Knappen är grå tills du kört kontrollen.
