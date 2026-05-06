@@ -4625,15 +4625,16 @@ class App(ttk.Frame):
     def _position_overlay(self) -> None:
         if self._help_overlay is None:
             return
-        self.master.update_idletasks()
-        x = self.master.winfo_rootx()
-        y = self.master.winfo_rooty()
-        w = self.master.winfo_width()
-        h = self.master.winfo_height()
+        self.update_idletasks()
+        # Täck innehållsytan (self = App-frame, inte master-fönstret med titelrad)
+        x = self.winfo_rootx()
+        y = self.winfo_rooty()
+        w = self.winfo_width()
+        h = self.winfo_height()
         self._help_overlay.geometry(f"{w}x{h}+{x}+{y}")
 
     def _on_main_configure_help(self, event) -> None:
-        if event.widget is self.master:
+        if event.widget is self.master or event.widget is self:
             self._position_overlay()
             self._reposition_help_bar()
 
@@ -4777,14 +4778,15 @@ class App(ttk.Frame):
         self._help_bar.update_idletasks()
         bw = self._help_bar.winfo_reqwidth()
         bh = self._help_bar.winfo_reqheight()
-        wx = self.master.winfo_rootx()
-        wy = self.master.winfo_rooty()
-        ww = self.master.winfo_width()
-        sw = self.master.winfo_screenwidth()
-        # Övre högra hörnet; klipp till skärmen om den inte får plats
-        x = wx + ww - bw - 4
+        # Använd App-ramen (self) inte master för att få innehållsytans koordinater
+        fx = self.winfo_rootx()
+        fy = self.winfo_rooty()
+        fw = self.winfo_width()
+        sw = self.winfo_screenwidth()
+        # Övre högra hörnet av innehållsytan
+        x = fx + fw - bw - 4
         x = max(4, min(x, sw - bw - 4))
-        y = wy + 4
+        y = fy + 4
         self._help_bar.geometry(f"+{x}+{y}")
 
     def _close_help_bar(self) -> None:
@@ -7224,6 +7226,189 @@ class App(ttk.Frame):
             messagebox.showinfo(APP_TITLE, "Det finns inget dispatchkontroll-resultat att öppna. Kör kontrollen först.")
 
 
+    def run_overview_check(self) -> None:
+        """Kör orderöversiktkontrollen via delad workflow-logik."""
+        path = self.overview_var.get().strip()
+        self._track_feature("overview_check", "run_started")
+        if not path:
+            messagebox.showerror(APP_TITLE, "Välj orderöversikten först.")
+            return
+
+        self._log_active_value_filters()
+        try:
+            overview_df = _read_cli_table(path)
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
+            return
+
+        try:
+            overview_df = self._apply_value_filters(overview_df, "Orderöversikt (orderkontroll)")
+        except Exception:
+            pass
+        if overview_df.empty:
+            self.open_overview_check_btn.config(state="disabled")
+            self.last_overview_check_df = pd.DataFrame()
+            self.last_hib_status_check_df = pd.DataFrame()
+            messagebox.showinfo(APP_TITLE, "Inga rader kvar efter filter i orderöversikten.")
+            return
+
+        details_df = None
+        details_path = getattr(self, "orders_var", tk.StringVar()).get().strip()
+        if details_path:
+            try:
+                details_df = _read_cli_table(details_path)
+                try:
+                    details_df = self._apply_value_filters(details_df, "Beställningslinjer (orderkontroll)")
+                except Exception:
+                    pass
+            except Exception:
+                details_df = None
+
+        try:
+            result = build_overview_check_result(overview_df, details_df=details_df)
+        except KeyError as e:
+            self._track_feature("overview_check", "run_failed", stage="build_result")
+            messagebox.showerror(APP_TITLE, str(e))
+            return
+        except Exception as e:
+            self._track_feature("overview_check", "run_failed", stage="build_result")
+            messagebox.showerror(APP_TITLE, f"Orderkontrollen misslyckades:\n{e}")
+            return
+
+        self.last_overview_check_df = result.shipment_df.copy() if not result.shipment_df.empty else pd.DataFrame()
+        self.last_hib_status_check_df = result.hib_df.copy() if not result.hib_df.empty else pd.DataFrame()
+
+        has_any = not result.shipment_df.empty or not result.hib_df.empty
+        self.open_overview_check_btn.config(state="normal" if has_any else "disabled")
+        if not has_any:
+            msg = "Inga avvikelser hittades i orderöversikten."
+            if result.missing_hib_cols:
+                msg += "\nHIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(result.missing_hib_cols) + ")."
+            self._track_feature("overview_check", "run_completed", shipment_rows=0, hib_rows=0)
+            messagebox.showinfo(APP_TITLE, msg)
+            return
+
+        try:
+            for line in result.log_lines:
+                self._log(line)
+            self._log("Orderkontrollen är beräknad och redo att öppnas i Excel.")
+        except Exception:
+            pass
+        self._track_feature(
+            "overview_check",
+            "run_completed",
+            shipment_rows=int(len(result.shipment_df)),
+            hib_rows=int(len(result.hib_df)),
+        )
+
+    def open_overview_check_in_excel(self) -> None:
+        """Öppna orderkontrollen i Excel via samma bladstruktur som CLI:t använder."""
+        has_shipment = isinstance(self.last_overview_check_df, pd.DataFrame) and not self.last_overview_check_df.empty
+        has_hib = isinstance(getattr(self, "last_hib_status_check_df", None), pd.DataFrame) and not getattr(self, "last_hib_status_check_df").empty
+        if not (has_shipment or has_hib):
+            messagebox.showinfo(APP_TITLE, "Det finns inget orderkontroll-resultat att öppna. Kör kontrollen först.")
+            return
+
+        try:
+            result = OverviewCheckResult(
+                shipment_df=self.last_overview_check_df.copy() if has_shipment else pd.DataFrame(),
+                hib_df=self.last_hib_status_check_df.copy() if has_hib else pd.DataFrame(),
+                missing_hib_cols=[],
+                log_lines=[],
+            )
+            path = _open_df_in_excel(_build_overview_check_sheets(result), label="orderkontroll")
+            self.last_overview_check_path = path
+            self._log(f"Öppnade orderkontroll i Excel (temporär fil): {path}")
+            self._track_feature("overview_check", "opened_result")
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte öppna orderkontroll i Excel:\n{e}")
+
+    def run_dispatch_check(self) -> None:
+        """Kör dispatchkontrollen via delad workflow-logik."""
+        overview_path = self.overview_var.get().strip()
+        dispatch_path = getattr(self, "dispatch_var", tk.StringVar()).get().strip()
+        self._track_feature("dispatch_check", "run_started")
+        if not overview_path or not dispatch_path:
+            messagebox.showerror(APP_TITLE, "Välj både orderöversikt och dispatchpallar först.")
+            return
+
+        self._log_active_value_filters()
+        try:
+            overview_df = _read_cli_table(overview_path)
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte läsa orderöversikten:\n{e}")
+            return
+        try:
+            dispatch_df = _read_cli_table(dispatch_path)
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte läsa dispatchpallarna:\n{e}")
+            return
+
+        try:
+            overview_df = self._apply_value_filters(overview_df, "Orderöversikt (dispatchkontroll)")
+            dispatch_df = self._apply_value_filters(dispatch_df, "Dispatchpallar (dispatchkontroll)")
+        except Exception:
+            pass
+        if overview_df.empty or dispatch_df.empty:
+            self.open_dispatch_check_btn.config(state="disabled")
+            self.last_dispatch_check_df = pd.DataFrame()
+            messagebox.showinfo(APP_TITLE, "Inga rader kvar efter filter för dispatchkontrollen.")
+            return
+
+        details_df = None
+        details_path = getattr(self, "orders_var", tk.StringVar()).get().strip()
+        if details_path:
+            try:
+                details_df = _read_cli_table(details_path)
+                try:
+                    details_df = self._apply_value_filters(details_df, "Beställningslinjer (dispatchkontroll)")
+                except Exception:
+                    pass
+            except Exception:
+                details_df = None
+
+        try:
+            result = build_dispatch_check_result(overview_df, dispatch_df, details_df=details_df)
+        except KeyError as e:
+            self._track_feature("dispatch_check", "run_failed", stage="build_result")
+            messagebox.showerror(APP_TITLE, str(e))
+            return
+        except Exception as e:
+            self._track_feature("dispatch_check", "run_failed", stage="build_result")
+            messagebox.showerror(APP_TITLE, f"Dispatchkontrollen misslyckades:\n{e}")
+            return
+
+        if result.diff_df.empty:
+            self.open_dispatch_check_btn.config(state="disabled")
+            self.last_dispatch_check_df = pd.DataFrame()
+            self._track_feature("dispatch_check", "run_completed", mismatch_rows=0)
+            messagebox.showinfo(APP_TITLE, "Alla sändningsnummer stämmer överens mellan orderöversikten och dispatchpallar.")
+            return
+
+        self.last_dispatch_check_df = result.diff_df.copy()
+        self.open_dispatch_check_btn.config(state="normal")
+        try:
+            for line in result.log_lines:
+                self._log(line)
+            self._log("Dispatchkontrollen är beräknad och redo att öppnas i Excel.")
+        except Exception:
+            pass
+        self._track_feature("dispatch_check", "run_completed", mismatch_rows=int(len(result.diff_df)))
+
+    def open_dispatch_check_in_excel(self) -> None:
+        """Öppna dispatchkontrollen i Excel."""
+        if isinstance(self.last_dispatch_check_df, pd.DataFrame) and not self.last_dispatch_check_df.empty:
+            try:
+                path = _open_df_in_excel({"Dispatchkontroll": self.last_dispatch_check_df.copy()}, label="dispatchkontroll")
+                self.last_dispatch_check_path = path
+                self._log(f"Öppnade dispatchkontroll i Excel (temporär fil): {path}")
+                self._track_feature("dispatch_check", "opened_result")
+            except Exception as e:
+                messagebox.showerror(APP_TITLE, f"Kunde inte öppna dispatchkontroll i Excel:\n{e}")
+        else:
+            messagebox.showinfo(APP_TITLE, "Det finns inget dispatchkontroll-resultat att öppna. Kör kontrollen först.")
+
+
     def _on_sales_file_selected(self) -> None:
         """
         Stub för hantering av plocklogg. Funktionen för att läsa in plockloggar och beräkna försäljningsinsikter är borttagen i denna version.
@@ -7643,7 +7828,7 @@ def _write_cli_list(values: list[str], path: str, column_name: str) -> str:
 
 def _emit_cli_summary(summary: dict, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(summary, ensure_ascii=False))
+        print(json.dumps(summary, ensure_ascii=True))
         return
     for key, value in summary.items():
         print(f"{key}: {value}")
@@ -7914,6 +8099,56 @@ def _cli_hib_koppling(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cli_overview_check(args: argparse.Namespace) -> int:
+    overview_df = _read_cli_table(args.overview)
+    details_df = _read_cli_table(args.details) if args.details else None
+    result = build_overview_check_result(overview_df, details_df=details_df)
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        report_path = Path(args.report_out)
+        sheets = _build_overview_check_sheets(result)
+        if report_path.suffix.lower() == ".xlsx":
+            output_paths["report"] = _write_cli_workbook(sheets, args.report_out)
+        else:
+            output_paths["report"] = _write_cli_dataframe(sheets["Orderkontroll"], args.report_out)
+    if args.shipment_out:
+        output_paths["shipment"] = _write_cli_dataframe(result.shipment_df, args.shipment_out)
+    if args.hib_out:
+        output_paths["hib"] = _write_cli_dataframe(result.hib_df, args.hib_out)
+
+    summary = {
+        "command": "overview-check",
+        "shipment_rows": int(len(result.shipment_df)),
+        "hib_rows": int(len(result.hib_df)),
+        "missing_hib_cols": result.missing_hib_cols if args.json else None,
+        "log_lines": result.log_lines if args.json else None,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_dispatch_check(args: argparse.Namespace) -> int:
+    overview_df = _read_cli_table(args.overview)
+    dispatch_df = _read_cli_table(args.dispatch)
+    details_df = _read_cli_table(args.details) if args.details else None
+    result = build_dispatch_check_result(overview_df, dispatch_df, details_df=details_df)
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        output_paths["report"] = _write_cli_dataframe(result.diff_df, args.report_out)
+
+    summary = {
+        "command": "dispatch-check",
+        "mismatch_rows": int(len(result.diff_df)),
+        "log_lines": result.log_lines if args.json else None,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--smoke-test", action="store_true")
@@ -7967,6 +8202,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     hib_parser.add_argument("--missed-out", help="Utfil for missade avgangar.")
     hib_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
     hib_parser.set_defaults(cli_handler=_cli_hib_koppling)
+
+    overview_check_parser = subparsers.add_parser("overview-check", help="Kor orderoversiktkontrollen utan GUI.")
+    overview_check_parser.add_argument("--overview", required=True, help="Orderoversikt CSV/XLSX.")
+    overview_check_parser.add_argument("--details", help="Bestallningslinjer CSV/XLSX for kundnamn.")
+    overview_check_parser.add_argument("--report-out", help="Utfil for kombinerad orderkontroll.")
+    overview_check_parser.add_argument("--shipment-out", help="Utfil for sandningskontroll.")
+    overview_check_parser.add_argument("--hib-out", help="Utfil for HIB-kontroll.")
+    overview_check_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    overview_check_parser.set_defaults(cli_handler=_cli_overview_check)
+
+    dispatch_check_parser = subparsers.add_parser("dispatch-check", help="Kor dispatchkontrollen utan GUI.")
+    dispatch_check_parser.add_argument("--overview", required=True, help="Orderoversikt CSV/XLSX.")
+    dispatch_check_parser.add_argument("--dispatch", required=True, help="Dispatchpallar CSV/XLSX.")
+    dispatch_check_parser.add_argument("--details", help="Bestallningslinjer CSV/XLSX for kundnamn.")
+    dispatch_check_parser.add_argument("--report-out", help="Utfil for dispatchavvikelser.")
+    dispatch_check_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    dispatch_check_parser.set_defaults(cli_handler=_cli_dispatch_check)
 
     return parser
 
