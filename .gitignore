@@ -19,5 +19,5 @@ secrets/
 *.secret
 *.secrets
 
-# Local LYX source exports
-LYX Mestergruppen/v_ask_article_buffertpallet*.csv
+# Local lowfreqdata source exports
+lowfreqdata/buffertpall/v_ask_article_buffertpallet*.csv

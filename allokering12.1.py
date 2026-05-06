@@ -46,9 +46,14 @@ ytterligare förbättrad HIB‑koppling och cache‑hantering.
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import re
 import shutil
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
@@ -103,6 +108,24 @@ def _runtime_root() -> Path:
 
 def _resource_path(*parts: str) -> Path:
     return _bundle_root().joinpath(*parts)
+
+
+LOWFREQDATA_DIR = "lowfreqdata"
+BUFFERPALL_DIR = "buffertpall"
+ITEM_OPTION_DIR = "item-option"
+BUFFERPALL_PATH_PARTS = (LOWFREQDATA_DIR, BUFFERPALL_DIR)
+
+
+def _bufferpall_resource_path(*parts: str) -> Path:
+    return _resource_path(*BUFFERPALL_PATH_PARTS, *parts)
+
+
+def _bufferpall_runtime_dir() -> Path:
+    return _runtime_root().joinpath(*BUFFERPALL_PATH_PARTS)
+
+
+def _bufferpall_source_dir() -> Path:
+    return Path(__file__).resolve().parent.joinpath(*BUFFERPALL_PATH_PARTS)
 
 def read_prognos_xlsx(path: str) -> pd.DataFrame:
     """
@@ -933,24 +956,459 @@ def find_col(df: pd.DataFrame, candidates: List[str], required: bool = True, def
         raise KeyError(f"Hittar inte kolumnerna {candidates} i {list(df.columns)}")
     return default
 
-def _find_lyx_median_csv() -> Optional[Path]:
+def _find_lyx_max_csv() -> Optional[Path]:
     candidates = [
-        _resource_path("LYX Mestergruppen", "artikel_median.csv"),
-        _runtime_root() / "LYX Mestergruppen" / "artikel_median.csv",
-        Path(__file__).resolve().parent / "LYX Mestergruppen" / "artikel_median.csv",
+        _bufferpall_resource_path("artikel_max.csv"),
+        _bufferpall_runtime_dir() / "artikel_max.csv",
+        _bufferpall_source_dir() / "artikel_max.csv",
     ]
     for candidate in candidates:
         if candidate.exists():
             return candidate
     return None
 
-def compute_lyx_articles(saldo_df: pd.DataFrame, median_df: pd.DataFrame) -> Tuple[list[str], int]:
+
+ORDERSALDO_COLUMN_CANDIDATES: Dict[str, List[str]] = {
+    "order": ["ordernr", "ordernummer", "order number", "order no", "orderid", "order"],
+    "article": ["artikel", "artikelnr", "artikelnummer", "artnr", "sku", "item", "productcode"],
+    "demand": ["beställt", "bestalld", "ordered", "orderqty", "qty", "quantity", "antal"],
+    "pick": ["plock", "plocksaldo", "saldo", "available", "stock", "qtyavailable", "saldo autoplock"],
+}
+
+PAFYLLNADSPRIO_COLUMNS: List[str] = ["ALLA", "PRIO 1", "PRIO 2", "PRIO 3", "PRIO 4", "PRIO 5"]
+
+
+def _ordersaldo_norm(value: str) -> str:
+    """Normalisera kolumnnamn för robust matchning."""
+    txt = str(value).lower()
+    txt = txt.replace("å", "a").replace("ä", "a").replace("ö", "o")
+    txt = re.sub(r"[^a-z0-9]+", "", txt)
+    return txt
+
+
+def _ordersaldo_find_col(df: pd.DataFrame, candidates: List[str], used_cols: set[str]) -> Optional[str]:
+    """Hitta kolumn via exakt/fuzzy match mot kandidater."""
+    cols = [str(c) for c in df.columns]
+    norm_cols = {col: _ordersaldo_norm(col) for col in cols}
+    cand_norm = [_ordersaldo_norm(c) for c in candidates]
+    for cand in cand_norm:
+        for col, norm_col in norm_cols.items():
+            if col in used_cols:
+                continue
+            if norm_col == cand:
+                return col
+    for cand in cand_norm:
+        for col, norm_col in norm_cols.items():
+            if col in used_cols:
+                continue
+            if cand and cand in norm_col:
+                return col
+    return None
+
+
+def _find_ordersaldo_columns(
+    df: pd.DataFrame,
+    column_candidates: Optional[Dict[str, List[str]]] = None,
+) -> Dict[str, Optional[str]]:
+    candidates = column_candidates or ORDERSALDO_COLUMN_CANDIDATES
+    used: set[str] = set()
+    order_col = _ordersaldo_find_col(df, candidates["order"], used)
+    if order_col:
+        used.add(order_col)
+    article_col = _ordersaldo_find_col(df, candidates["article"], used)
+    if article_col:
+        used.add(article_col)
+    demand_col = _ordersaldo_find_col(df, candidates["demand"], used)
+    if demand_col:
+        used.add(demand_col)
+    pick_col = _ordersaldo_find_col(df, candidates["pick"], used)
+    return {
+        "order": order_col,
+        "article": article_col,
+        "demand": demand_col,
+        "pick": pick_col,
+    }
+
+
+def compute_ordersaldo_data(
+    df: pd.DataFrame,
+    utbest_map: Optional[Dict[str, float]] = None,
+    column_names: Optional[Dict[str, Optional[str]]] = None,
+) -> Tuple[list[str], pd.DataFrame]:
+    """
+    Beräkna ordersaldo-listor och underskottsdata per artikel från beställningslinjer.
+
+    Returnerar (kompletta_ordrar, underskott_df) där underskott_df har index=artikelnummer
+    och kolumnerna Total beställt, Tillgängligt saldo (Plock), Utbeställt, Underskott.
+    """
+    empty = pd.DataFrame(
+        columns=["Total beställt", "Tillgängligt saldo (Plock)", "Utbeställt", "Underskott"]
+    )
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return [], empty
+
+    calc_df = _clean_columns(df.copy())
+    cols = column_names or _find_ordersaldo_columns(calc_df)
+    order_col = cols.get("order")
+    article_col = cols.get("article")
+    demand_col = cols.get("demand")
+    pick_col = cols.get("pick")
+    if not order_col or not article_col or not demand_col or not pick_col:
+        raise KeyError("Hittar inte order-, artikel-, antal- eller plockkolumn i beställningsfilen.")
+
+    calc_df[order_col] = calc_df[order_col].astype(str).str.strip()
+    calc_df[article_col] = calc_df[article_col].astype(str).str.strip()
+    calc_df[demand_col] = calc_df[demand_col].map(to_num).astype(float)
+    calc_df[pick_col] = calc_df[pick_col].map(to_num).astype(float)
+
+    calc_df["_enough_row"] = calc_df[pick_col] >= calc_df[demand_col]
+    complete_mask = calc_df.groupby(order_col)["_enough_row"].all()
+    complete_orders = sorted(complete_mask[complete_mask].index.astype(str).tolist())
+
+    demand_by_art = calc_df.groupby(article_col)[demand_col].sum(min_count=1)
+    stock_by_art = calc_df.groupby(article_col)[pick_col].max()
+    holistic = pd.DataFrame({
+        "Total beställt": demand_by_art,
+        "Tillgängligt saldo (Plock)": stock_by_art,
+    }).fillna(0)
+    holistic.index = holistic.index.map(lambda value: str(value).strip())
+
+    if utbest_map is None:
+        utbest_map = {}
+    holistic["Utbeställt"] = holistic.index.to_series().map(utbest_map).fillna(0.0)
+    holistic["Underskott"] = (
+        holistic["Total beställt"] + holistic["Utbeställt"] - holistic["Tillgängligt saldo (Plock)"]
+    ).clip(lower=0)
+    holistic_short = holistic[holistic["Underskott"] > 0].copy().sort_index()
+    return complete_orders, holistic_short
+
+
+def _build_article_max_map(max_df: pd.DataFrame) -> Dict[str, float]:
+    max_df = _clean_columns(max_df.copy())
+    max_art_col = find_col(max_df, ["artikelnummer", "artikel", "artnr", "art.nr", "sku"])
+    max_val_col = find_col(max_df, ["max"])
+    tmp = pd.DataFrame({
+        "_art": _safe_str_series(max_df[max_art_col]),
+        "_max": max_df[max_val_col].map(to_num),
+    })
+    tmp = tmp[tmp["_art"].ne("")].dropna(subset=["_max"])
+    return tmp.drop_duplicates(subset="_art").set_index("_art")["_max"].to_dict()
+
+
+def _classify_pafyllnadsprio(underskott: float, reference_value: float) -> Tuple[str, bool]:
+    try:
+        reference = float(reference_value)
+    except Exception:
+        reference = 0.0
+    if pd.isna(reference) or reference <= 0:
+        return "PRIO 5", True
+
+    ratio = float(underskott) / reference
+    if ratio <= 0.25:
+        return "PRIO 1", False
+    if ratio <= 0.40:
+        return "PRIO 2", False
+    if ratio <= 0.55:
+        return "PRIO 3", False
+    if ratio <= 0.70:
+        return "PRIO 4", False
+    return "PRIO 5", False
+
+
+def build_pafyllnadsprio_report(shortage_df: pd.DataFrame, max_df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+    """Bygg Excel-data för Påfyllnadsprio från underskottsartiklar och artikel_max."""
+    groups = {column: [] for column in PAFYLLNADSPRIO_COLUMNS}
+    if not isinstance(shortage_df, pd.DataFrame) or shortage_df.empty:
+        return pd.DataFrame(columns=PAFYLLNADSPRIO_COLUMNS), 0
+
+    max_map = _build_article_max_map(max_df)
+    missing_reference_count = 0
+    work = shortage_df.copy()
+    work.index = work.index.map(lambda value: str(value).strip())
+    work = work[work.index != ""].sort_index()
+
+    for article, row in work.iterrows():
+        groups["ALLA"].append(article)
+        reference_value = max_map.get(article, 0.0)
+        prio, missing_reference = _classify_pafyllnadsprio(to_num(row.get("Underskott", 0.0)), reference_value)
+        if missing_reference:
+            missing_reference_count += 1
+        groups[prio].append(article)
+
+    max_len = max((len(values) for values in groups.values()), default=0)
+    padded = {
+        column: values + [""] * (max_len - len(values))
+        for column, values in groups.items()
+    }
+    return pd.DataFrame(padded, columns=PAFYLLNADSPRIO_COLUMNS), missing_reference_count
+
+
+# ----------------------------------------------------------------------
+# Observations (crowdsourcad pallid-historik) + GitHub-sync
+# ----------------------------------------------------------------------
+
+OBSERVATIONS_FILENAME = "observations.csv.gz"
+OBSERVATIONS_COLS = ["artikelnummer", "pallid", "antal"]
+GITHUB_REPO = "EmirKadr/allokering"
+GITHUB_OBS_BRANCH = "data/community-observations"
+GITHUB_OBS_FILE = "lowfreqdata/buffertpall/observations.csv.gz"
+
+
+def _observations_path() -> Path:
+    """Returnera lokalt path for observations.csv.gz."""
+    base = _bufferpall_runtime_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    return base / OBSERVATIONS_FILENAME
+
+
+def _artikel_max_path() -> Path:
+    base = _bufferpall_runtime_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "artikel_max.csv"
+
+
+def _read_observations(path: Path) -> pd.DataFrame:
+    if path.exists() and path.stat().st_size > 0:
+        df = pd.read_csv(path, dtype=str)
+        for col in OBSERVATIONS_COLS:
+            if col not in df.columns:
+                df[col] = ""
+        return df[OBSERVATIONS_COLS]
+    return pd.DataFrame(columns=OBSERVATIONS_COLS)
+
+
+def _max_utan_outlier(grupp: pd.DataFrame) -> Tuple[float, str]:
+    """Returnera (max, pallid) efter Tukey IQR-outlier-filter.
+
+    grupp ska ha kolumner 'antal' och 'pallid' med unikt index.
+    Filtret aktiveras bara nar gruppen har >2 pallar.
+    """
+    if len(grupp) > 2:
+        q1, q3 = np.percentile(grupp["antal"], [25, 75])
+        ovre = q3 + 1.5 * (q3 - q1)
+        sub = grupp[grupp["antal"] <= ovre]
+        if not sub.empty:
+            row = sub.loc[sub["antal"].idxmax()]
+            return float(row["antal"]), str(row["pallid"])
+    row = grupp.loc[grupp["antal"].idxmax()]
+    return float(row["antal"]), str(row["pallid"])
+
+
+def _recompute_artikel_max(observations: pd.DataFrame, ut_path: Path) -> int:
+    """Racka om artikel_max.csv fran observations. Returnerar antal artiklar."""
+    if observations.empty:
+        pd.DataFrame(columns=["artikelnummer", "max", "pallid"]).to_csv(
+            ut_path, index=False, encoding="utf-8-sig"
+        )
+        return 0
+
+    df = observations.copy()
+    df["antal"] = pd.to_numeric(df["antal"], errors="coerce")
+    df = df.dropna(subset=["artikelnummer", "antal", "pallid"])
+    df["artikelnummer"] = df["artikelnummer"].astype(str).str.strip()
+    df["pallid"] = df["pallid"].astype(str).str.strip()
+    df = df.drop_duplicates(subset="pallid").reset_index(drop=True)
+
+    rader = []
+    for art, grupp in df.groupby("artikelnummer"):
+        max_val, pall_id = _max_utan_outlier(grupp)
+        rader.append({"artikelnummer": art, "max": max_val, "pallid": pall_id})
+
+    pd.DataFrame(rader, columns=["artikelnummer", "max", "pallid"]).to_csv(
+        ut_path, index=False, encoding="utf-8-sig"
+    )
+    return len(rader)
+
+
+def update_observations_from_buffer(buffer_raw: pd.DataFrame) -> Tuple[int, pd.DataFrame]:
+    """Lagg till nya status-30-pallid i observations.csv.gz och racka om artikel_max.csv.
+
+    Returnerar (antal_nya, dataframe_med_endast_nya_rader).
+    Endast pallar med Status == 30 sparas.
+    """
+    art_col = find_col(buffer_raw, BUFFER_SCHEMA["artikel"], required=False)
+    qty_col = find_col(buffer_raw, BUFFER_SCHEMA["qty"], required=False)
+    id_col = find_col(buffer_raw, BUFFER_SCHEMA["id"], required=False)
+    status_col = find_col(buffer_raw, BUFFER_SCHEMA["status"], required=False)
+    if not all([art_col, qty_col, id_col, status_col]):
+        return 0, pd.DataFrame(columns=OBSERVATIONS_COLS)
+
+    df = buffer_raw[[art_col, qty_col, id_col, status_col]].copy()
+    df.columns = ["artikelnummer", "antal", "pallid", "status"]
+    df["antal"] = pd.to_numeric(df["antal"], errors="coerce")
+    df["status"] = pd.to_numeric(df["status"], errors="coerce")
+    df = df.dropna(subset=["artikelnummer", "antal", "pallid", "status"])
+    df = df[df["status"] == 30]
+    df["artikelnummer"] = df["artikelnummer"].astype(str).str.strip()
+    df["pallid"] = df["pallid"].astype(str).str.strip()
+    df["antal"] = df["antal"].astype(int).astype(str)
+    df = df[["artikelnummer", "pallid", "antal"]].drop_duplicates(subset="pallid")
+
+    obs_path = _observations_path()
+    befintliga = _read_observations(obs_path)
+    befintliga_ids = set(befintliga["pallid"].astype(str))
+
+    nya = df[~df["pallid"].isin(befintliga_ids)]
+    if nya.empty:
+        return 0, nya
+
+    kombinerat = pd.concat([befintliga, nya], ignore_index=True)
+    kombinerat.to_csv(obs_path, index=False, compression="gzip")
+    _recompute_artikel_max(kombinerat, _artikel_max_path())
+    return len(nya), nya
+
+
+def _github_token_path() -> Path:
+    appdata = os.environ.get("APPDATA") or str(Path.home())
+    return Path(appdata) / "allokering" / "config.json"
+
+
+def _load_github_token() -> Optional[str]:
+    p = _github_token_path()
+    if not p.exists():
+        return None
+    try:
+        # utf-8-sig hanterar UTF-8 med BOM (PowerShell Out-File -Encoding utf8 skriver BOM)
+        cfg = json.loads(p.read_text(encoding="utf-8-sig"))
+        token = cfg.get("github_token", "").strip()
+        return token or None
+    except Exception:
+        return None
+
+
+def _github_request(url: str, method: str = "GET", token: Optional[str] = None,
+                    payload: Optional[dict] = None, timeout: int = 15) -> Tuple[int, dict]:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "allokering-app"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    if data:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            return resp.status, (json.loads(body) if body else {})
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read())
+        except Exception:
+            body = {}
+        return e.code, body
+
+
+def push_new_observations_to_github(nya: pd.DataFrame) -> bool:
+    """Pusha nya observationer till GitHub som en sessions-CSV. Tyst no-op om token saknas."""
+    if nya is None or nya.empty:
+        return False
+    token = _load_github_token()
+    if not token:
+        return False
+    try:
+        from io import BytesIO
+        import gzip
+        buf = BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+            gz.write(nya.to_csv(index=False).encode("utf-8"))
+        gz_bytes = buf.getvalue()
+    except Exception:
+        return False
+
+    user = re.sub(r"[^A-Za-z0-9_-]", "_", os.environ.get("USERNAME") or "user")
+    ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+    remote_name = f"lowfreqdata/buffertpall/observations_{user}_{ts}.csv.gz"
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{urllib.parse.quote(remote_name)}"
+    payload = {
+        "message": f"User observations {user} {ts}",
+        "content": base64.b64encode(gz_bytes).decode("ascii"),
+        "branch": GITHUB_OBS_BRANCH,
+    }
+    status, _ = _github_request(api_url, method="PUT", token=token, payload=payload)
+    return 200 <= status < 300
+
+
+def fetch_observations_from_github() -> Tuple[int, int]:
+    """Tvavags-sync med GitHub master:
+    1. Hamta nya rader fran master och merga in i lokal observations.csv.gz
+    2. Hitta orphaned lokala pallid (sparade offline / push misslyckats) och push:a dem
+
+    Returnerar (antal_hamtade, antal_pushade_orphaned).
+    Tyst no-op pa natfel, JSON-fel eller saknade kolumner.
+    """
+    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_OBS_BRANCH}/{GITHUB_OBS_FILE}"
+    token = _load_github_token()
+    headers = {"User-Agent": "allokering-app"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(raw_url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read()
+    except Exception:
+        return 0, 0
+
+    from io import BytesIO
+    try:
+        remote = pd.read_csv(BytesIO(data), compression="gzip", dtype=str)
+    except Exception:
+        return 0, 0
+    for col in OBSERVATIONS_COLS:
+        if col not in remote.columns:
+            return 0, 0
+    remote = remote[OBSERVATIONS_COLS]
+
+    obs_path = _observations_path()
+    lokal = _read_observations(obs_path)
+    remote_ids = set(remote["pallid"].astype(str))
+    lokal_ids = set(lokal["pallid"].astype(str))
+
+    # 1. Hamta nya rader fran master
+    nya_fran_remote = remote[~remote["pallid"].astype(str).isin(lokal_ids)]
+    n_hamtade = len(nya_fran_remote)
+    if n_hamtade:
+        kombinerat = pd.concat([lokal, nya_fran_remote], ignore_index=True)
+        kombinerat.to_csv(obs_path, index=False, compression="gzip")
+        _recompute_artikel_max(kombinerat, _artikel_max_path())
+        lokal = kombinerat
+
+    # 2. Hitta orphaned lokala (finns lokalt, inte pa master) och push:a dem
+    orphaned = lokal[~lokal["pallid"].astype(str).isin(remote_ids)]
+    n_pushade = 0
+    if not orphaned.empty:
+        try:
+            if push_new_observations_to_github(orphaned):
+                n_pushade = len(orphaned)
+        except Exception:
+            pass
+
+    return n_hamtade, n_pushade
+
+
+def utbest_per_article(saldo_df: pd.DataFrame) -> Dict[str, float]:
+    """Summera 'utbeställt' per artikel från saldofilen.
+
+    Returnerar tom dict om artikel- eller utbest-kolumn saknas.
+    Inga bolagsfilter — alla rader summeras.
+    """
+    df = _clean_columns(saldo_df.copy())
+    art_col = find_col(df, ["artikel", "artnr", "art.nr", "artikelnummer", "sku"], required=False)
+    utbest_col = find_col(df, ["utbeställt", "utbestallt"], required=False)
+    if not art_col or not utbest_col:
+        return {}
+    tmp = pd.DataFrame({
+        "_art": _safe_str_series(df[art_col]),
+        "_utbest": df[utbest_col].map(to_num).fillna(0.0),
+    })
+    return tmp.groupby("_art")["_utbest"].sum().to_dict()
+
+
+def compute_lyx_articles(saldo_df: pd.DataFrame, max_df: pd.DataFrame) -> Tuple[list[str], int]:
     """
     Returnera artikelnummer där (plocksaldo + utbeställt) är högst 20 % av
-    median buffertantalet. Returvärdet är (artikellista, antal filtrerade rader).
+    max buffertantalet. Returvärdet är (artikellista, antal filtrerade rader).
     """
     saldo_df = _clean_columns(saldo_df.copy())
-    median_df = _clean_columns(median_df.copy())
+    max_df = _clean_columns(max_df.copy())
 
     art_col = find_col(saldo_df, ["artikel", "artnr", "art.nr", "artikelnummer", "sku"])
     saldo_col = find_col(
@@ -987,14 +1445,10 @@ def compute_lyx_articles(saldo_df: pd.DataFrame, median_df: pd.DataFrame) -> Tup
         saldo_filt["_utbest"] = 0.0
     saldo_filt["_total"] = saldo_filt["_saldo"] + saldo_filt["_utbest"]
 
-    med_art_col = find_col(median_df, ["artikelnummer", "artikel", "artnr", "art.nr", "sku"])
-    med_val_col = find_col(median_df, ["median"])
-    median_df["_art"] = _safe_str_series(median_df[med_art_col])
-    median_df["_median"] = median_df[med_val_col].map(to_num)
-    median_map = median_df.dropna(subset=["_median"]).set_index("_art")["_median"]
+    max_map = _build_article_max_map(max_df)
 
-    saldo_filt["_median"] = saldo_filt["_art"].map(median_map)
-    lyx_mask = saldo_filt["_median"].notna() & (saldo_filt["_total"] <= saldo_filt["_median"] * 0.20)
+    saldo_filt["_max"] = saldo_filt["_art"].map(max_map)
+    lyx_mask = saldo_filt["_max"].notna() & (saldo_filt["_total"] <= saldo_filt["_max"] * 0.20)
     lyx_arts = sorted(saldo_filt.loc[lyx_mask, "_art"].unique().tolist())
     return lyx_arts, len(saldo_filt)
 
@@ -2289,10 +2743,7 @@ class App(ttk.Frame):
         self.ordersaldo_list1_values: list[str] = []
         self.ordersaldo_list2_values: list[str] = []
         self.ordersaldo_column_candidates: dict[str, list[str]] = {
-            "order": ["ordernr", "ordernummer", "order number", "order no", "orderid", "order"],
-            "article": ["artikel", "artikelnr", "artikelnummer", "artnr", "sku", "item", "productcode"],
-            "demand": ["beställt", "bestalld", "ordered", "orderqty", "qty", "quantity", "antal"],
-            "pick": ["plock", "plocksaldo", "saldo", "available", "stock", "qtyavailable", "saldo autoplock"],
+            key: values[:] for key, values in ORDERSALDO_COLUMN_CANDIDATES.items()
         }
         self.wms_expected_filenames: dict[str, str] = {
             "wms_receive": "v_ask_receive_log.csv",
@@ -2329,6 +2780,7 @@ class App(ttk.Frame):
         except Exception:
             pass
         self._schedule_update_check()
+        threading.Thread(target=fetch_observations_from_github, daemon=True).start()
 
     def _log(self, msg: str, level: str = "info") -> None:
         logprintln(self.log, msg)
@@ -2610,6 +3062,8 @@ class App(ttk.Frame):
         # Row for Buffertpallar (CSV)
         ttk.Label(indata_frame, text="Buffertpallar (CSV):").grid(row=1, column=0, sticky="w", padx=4, pady=4)
         self.buffer_var = tk.StringVar()
+        self._last_observations_path: Optional[str] = None
+        self.buffer_var.trace_add("write", self._on_buffer_var_changed)
         status_buffer = tk.Label(
             indata_frame,
             text="Ej fil",
@@ -2897,6 +3351,14 @@ class App(ttk.Frame):
             state="disabled",
         )
         self.lyx_btn.pack(side="left", padx=4)
+        self.pafyllnadsprio_btn = ttk.Button(
+            ordersaldo_frame,
+            text="Påfyllnadsprio",
+            command=self.run_pafyllnadsprio,
+            style="Warning.TButton",
+            state="disabled",
+        )
+        self.pafyllnadsprio_btn.pack(side="left", padx=4)
         self.reset_cache_btn = ttk.Button(ordersaldo_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
         self.reset_cache_btn.pack(side="left", padx=(16, 4))
         self._action_requirements = {
@@ -2919,6 +3381,10 @@ class App(ttk.Frame):
                 ("wms_receive", "Mottagningslogg (CSV)"),
             ],
             self.lyx_btn: [
+                ("automation", "Saldo inkl. automation (CSV)"),
+            ],
+            self.pafyllnadsprio_btn: [
+                ("orders", "Bestallningslinjer (CSV)"),
                 ("automation", "Saldo inkl. automation (CSV)"),
             ],
         }
@@ -3074,6 +3540,43 @@ class App(ttk.Frame):
                 self.update_file_status_icons()
             except Exception:
                 pass
+
+    def _on_buffer_var_changed(self, *args) -> None:
+        """Triggas nar buffer_var andras. Lasin filen i bakgrundstrad och uppdatera observations."""
+        path = self.buffer_var.get().strip()
+        if not path or path == self._last_observations_path:
+            return
+        if not Path(path).is_file():
+            return
+        self._last_observations_path = path
+        threading.Thread(target=self._observations_worker, args=(path,), daemon=True).start()
+
+    def _observations_worker(self, path: str) -> None:
+        """Las buffer-filen och uppdatera observations.csv.gz + push till GitHub. Korbar fran bakgrundstrad."""
+        try:
+            buffer_raw = pd.read_csv(path, dtype=str, sep=None, engine="python")
+            buffer_raw = _clean_columns(buffer_raw)
+            n_nya, nya_rader = update_observations_from_buffer(buffer_raw)
+        except Exception as e:
+            self.master.after(0, lambda: self._log(f"[Observations] Misslyckades lasa buffertpall: {e}"))
+            return
+        if n_nya:
+            self.master.after(0, lambda: self._log(
+                f"[Observations] {n_nya} nya pallid sparade lokalt (artikel_max.csv uppdaterad)."
+            ))
+            try:
+                pushed = push_new_observations_to_github(nya_rader)
+                if pushed:
+                    self.master.after(0, lambda: self._log(
+                        f"[Observations] {n_nya} pallid pushade till GitHub."
+                    ))
+                else:
+                    self.master.after(0, lambda: self._log(
+                        "[Observations] GitHub-push hoppades over (ingen token eller API-fel)."
+                    ))
+            except Exception as e:
+                err = str(e)
+                self.master.after(0, lambda: self._log(f"[Observations] GitHub-push misslyckades: {err}"))
 
     def pick_item(self) -> None:
         """
@@ -3669,29 +4172,38 @@ class App(ttk.Frame):
 
     def _ordersaldo_norm(self, value: str) -> str:
         """Normalisera kolumnnamn för robust matchning."""
-        txt = str(value).lower()
-        txt = txt.replace("å", "a").replace("ä", "a").replace("ö", "o")
-        txt = re.sub(r"[^a-z0-9]+", "", txt)
-        return txt
+        return _ordersaldo_norm(value)
 
     def _ordersaldo_find_col(self, df: pd.DataFrame, candidates: list[str], used_cols: set[str]) -> Optional[str]:
         """Hitta kolumn via exakt/fuzzy match mot kandidater."""
-        cols = [str(c) for c in df.columns]
-        norm_cols = {col: self._ordersaldo_norm(col) for col in cols}
-        cand_norm = [self._ordersaldo_norm(c) for c in candidates]
-        for cand in cand_norm:
-            for col, norm_col in norm_cols.items():
-                if col in used_cols:
-                    continue
-                if norm_col == cand:
-                    return col
-        for cand in cand_norm:
-            for col, norm_col in norm_cols.items():
-                if col in used_cols:
-                    continue
-                if cand and cand in norm_col:
-                    return col
-        return None
+        return _ordersaldo_find_col(df, candidates, used_cols)
+
+    def _load_ordersaldo_source_df(self, source_name: str = "OrderSaldo5 (beställningslinjer)") -> Optional[pd.DataFrame]:
+        """Läs beställningslinjer och applicera aktiva filter för ordersaldo-funktioner."""
+        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        if not path:
+            return None
+        df = self._read_tabular_for_filter_scan(path)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return None
+        try:
+            df = self._apply_value_filters(df, source_name, log_result=False)
+        except Exception:
+            pass
+        return df
+
+    def _load_ordersaldo_utbest_map(self) -> Dict[str, float]:
+        """Läs utbeställt per artikel från automation/saldofilen."""
+        saldo_path = self.automation_var.get().strip() if hasattr(self, "automation_var") else ""
+        if not saldo_path:
+            return {}
+        try:
+            saldo_df_raw = _clean_columns(
+                pd.read_csv(saldo_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+            )
+        except Exception:
+            return {}
+        return utbest_per_article(saldo_df_raw)
 
     def _refresh_ordersaldo_from_orders(self) -> None:
         """Beräkna data för Kompletta ordrar/Påfyllningsbehov från beställningslinjer."""
@@ -3706,36 +4218,16 @@ class App(ttk.Frame):
             except Exception:
                 pass
 
-        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
-        if not path:
-            _disable_all()
-            return
-
-        df = self._read_tabular_for_filter_scan(path)
+        df = self._load_ordersaldo_source_df()
         if not isinstance(df, pd.DataFrame) or df.empty:
             _disable_all()
             return
 
-        try:
-            df = self._apply_value_filters(df, "OrderSaldo5 (beställningslinjer)", log_result=False)
-        except Exception:
-            pass
-
-        if df.empty:
-            _disable_all()
-            return
-
-        used: set[str] = set()
-        order_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["order"], used)
-        if order_col:
-            used.add(order_col)
-        article_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["article"], used)
-        if article_col:
-            used.add(article_col)
-        demand_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["demand"], used)
-        if demand_col:
-            used.add(demand_col)
-        pick_col = self._ordersaldo_find_col(df, self.ordersaldo_column_candidates["pick"], used)
+        column_names = _find_ordersaldo_columns(df, self.ordersaldo_column_candidates)
+        order_col = column_names.get("order")
+        article_col = column_names.get("article")
+        demand_col = column_names.get("demand")
+        pick_col = column_names.get("pick")
 
         # Vecka 27 behöver bara order + artikel + antal (inte pick).
         try:
@@ -3750,24 +4242,18 @@ class App(ttk.Frame):
             self.ordersaldo_copy_list2_btn.configure(state="disabled")
             return
 
-        calc_df = df.copy()
-        calc_df[order_col] = calc_df[order_col].astype(str).str.strip()
-        calc_df[article_col] = calc_df[article_col].astype(str).str.strip()
-        calc_df[demand_col] = calc_df[demand_col].map(to_num).astype(float)
-        calc_df[pick_col] = calc_df[pick_col].map(to_num).astype(float)
+        try:
+            complete_orders, holistic_short = compute_ordersaldo_data(
+                df,
+                utbest_map=self._load_ordersaldo_utbest_map(),
+                column_names=column_names,
+            )
+        except Exception:
+            self.ordersaldo_copy_list1_btn.configure(state="disabled")
+            self.ordersaldo_copy_list2_btn.configure(state="disabled")
+            return
 
-        calc_df["_enough_row"] = calc_df[pick_col] >= calc_df[demand_col]
-        complete_mask = calc_df.groupby(order_col)["_enough_row"].all()
-        self.ordersaldo_list1_values = sorted(complete_mask[complete_mask].index.astype(str).tolist())
-
-        demand_by_art = calc_df.groupby(article_col)[demand_col].sum(min_count=1)
-        stock_by_art = calc_df.groupby(article_col)[pick_col].max()
-        holistic = pd.DataFrame({
-            "Total beställt": demand_by_art,
-            "Tillgängligt saldo (Plock)": stock_by_art,
-        }).fillna(0)
-        holistic["Underskott"] = (holistic["Total beställt"] - holistic["Tillgängligt saldo (Plock)"]).clip(lower=0)
-        holistic_short = holistic[holistic["Underskott"] > 0]
+        self.ordersaldo_list1_values = complete_orders
         self.ordersaldo_list2_values = sorted(holistic_short.index.astype(str).tolist())
 
         self.ordersaldo_copy_list1_btn.configure(state="normal" if self.ordersaldo_list1_values else "disabled")
@@ -3802,27 +4288,27 @@ class App(ttk.Frame):
         messagebox.showinfo(APP_TITLE, f"{copied_count} artikelnummer kopierade.")
 
     def run_lyx(self) -> None:
-        """LYX: Kopiera artikelnummer där (plocksaldo + utbeställt) ≤ 20 % av median buffertantal."""
+        """LYX: Kopiera artikelnummer där (plocksaldo + utbeställt) ≤ 20 % av max buffertantal."""
         saldo_path = self.automation_var.get().strip()
         if not saldo_path:
             messagebox.showinfo(APP_TITLE, "Ladda upp saldofil först.")
             return
 
-        median_csv = _find_lyx_median_csv()
-        if median_csv is None:
-            messagebox.showerror(APP_TITLE, "Kunde inte hitta artikel_median.csv (LYX Mestergruppen).")
+        max_csv = _find_lyx_max_csv()
+        if max_csv is None:
+            messagebox.showerror(APP_TITLE, "Kunde inte hitta lowfreqdata/buffertpall/artikel_max.csv.")
             return
 
         try:
             saldo_df = _clean_columns(pd.read_csv(saldo_path, dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
-            median_df = _clean_columns(pd.read_csv(str(median_csv), dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
-            lyx_arts, filtered_row_count = compute_lyx_articles(saldo_df, median_df)
+            max_df = _clean_columns(pd.read_csv(str(max_csv), dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
+            lyx_arts, filtered_row_count = compute_lyx_articles(saldo_df, max_df)
             if filtered_row_count == 0:
                 messagebox.showinfo(APP_TITLE, "Ingen data kvar efter filtrering (Bolag=MG & Plockplats ej tom).")
                 return
 
             if not lyx_arts:
-                messagebox.showinfo(APP_TITLE, "Inga artiklar med (plocksaldo + utbeställt) ≤ 20 % av median buffertantal.")
+                messagebox.showinfo(APP_TITLE, "Inga artiklar med (plocksaldo + utbeställt) ≤ 20 % av max buffertantal.")
                 return
 
             self.master.clipboard_clear()
@@ -3831,6 +4317,56 @@ class App(ttk.Frame):
             messagebox.showinfo(APP_TITLE, f"{len(lyx_arts)} artikelnummer kopierade.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"LYX-beräkning misslyckades:\n{e}")
+
+    def run_pafyllnadsprio(self) -> None:
+        """Beräkna Påfyllnadsprio och öppna resultatet i en temporär Excel-fil."""
+        orders_path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        if not orders_path:
+            messagebox.showinfo(APP_TITLE, "Ladda upp beställningslinjer först.")
+            return
+
+        saldo_path = self.automation_var.get().strip() if hasattr(self, "automation_var") else ""
+        if not saldo_path:
+            messagebox.showinfo(APP_TITLE, "Ladda upp saldofil först.")
+            return
+
+        max_csv = _find_lyx_max_csv()
+        if max_csv is None:
+            messagebox.showerror(APP_TITLE, "Kunde inte hitta lowfreqdata/buffertpall/artikel_max.csv.")
+            return
+
+        try:
+            orders_df = self._load_ordersaldo_source_df("Påfyllnadsprio (beställningslinjer)")
+            if not isinstance(orders_df, pd.DataFrame):
+                messagebox.showinfo(APP_TITLE, "Beställningslinjefilen är tom eller kunde inte läsas.")
+                return
+
+            column_names = _find_ordersaldo_columns(orders_df, self.ordersaldo_column_candidates)
+            _, shortage_df = compute_ordersaldo_data(
+                orders_df,
+                utbest_map=self._load_ordersaldo_utbest_map(),
+                column_names=column_names,
+            )
+            if shortage_df.empty:
+                messagebox.showinfo(APP_TITLE, "Inga artiklar med underskott.")
+                return
+
+            max_df = _clean_columns(pd.read_csv(str(max_csv), dtype=str, sep=None, engine="python", encoding="utf-8-sig"))
+            report_df, missing_reference_count = build_pafyllnadsprio_report(shortage_df, max_df)
+            path = _open_df_in_excel({"Påfyllnadsprio": report_df}, label="pafyllnadsprio")
+            self._log(f"Öppnade Påfyllnadsprio i Excel (temporär fil): {path}")
+            if missing_reference_count:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    (
+                        "För bättre träff, ladda upp buffertpallar.csv. "
+                        f"{missing_reference_count} artiklar saknade referensvärde och placerades i PRIO 5."
+                    ),
+                )
+        except KeyError as e:
+            messagebox.showerror(APP_TITLE, str(e))
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Påfyllnadsprio misslyckades:\n{e}")
 
     @staticmethod
     def _vecka27_fmt_qty(q: float) -> str:
