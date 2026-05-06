@@ -29,15 +29,15 @@ class LyxLogicTest(unittest.TestCase):
                 {"Artikel": "A104", "Plocksaldo": "1", "Utbestallt": "0", "Plockplats": "P4", "Bolag": "MG"},
             ]
         )
-        median_df = pd.DataFrame(
+        max_df = pd.DataFrame(
             [
-                {"artikelnummer": "A100", "median": "100"},
-                {"artikelnummer": "A101", "median": "100"},
-                {"artikelnummer": "A104", "median": "10"},
+                {"artikelnummer": "A100", "max": "100"},
+                {"artikelnummer": "A101", "max": "100"},
+                {"artikelnummer": "A104", "max": "10"},
             ]
         )
 
-        articles, filtered_rows = MODULE.compute_lyx_articles(saldo_df, median_df)
+        articles, filtered_rows = MODULE.compute_lyx_articles(saldo_df, max_df)
 
         self.assertEqual(filtered_rows, 3)
         self.assertEqual(articles, ["A100", "A104"])
@@ -49,14 +49,14 @@ class LyxLogicTest(unittest.TestCase):
                 {"Artikel": "B201", "Plocksaldo": "5", "Plockplats": "P2", "Bolag": "MG"},
             ]
         )
-        median_df = pd.DataFrame(
+        max_df = pd.DataFrame(
             [
-                {"artikelnummer": "B200", "median": "20"},
-                {"artikelnummer": "B201", "median": "20"},
+                {"artikelnummer": "B200", "max": "20"},
+                {"artikelnummer": "B201", "max": "20"},
             ]
         )
 
-        articles, filtered_rows = MODULE.compute_lyx_articles(saldo_df, median_df)
+        articles, filtered_rows = MODULE.compute_lyx_articles(saldo_df, max_df)
 
         self.assertEqual(filtered_rows, 2)
         self.assertEqual(articles, ["B200"])

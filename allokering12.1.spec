@@ -10,7 +10,7 @@ tkdnd_datas = collect_data_files("tkinterdnd2")
 extra_datas = [
     (str(project_root / "wms_sok79.py"), "."),
     (str(project_root / "packaging" / "windows" / "app.ico"), "."),
-    (str(project_root / "LYX Mestergruppen" / "artikel_median.csv"), "LYX Mestergruppen"),
+    (str(project_root / "lowfreqdata" / "buffertpall" / "artikel_max.csv"), "lowfreqdata/buffertpall"),
 ]
 
 a = Analysis(
