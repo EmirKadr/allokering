@@ -5,7 +5,7 @@ on:
     branches:
       - data/community-observations
     paths:
-      - 'LYX Mestergruppen/observations_*.csv.gz'
+      - 'lowfreqdata/buffertpall/observations_*.csv.gz'
   workflow_dispatch:
 
 permissions:
@@ -36,14 +36,14 @@ jobs:
           import glob, os, pandas as pd
           from pathlib import Path
 
-          base_path = Path('LYX Mestergruppen/observations.csv.gz')
+          base_path = Path('lowfreqdata/buffertpall/observations.csv.gz')
           cols = ['artikelnummer', 'pallid', 'antal']
 
           frames = []
           if base_path.exists() and base_path.stat().st_size > 0:
               frames.append(pd.read_csv(base_path, dtype=str))
 
-          user_files = sorted(glob.glob('LYX Mestergruppen/observations_*.csv.gz'))
+          user_files = sorted(glob.glob('lowfreqdata/buffertpall/observations_*.csv.gz'))
           for f in user_files:
               try:
                   df = pd.read_csv(f, dtype=str)
@@ -72,7 +72,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A "LYX Mestergruppen/"
+          git add -A "lowfreqdata/"
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
