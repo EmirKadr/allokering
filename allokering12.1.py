@@ -4329,8 +4329,6 @@ class App(ttk.Frame):
         self.pafyllnadsprio_btn.pack(side="left", padx=4)
         self.reset_cache_btn = ttk.Button(ordersaldo_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
         self.reset_cache_btn.pack(side="left", padx=(16, 4))
-        self.hjälp_btn = ttk.Button(ordersaldo_frame, text="? Hjälp", command=self._toggle_help_mode)
-        self.hjälp_btn.pack(side="left", padx=(16, 4))
         self._action_requirements = {
             self.run_btn: [
                 ("orders", "Bestallningslinjer (CSV)"),
@@ -4447,7 +4445,6 @@ class App(ttk.Frame):
         _hreg(self.overview_check_btn, "overview_check_btn")
         _hreg(self.dispatch_check_btn, "dispatch_check_btn")
         _hreg(self.eftersok_btn, "eftersok_btn")
-        _hreg(self.hjälp_btn, "hjalp_btn")
         _hreg(self.lyx_btn, "lyx_btn")
         _hreg(self.ordersaldo_copy_list1_btn, "ordersaldo_list1_btn")
         _hreg(self.ordersaldo_copy_list2_btn, "ordersaldo_list2_btn")
@@ -4590,14 +4587,12 @@ class App(ttk.Frame):
 
     def _enter_help_mode(self, mode: str) -> None:
         self._help_mode = mode
-        self.hjälp_btn.configure(text="✕ Stäng hjälp")
         self._show_help_overlay()
         self._build_help_bar()
         self.master.bind("<Escape>", lambda _e: self._exit_help_mode())
 
     def _exit_help_mode(self) -> None:
         self._help_mode = ""
-        self.hjälp_btn.configure(text="? Hjälp")
         self._remove_help_overlay()
         self._close_help_popup()
         self._close_help_bar()
@@ -4753,26 +4748,24 @@ class App(ttk.Frame):
         bar = tk.Toplevel(self.master)
         bar.wm_overrideredirect(True)
         bar.wm_attributes("-topmost", True)
-        bar.configure(bg="#CC2222")   # röd kant runt hela baren
+        bar.configure(bg="#CC2222")
         self._help_bar = bar
 
-        frm = tk.Frame(bar, bg="#1a1a1a", padx=10, pady=7)
+        frm = tk.Frame(bar, bg="#1a1a1a", padx=8, pady=6)
         frm.pack(fill="both", expand=True, padx=2, pady=2)
 
-        tk.Label(frm, text="❓ Hjälpläge",
-                 bg="#1a1a1a", fg="white",
-                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
-
+        # Avancerat-toggle till vänster
         tk.Label(frm, text="Avancerat", bg="#1a1a1a", fg="#CCCCCC",
-                 font=("Arial", 9)).pack(side="left")
+                 font=("Arial", 9)).pack(side="left", padx=(0, 4))
         toggle = SlideToggle(frm, command=self._on_advanced_toggle, bg="#1a1a1a")
-        toggle.pack(side="left", padx=(5, 12))
+        toggle.pack(side="left", padx=(0, 10))
         self._help_toggle = toggle
 
-        tk.Button(frm, text="✕  Stäng", command=self._exit_help_mode,
+        # Stor tydlig X-knapp till höger
+        tk.Button(frm, text="✕", command=self._exit_help_mode,
                   bg="#CC2222", fg="white", relief="flat",
                   activebackground="#AA0000", activeforeground="white",
-                  font=("Arial", 10, "bold"), padx=10, pady=2).pack(side="left")
+                  font=("Arial", 13, "bold"), width=2, pady=0).pack(side="left")
 
         bar.bind("<Escape>", lambda _e: self._exit_help_mode())
         bar.update_idletasks()
@@ -4788,10 +4781,10 @@ class App(ttk.Frame):
         wy = self.master.winfo_rooty()
         ww = self.master.winfo_width()
         sw = self.master.winfo_screenwidth()
-        # Centrera baren ovanför fönstret; klipp till skärmen om den inte får plats
-        x = wx + (ww - bw) // 2
+        # Övre högra hörnet; klipp till skärmen om den inte får plats
+        x = wx + ww - bw - 4
         x = max(4, min(x, sw - bw - 4))
-        y = wy + 8
+        y = wy + 4
         self._help_bar.geometry(f"+{x}+{y}")
 
     def _close_help_bar(self) -> None:
