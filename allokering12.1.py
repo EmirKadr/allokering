@@ -3314,11 +3314,12 @@ class App(ttk.Frame):
         self._update_progress_value = tk.IntVar(value=0)
         self._update_status_var = tk.StringVar(value="")
         self._help_mode: str = ""  # "" | "enkel" | "avancerat"
-        self._help_overlay: Optional[tk.Canvas] = None
+        self._help_overlay: Optional[tk.Toplevel] = None
         self._help_popup: Optional[tk.Toplevel] = None
         self._help_bar: Optional[tk.Toplevel] = None
         self._help_toggle: Optional[SlideToggle] = None
         self._HELP_REGISTRY: dict[int, str] = {}
+        self._help_widget_map: dict[int, tk.Widget] = {}
         self._analytics_settings: dict = {}
         self._analytics_client = AnalyticsClient({"active": False, "reason": "Analytics inte initierat."})
         self._session_started_at = time.monotonic()
@@ -3383,6 +3384,9 @@ class App(ttk.Frame):
     def _setup_menu(self) -> None:
         menu = tk.Menu(self.master)
         help_menu = tk.Menu(menu, tearoff=0)
+        help_menu.add_command(label="Hjälpläge  (klicka på valfri del av appen)",
+                              command=self._toggle_help_mode)
+        help_menu.add_separator()
         help_menu.add_command(
             label="Sök efter uppdateringar",
             command=lambda: self._check_for_updates(manual=True),
@@ -3910,8 +3914,6 @@ class App(ttk.Frame):
             state="disabled",
         )
         self.eftersok_btn.pack(side="left", padx=4)
-        self.hjälp_btn = ttk.Button(run_frame, text="? Hjälp", command=self._toggle_help_mode)
-        self.hjälp_btn.pack(side="left", padx=(16, 4))
 
         # Egna knappar för listor, på separat rad (likt Chromium-layouten).
         ordersaldo_frame = ttk.Frame(self)
@@ -3958,6 +3960,8 @@ class App(ttk.Frame):
         self.pafyllnadsprio_btn.pack(side="left", padx=4)
         self.reset_cache_btn = ttk.Button(ordersaldo_frame, text="Rensa cache", command=self.reset_cache, style="Green.TButton")
         self.reset_cache_btn.pack(side="left", padx=(16, 4))
+        self.hjälp_btn = ttk.Button(ordersaldo_frame, text="? Hjälp", command=self._toggle_help_mode)
+        self.hjälp_btn.pack(side="left", padx=(16, 4))
         self._action_requirements = {
             self.run_btn: [
                 ("orders", "Bestallningslinjer (CSV)"),
@@ -4064,34 +4068,36 @@ class App(ttk.Frame):
         # Starta med en balanserad delning så handtaget går att dra både upp/ner direkt.
         self.after(120, self._set_log_splitter_default_position)
 
-        # Hjälp-registry: id(widget) → ämnesnamn för hjälptexten
-        reg = self._HELP_REGISTRY
-        reg[id(self.run_btn)] = "run_btn"
-        reg[id(self.koppla_btn)] = "koppla_btn"
-        reg[id(self.overview_check_btn)] = "overview_check_btn"
-        reg[id(self.dispatch_check_btn)] = "dispatch_check_btn"
-        reg[id(self.eftersok_btn)] = "eftersok_btn"
-        reg[id(self.hjälp_btn)] = "hjalp_btn"
-        reg[id(self.lyx_btn)] = "lyx_btn"
-        reg[id(self.ordersaldo_copy_list1_btn)] = "ordersaldo_list1_btn"
-        reg[id(self.ordersaldo_copy_list2_btn)] = "ordersaldo_list2_btn"
-        reg[id(self.vecka27_btn)] = "vecka27_btn"
-        reg[id(self.pafyllnadsprio_btn)] = "pafyllnadsprio_btn"
-        reg[id(self.reset_cache_btn)] = "reset_cache_btn"
-        reg[id(self.open_result_btn)] = "open_result_btn"
-        reg[id(self.open_nearmiss_btn)] = "open_nearmiss_btn"
-        reg[id(self.open_palletspaces_btn)] = "open_palletspaces_btn"
-        reg[id(self.open_prognos_btn)] = "open_prognos_btn"
-        reg[id(self.open_refill_btn)] = "open_refill_btn"
-        reg[id(self.open_koppla_btn)] = "open_koppla_btn"
-        reg[id(self.open_overview_check_btn)] = "open_overview_check_btn"
-        reg[id(self.open_dispatch_check_btn)] = "open_dispatch_check_btn"
-        reg[id(self.open_eftersok_btn)] = "open_eftersok_btn"
-        reg[id(self.log)] = "log_widget"
-        reg[id(self.summary_table)] = "summary_table"
-        # Filuppladdnings-labels – alla pekar på samma ämne för sin filtyp
+        # Hjälp-registry: registrerar widget → ämne för hjälptexten
+        def _hreg(widget: tk.Widget, topic: str) -> None:
+            self._HELP_REGISTRY[id(widget)] = topic
+            self._help_widget_map[id(widget)] = widget
+
+        _hreg(self.run_btn, "run_btn")
+        _hreg(self.koppla_btn, "koppla_btn")
+        _hreg(self.overview_check_btn, "overview_check_btn")
+        _hreg(self.dispatch_check_btn, "dispatch_check_btn")
+        _hreg(self.eftersok_btn, "eftersok_btn")
+        _hreg(self.hjälp_btn, "hjalp_btn")
+        _hreg(self.lyx_btn, "lyx_btn")
+        _hreg(self.ordersaldo_copy_list1_btn, "ordersaldo_list1_btn")
+        _hreg(self.ordersaldo_copy_list2_btn, "ordersaldo_list2_btn")
+        _hreg(self.vecka27_btn, "vecka27_btn")
+        _hreg(self.pafyllnadsprio_btn, "pafyllnadsprio_btn")
+        _hreg(self.reset_cache_btn, "reset_cache_btn")
+        _hreg(self.open_result_btn, "open_result_btn")
+        _hreg(self.open_nearmiss_btn, "open_nearmiss_btn")
+        _hreg(self.open_palletspaces_btn, "open_palletspaces_btn")
+        _hreg(self.open_prognos_btn, "open_prognos_btn")
+        _hreg(self.open_refill_btn, "open_refill_btn")
+        _hreg(self.open_koppla_btn, "open_koppla_btn")
+        _hreg(self.open_overview_check_btn, "open_overview_check_btn")
+        _hreg(self.open_dispatch_check_btn, "open_dispatch_check_btn")
+        _hreg(self.open_eftersok_btn, "open_eftersok_btn")
+        _hreg(self.log, "log_widget")
+        _hreg(self.summary_table, "summary_table")
         for ft, (lbl, _btn) in self.file_status_widgets.items():
-            reg[id(lbl)] = f"file_{ft}"
+            _hreg(lbl, f"file_{ft}")
 
         self.last_result_df: pd.DataFrame | None = None
         self.last_nearmiss_instead_df: pd.DataFrame | None = None
@@ -4233,24 +4239,45 @@ class App(ttk.Frame):
 
     def _show_help_overlay(self) -> None:
         self._remove_help_overlay()
-        canvas = tk.Canvas(self, highlightthickness=0, cursor="question_arrow")
-        canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self._help_overlay = canvas
-        self._redraw_overlay()
-        canvas.bind("<Button-1>", self._on_help_click)
-        canvas.bind("<Configure>", lambda _e: self._redraw_overlay())
+        # Toplevel-overlay med alpha ger riktig genomskinlighet (Canvas kan inte det)
+        overlay = tk.Toplevel(self.master)
+        overlay.wm_overrideredirect(True)
+        overlay.wm_attributes("-topmost", True)
+        overlay.wm_attributes("-alpha", 0.35)
+        overlay.configure(cursor="question_arrow")
+        self._help_overlay = overlay
+        self._update_overlay_color()
+        self._position_overlay()
+        overlay.bind("<Button-1>", self._on_help_click)
+        overlay.bind("<Escape>", lambda _e: self._exit_help_mode())
+        self.master.bind("<Configure>", self._on_main_configure_help, add="+")
 
-    def _redraw_overlay(self) -> None:
-        canvas = self._help_overlay
-        if canvas is None:
+    def _update_overlay_color(self) -> None:
+        if self._help_overlay is None:
             return
-        canvas.delete("all")
-        w = canvas.winfo_width() or self.winfo_width()
-        h = canvas.winfo_height() or self.winfo_height()
-        color = "#CC2222" if self._help_mode == "avancerat" else "#555555"
-        canvas.create_rectangle(0, 0, w, h, fill=color, stipple="gray50", outline="")
+        color = "#CC2222" if self._help_mode == "avancerat" else "#808080"
+        self._help_overlay.configure(bg=color)
+
+    def _position_overlay(self) -> None:
+        if self._help_overlay is None:
+            return
+        self.master.update_idletasks()
+        x = self.master.winfo_rootx()
+        y = self.master.winfo_rooty()
+        w = self.master.winfo_width()
+        h = self.master.winfo_height()
+        self._help_overlay.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _on_main_configure_help(self, event) -> None:
+        if event.widget is self.master:
+            self._position_overlay()
+            self._reposition_help_bar()
 
     def _remove_help_overlay(self) -> None:
+        try:
+            self.master.unbind("<Configure>")
+        except Exception:
+            pass
         if self._help_overlay is not None:
             try:
                 self._help_overlay.destroy()
@@ -4259,15 +4286,27 @@ class App(ttk.Frame):
             self._help_overlay = None
 
     def _on_help_click(self, event) -> None:
-        overlay = self._help_overlay
-        if overlay is None:
-            return
-        # Sänk overlay tillfälligt så winfo_containing hittar widget under
-        overlay.lower()
-        target = self.winfo_containing(event.x_root, event.y_root)
-        overlay.lift()
-        topic = self._HELP_REGISTRY.get(id(target)) if target else None
+        topic = self._find_topic_at(event.x_root, event.y_root)
         self._show_help_popup(topic, event.x_root, event.y_root)
+
+    def _find_topic_at(self, x_root: int, y_root: int) -> Optional[str]:
+        """Hitta hjälpämne för widgeten under skärmkoordinat (x_root, y_root)."""
+        for widget_id, topic in self._HELP_REGISTRY.items():
+            widget = self._help_widget_map.get(widget_id)
+            if widget is None:
+                continue
+            try:
+                if not widget.winfo_exists():
+                    continue
+                wx = widget.winfo_rootx()
+                wy = widget.winfo_rooty()
+                ww = widget.winfo_width()
+                wh = widget.winfo_height()
+                if wx <= x_root < wx + ww and wy <= y_root < wy + wh:
+                    return topic
+            except Exception:
+                pass
+        return None
 
     def _get_help_text(self, topic: str) -> str:
         folder = "avancerat" if self._help_mode == "avancerat" else "enkel"
@@ -4335,28 +4374,31 @@ class App(ttk.Frame):
         bar = tk.Toplevel(self.master)
         bar.wm_overrideredirect(True)
         bar.wm_attributes("-topmost", True)
+        bar.configure(bg="#CC2222")   # röd kant runt hela baren
         self._help_bar = bar
 
-        frm = tk.Frame(bar, bg="#2D2D2D", padx=8, pady=6)
-        frm.pack(fill="both", expand=True)
+        frm = tk.Frame(bar, bg="#1a1a1a", padx=10, pady=8)
+        frm.pack(fill="both", expand=True, padx=2, pady=2)
 
-        tk.Label(frm, text="Hjälpläge aktivt", bg="#2D2D2D", fg="white",
-                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 12))
+        tk.Label(frm, text="❓ Hjälpläge – klicka på valfri del av appen",
+                 bg="#1a1a1a", fg="white",
+                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 14))
 
-        tk.Label(frm, text="Avancerat", bg="#2D2D2D", fg="#AAAAAA",
+        tk.Label(frm, text="Avancerat", bg="#1a1a1a", fg="#CCCCCC",
                  font=("Arial", 9)).pack(side="left")
-        toggle = SlideToggle(frm, command=self._on_advanced_toggle, bg="#2D2D2D")
-        toggle.pack(side="left", padx=(4, 12))
+        toggle = SlideToggle(frm, command=self._on_advanced_toggle, bg="#1a1a1a")
+        toggle.pack(side="left", padx=(6, 16))
         self._help_toggle = toggle
 
-        tk.Button(frm, text="✕", command=self._exit_help_mode,
+        tk.Button(frm, text="✕  Stäng hjälp", command=self._exit_help_mode,
                   bg="#CC2222", fg="white", relief="flat",
                   activebackground="#AA0000", activeforeground="white",
-                  font=("Arial", 10, "bold"), width=2).pack(side="left")
+                  font=("Arial", 10, "bold"), padx=8, pady=2).pack(side="left")
 
         bar.bind("<Escape>", lambda _e: self._exit_help_mode())
+        # Ge tkinter tid att rendera baren innan positionering
+        bar.update_idletasks()
         self._reposition_help_bar()
-        bar.bind("<Configure>", lambda _e: None)
 
     def _reposition_help_bar(self) -> None:
         if self._help_bar is None:
@@ -4382,7 +4424,7 @@ class App(ttk.Frame):
 
     def _on_advanced_toggle(self, state: bool) -> None:
         self._help_mode = "avancerat" if state else "enkel"
-        self._redraw_overlay()
+        self._update_overlay_color()
         self._close_help_popup()
 
     def pick_item(self) -> None:
