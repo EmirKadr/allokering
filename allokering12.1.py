@@ -60,6 +60,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import tkinter as tk
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
@@ -88,12 +89,15 @@ from app_info import (
     ANALYTICS_ENABLED_DEFAULT,
     ANALYTICS_ENABLED_ENV,
     ANALYTICS_HOST_ENV,
+    ANALYTICS_LOCAL_STORAGE_DIR,
     ANALYTICS_POSTHOG_HOST,
     ANALYTICS_POSTHOG_PROJECT_API_KEY,
     ANALYTICS_PROJECT_API_KEY_ENV,
+    ANALYTICS_STORAGE_DIR_ENV,
     GITHUB_RELEASES_URL,
     UPDATE_DISABLED_ENV,
 )
+from analytics_store import append_analytics_event, resolve_analytics_storage_dir
 from update_service import UpdateInfo, check_for_update, download_update_installer
 
 
@@ -110,6 +114,7 @@ ANALYTICS_CONFIG_KEY_ENABLED = "analytics_enabled"
 ANALYTICS_CONFIG_KEY_DISTINCT_ID = "analytics_distinct_id"
 ANALYTICS_CONFIG_KEY_HOST = "analytics_host"
 ANALYTICS_CONFIG_KEY_PROJECT_API_KEY = "analytics_project_api_key"
+ANALYTICS_CONFIG_KEY_STORAGE_DIR = "analytics_storage_dir"
 
 
 def _parse_boolish(value: object) -> Optional[bool]:
@@ -182,6 +187,14 @@ def _resolve_analytics_settings(enable_analytics: bool = True) -> dict:
         or ANALYTICS_POSTHOG_PROJECT_API_KEY
         or ""
     ).strip()
+    storage_dir = resolve_analytics_storage_dir(
+        str(
+            os.environ.get(ANALYTICS_STORAGE_DIR_ENV)
+            or cfg.get(ANALYTICS_CONFIG_KEY_STORAGE_DIR)
+            or ANALYTICS_LOCAL_STORAGE_DIR
+            or ""
+        ).strip()
+    )
 
     distinct_id = ""
     if enable_analytics or enabled_pref:
@@ -191,18 +204,23 @@ def _resolve_analytics_settings(enable_analytics: bool = True) -> dict:
         reason = "Analytics är tillfälligt avstängt för detta körläge."
     elif not enabled_pref:
         reason = "Användaren har stängt av anonym användningsstatistik."
-    elif not api_key:
-        reason = "Ingen PostHog project API key är konfigurerad ännu."
+    elif not api_key and not str(storage_dir).strip():
+        reason = "Ingen analytics-lagring är konfigurerad ännu."
     else:
         reason = ""
 
-    active = bool(enable_analytics and enabled_pref and api_key and host)
+    local_active = bool(enable_analytics and enabled_pref and str(storage_dir).strip())
+    remote_active = bool(enable_analytics and enabled_pref and api_key and host)
+    active = bool(local_active or remote_active)
     return {
         "active": active,
+        "local_active": local_active,
+        "remote_active": remote_active,
         "enabled_preference": bool(enabled_pref),
         "host": host,
         "api_key": api_key,
         "distinct_id": distinct_id,
+        "storage_dir": str(storage_dir),
         "reason": reason,
     }
 
@@ -210,9 +228,12 @@ def _resolve_analytics_settings(enable_analytics: bool = True) -> dict:
 class AnalyticsClient:
     def __init__(self, settings: dict):
         self.active = bool(settings.get("active"))
+        self.local_active = bool(settings.get("local_active"))
+        self.remote_active = bool(settings.get("remote_active"))
         self.host = str(settings.get("host", "")).rstrip("/")
         self.api_key = str(settings.get("api_key", "")).strip()
         self.distinct_id = str(settings.get("distinct_id", "")).strip()
+        self.storage_dir = resolve_analytics_storage_dir(str(settings.get("storage_dir", "")).strip())
         self.reason = str(settings.get("reason", "")).strip()
         self.session_id = uuid.uuid4().hex
         self._queue: "queue.Queue[object]" = queue.Queue()
@@ -239,7 +260,7 @@ class AnalyticsClient:
             "api_key": self.api_key,
             "event": event,
             "properties": props,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         try:
             self._queue.put_nowait(payload)
@@ -261,6 +282,13 @@ class AnalyticsClient:
             item = self._queue.get()
             if item is self._stop_token:
                 break
+            if self.local_active:
+                try:
+                    append_analytics_event(self.storage_dir, self.distinct_id, item)
+                except Exception:
+                    pass
+            if not self.remote_active:
+                continue
             try:
                 body = json.dumps(item).encode("utf-8")
                 request = urllib.request.Request(
@@ -3201,6 +3229,52 @@ class DispatchCheckResult:
     log_lines: list[str]
 
 
+@dataclass
+class Vecka27CheckResult:
+    deviations: list[str]
+    report_text: str
+    report_df: pd.DataFrame
+    log_lines: list[str]
+
+
+@dataclass
+class EftersokResult:
+    report_text: str
+    report_lines: list[str]
+    report_df: pd.DataFrame
+
+
+WMS_EXPECTED_FILENAMES: Dict[str, str] = {
+    "wms_receive": "v_ask_receive_log.csv",
+    "wms_booking": "v_ask_booking_putaway.csv",
+    "wms_buffert": "v_ask_article_buffertpallet.csv",
+    "wms_trans": "v_ask_trans_log.csv",
+    "wms_pick": "v_ask_pick_log_full.csv",
+    "wms_correct": "v_ask_correct_log.csv",
+}
+
+_WMS_ANALYZER_CLS = None
+
+
+def _vecka27_fmt_qty_value(q: float) -> str:
+    try:
+        f = float(q)
+    except Exception:
+        return str(q)
+    return str(int(f)) if f.is_integer() else str(f)
+
+
+def _write_cli_text_report(text: str, path: str, column_name: str = "Rapport") -> str:
+    target = Path(path)
+    suffix = target.suffix.lower()
+    if suffix in {"", ".txt", ".md"}:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return str(target.resolve())
+    lines = text.splitlines() if text else [""]
+    return _write_cli_dataframe(pd.DataFrame({column_name: lines}), path)
+
+
 def _find_keywords_column(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
     for keyword in keywords:
         keyword_norm = keyword.lower().replace(" ", "")
@@ -3552,6 +3626,122 @@ def build_dispatch_check_result(
                 continue
 
     return DispatchCheckResult(diff_df, log_lines)
+
+
+def build_vecka27_check_result(orders_df: pd.DataFrame) -> Vecka27CheckResult:
+    if not isinstance(orders_df, pd.DataFrame) or orders_df.empty:
+        return Vecka27CheckResult([], "", pd.DataFrame(columns=["Avvikelse"]), [])
+
+    work_df = _clean_columns(orders_df.copy())
+    cols = _find_ordersaldo_columns(work_df)
+    order_col = cols.get("order")
+    article_col = cols.get("article")
+    demand_col = cols.get("demand")
+    if not order_col or not article_col or not demand_col:
+        raise KeyError("Hittar inte order-, artikel- eller antalskolumn i beställningsfilen.")
+
+    work = work_df[[order_col, article_col, demand_col]].copy()
+    work[order_col] = work[order_col].astype(str).str.strip()
+    work[article_col] = work[article_col].astype(str).str.strip()
+    work[demand_col] = work[demand_col].map(to_num).astype(float)
+
+    grouped = work.groupby([order_col, article_col])[demand_col].sum(min_count=1)
+    deviations: list[str] = []
+    for order_id, sub in grouped.groupby(level=0):
+        if not str(order_id).upper().startswith("PR"):
+            continue
+        art_qty: dict[str, float] = {}
+        for (_, art), qty in sub.items():
+            if pd.notna(qty):
+                art_qty[str(art)] = float(qty)
+        for roof, mowers in VECKA27_ROOF_TO_MOWERS.items():
+            roof_qty = art_qty.get(roof, 0.0)
+            if roof_qty <= 0:
+                continue
+            mower_qty = sum(art_qty.get(mower, 0.0) for mower in mowers)
+            if mower_qty < roof_qty:
+                mower_list = "/".join(sorted(mowers))
+                deviations.append(
+                    f"Order {order_id} har {_vecka27_fmt_qty_value(roof_qty)} st av {roof} "
+                    f"men endast {_vecka27_fmt_qty_value(mower_qty)} st gräsklippare av {mower_list}."
+                )
+
+    if not deviations:
+        return Vecka27CheckResult([], "", pd.DataFrame(columns=["Avvikelse"]), ["Vecka 27: inga avvikelser."])
+
+    report_text = "Hej Lina!\n" + "\n".join(deviations) + "\nHur gör vi med denna/dessa?\n"
+    report_df = pd.DataFrame({"Avvikelse": deviations})
+    log_lines = [f"Vecka 27: {len(deviations)} avvikelse(r).", *deviations]
+    return Vecka27CheckResult(deviations, report_text, report_df, log_lines)
+
+
+def _load_wms_analyzer_class():
+    global _WMS_ANALYZER_CLS
+    if _WMS_ANALYZER_CLS is not None:
+        return _WMS_ANALYZER_CLS
+
+    search_roots: list[Path] = []
+    for root in (_runtime_root(), _bundle_root(), Path(__file__).resolve().parent):
+        if root not in search_roots:
+            search_roots.append(root)
+
+    module_path: Optional[Path] = None
+    for root in search_roots:
+        for filename in ("wms_sok79.py", "wms_sök79.py"):
+            candidate = root / filename
+            if candidate.exists():
+                module_path = candidate
+                break
+        if module_path is not None:
+            break
+
+    if module_path is None:
+        raise FileNotFoundError("Hittar inte wms_sök79.py i appmappen.")
+
+    spec = importlib.util.spec_from_file_location("wms_sok79_module", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Kunde inte ladda filen: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    analyzer_cls = getattr(module, "WMSAnalyzerUpdated", None)
+    if analyzer_cls is None:
+        raise AttributeError("WMSAnalyzerUpdated saknas i wms_sök79.py")
+    _WMS_ANALYZER_CLS = analyzer_cls
+    return analyzer_cls
+
+
+def build_eftersok_result(
+    purchase: str,
+    article: str,
+    wms_paths: Dict[str, str],
+    analyzer_cls=None,
+) -> EftersokResult:
+    purchase = str(purchase).strip()
+    article = str(article).strip()
+    if not purchase or not article:
+        raise ValueError("Både inköpsnummer och artikelnummer måste fyllas i.")
+    receive_path = str(wms_paths.get("wms_receive", "")).strip()
+    if not receive_path:
+        raise ValueError("Ladda minst Mottagningslogg (CSV) för att köra Eftersök.")
+
+    cls = analyzer_cls or _load_wms_analyzer_class()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for key, src in wms_paths.items():
+            src_path = str(src or "").strip()
+            if not src_path:
+                continue
+            dst_name = WMS_EXPECTED_FILENAMES.get(key)
+            if not dst_name:
+                continue
+            shutil.copy(src_path, os.path.join(tmpdir, dst_name))
+        analyzer = cls(data_path=tmpdir)
+        report_text = str(analyzer.analyze(purchase, article) or "").strip()
+
+    if not report_text:
+        report_text = "Ingen text returnerades från Eftersök."
+    report_lines = report_text.splitlines() or [report_text]
+    report_df = pd.DataFrame({"Rapport": report_lines})
+    return EftersokResult(report_text, report_lines, report_df)
 
 
 class SlideToggle(tk.Canvas):
@@ -7426,6 +7616,115 @@ class App(ttk.Frame):
             messagebox.showinfo(APP_TITLE, "Det finns inget dispatchkontroll-resultat att öppna. Kör kontrollen först.")
 
 
+    def run_vecka27_check(self) -> None:
+        """Kör Vecka 27-kontrollen via delad workflow-logik."""
+        path = self.orders_var.get().strip() if hasattr(self, "orders_var") else ""
+        self._track_feature("vecka27_check", "run_started")
+        if not path:
+            messagebox.showinfo(APP_TITLE, "Ladda upp beställningslinjefilen först.")
+            return
+
+        orders_df = self._read_tabular_for_filter_scan(path)
+        if not isinstance(orders_df, pd.DataFrame) or orders_df.empty:
+            messagebox.showinfo(APP_TITLE, "Beställningslinjefilen är tom eller kunde inte läsas.")
+            return
+
+        try:
+            orders_df = self._apply_value_filters(orders_df, "Vecka 27 (beställningslinjer)", log_result=False)
+        except Exception:
+            pass
+        if orders_df.empty:
+            messagebox.showinfo(APP_TITLE, "Inga rader kvar efter aktiva filter.")
+            return
+
+        try:
+            result = build_vecka27_check_result(orders_df)
+        except KeyError as e:
+            self._track_feature("vecka27_check", "run_failed", stage="build_result")
+            messagebox.showerror(APP_TITLE, str(e))
+            return
+        except Exception as e:
+            self._track_feature("vecka27_check", "run_failed", stage="build_result")
+            messagebox.showerror(APP_TITLE, f"Vecka 27-kontrollen misslyckades:\n{e}")
+            return
+
+        if not result.deviations:
+            self._track_feature("vecka27_check", "run_completed", deviation_count=0)
+            messagebox.showinfo(APP_TITLE, "Allt stämmer för Vecka 27.")
+            try:
+                for line in result.log_lines:
+                    self._log(line)
+            except Exception:
+                pass
+            return
+
+        try:
+            tmp_path = _open_text_in_editor(result.report_text, label="vecka27")
+            self._log(f"Vecka 27: {len(result.deviations)} avvikelse(r) - öppnade {tmp_path}")
+            self._track_feature("vecka27_check", "run_completed", deviation_count=int(len(result.deviations)))
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte öppna Vecka 27-rapport:\n{e}")
+
+    def run_eftersok(self) -> None:
+        """Kör Eftersök via delad workflow-logik."""
+        purchase = str(self.eftersok_purchase_var.get()).strip()
+        article = str(self.eftersok_article_var.get()).strip()
+        if not purchase or not article:
+            messagebox.showwarning(APP_TITLE, "Både inköpsnummer och artikelnummer måste fyllas i.")
+            return
+
+        self._track_feature("eftersok", "run_started")
+        self.last_eftersok_df = None
+        self.last_eftersok_report = None
+        self.last_eftersok_path = None
+        try:
+            self.open_eftersok_btn.configure(state="disabled")
+        except Exception:
+            pass
+
+        wms_paths = {
+            "wms_receive": str(self.wms_receive_var.get()).strip(),
+            "wms_booking": str(self.wms_booking_var.get()).strip(),
+            "wms_buffert": str(self.buffer_var.get()).strip(),
+            "wms_trans": str(self.wms_trans_var.get()).strip(),
+            "wms_pick": str(self.wms_pick_var.get()).strip(),
+            "wms_correct": str(self.wms_correct_var.get()).strip(),
+        }
+
+        try:
+            result = build_eftersok_result(purchase, article, wms_paths)
+        except ValueError as e:
+            self._track_feature("eftersok", "run_failed", stage="validate")
+            messagebox.showwarning(APP_TITLE, str(e))
+            return
+        except Exception as e:
+            self._track_feature("eftersok", "run_failed", stage="analyze")
+            messagebox.showerror(APP_TITLE, f"Ett fel uppstod under Eftersök:\n{e}")
+            return
+
+        self.last_eftersok_report = result.report_text
+        self.last_eftersok_df = result.report_df.copy()
+        try:
+            self.open_eftersok_btn.configure(state="normal")
+        except Exception:
+            pass
+        self._log(f"Eftersök klart för inköpsnummer {purchase}, artikelnummer {article}.")
+        self._log(f"Eftersök-rader: {len(result.report_lines)}")
+        self._track_feature("eftersok", "run_completed", report_lines=int(len(result.report_lines)))
+
+    def open_eftersok_in_excel(self) -> None:
+        """Öppna senaste Eftersök-resultatet i Excel."""
+        if isinstance(self.last_eftersok_df, pd.DataFrame) and not self.last_eftersok_df.empty:
+            try:
+                path = _open_df_in_excel({"Eftersök": self.last_eftersok_df.copy()}, label="eftersok")
+                self.last_eftersok_path = path
+                self._log(f"Öppnade Eftersök i Excel (temporär fil): {path}")
+                self._track_feature("eftersok", "opened_result")
+            except Exception as e:
+                messagebox.showerror(APP_TITLE, f"Kunde inte öppna Eftersök i Excel:\n{e}")
+        else:
+            messagebox.showinfo(APP_TITLE, "Det finns inget Eftersök-resultat att öppna. Kör Eftersök först.")
+
     def _on_sales_file_selected(self) -> None:
         """
         Stub för hantering av plocklogg. Funktionen för att läsa in plockloggar och beräkna försäljningsinsikter är borttagen i denna version.
@@ -8166,6 +8465,51 @@ def _cli_dispatch_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cli_vecka27_check(args: argparse.Namespace) -> int:
+    orders_df = _read_cli_table(args.orders)
+    result = build_vecka27_check_result(orders_df)
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        output_paths["report"] = _write_cli_text_report(result.report_text or "\n".join(result.log_lines), args.report_out, column_name="Avvikelse")
+
+    summary = {
+        "command": "vecka27-check",
+        "deviation_count": int(len(result.deviations)),
+        "deviations": result.deviations if args.json else None,
+        "log_lines": result.log_lines if args.json else None,
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_eftersok(args: argparse.Namespace) -> int:
+    wms_paths = {
+        "wms_receive": args.wms_receive,
+        "wms_booking": args.wms_booking,
+        "wms_buffert": args.wms_buffert,
+        "wms_trans": args.wms_trans,
+        "wms_pick": args.wms_pick,
+        "wms_correct": args.wms_correct,
+    }
+    result = build_eftersok_result(args.purchase, args.article, wms_paths)
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        output_paths["report"] = _write_cli_text_report(result.report_text, args.report_out)
+
+    summary = {
+        "command": "eftersok",
+        "report_line_count": int(len(result.report_lines)),
+        "outputs": output_paths,
+    }
+    if args.json:
+        summary["report_lines"] = result.report_lines
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--smoke-test", action="store_true")
@@ -8236,6 +8580,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     dispatch_check_parser.add_argument("--report-out", help="Utfil for dispatchavvikelser.")
     dispatch_check_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
     dispatch_check_parser.set_defaults(cli_handler=_cli_dispatch_check)
+
+    vecka27_parser = subparsers.add_parser("vecka27-check", help="Kor vecka 27-kontrollen utan GUI.")
+    vecka27_parser.add_argument("--orders", required=True, help="Bestallningslinjer CSV/XLSX.")
+    vecka27_parser.add_argument("--report-out", help="Utfil for rapporttext eller avvikelser.")
+    vecka27_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    vecka27_parser.set_defaults(cli_handler=_cli_vecka27_check)
+
+    eftersok_parser = subparsers.add_parser("eftersok", help="Kor Eftersok utan GUI.")
+    eftersok_parser.add_argument("--purchase", required=True, help="Inkoppsnummer.")
+    eftersok_parser.add_argument("--article", required=True, help="Artikelnummer.")
+    eftersok_parser.add_argument("--wms-receive", required=True, help="Mottagningslogg CSV.")
+    eftersok_parser.add_argument("--wms-booking", help="Inlagringslogg CSV.")
+    eftersok_parser.add_argument("--wms-buffert", help="Buffertpallar CSV.")
+    eftersok_parser.add_argument("--wms-trans", help="Transaktionslogg CSV.")
+    eftersok_parser.add_argument("--wms-pick", help="Plocklogg CSV.")
+    eftersok_parser.add_argument("--wms-correct", help="Korrigeringslogg CSV.")
+    eftersok_parser.add_argument("--report-out", help="Utfil for Eftersok-rapport.")
+    eftersok_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    eftersok_parser.set_defaults(cli_handler=_cli_eftersok)
 
     return parser
 
