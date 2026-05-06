@@ -60,6 +60,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Deque, Dict, List, Tuple, Optional
 import importlib.util
@@ -226,6 +227,7 @@ class AnalyticsClient:
             return
         props = dict(properties or {})
         props.setdefault("distinct_id", self.distinct_id)
+        props.setdefault("install_id", self.distinct_id)
         props.setdefault("session_id", self.session_id)
         props.setdefault("app_name", APP_NAME)
         props.setdefault("app_version", APP_VERSION)
@@ -3185,6 +3187,373 @@ def calculate_refill(allocated_df: pd.DataFrame,
     return refill_hp_df, refill_autostore_df
 
 
+@dataclass
+class OverviewCheckResult:
+    shipment_df: pd.DataFrame
+    hib_df: pd.DataFrame
+    missing_hib_cols: list[str]
+    log_lines: list[str]
+
+
+@dataclass
+class DispatchCheckResult:
+    diff_df: pd.DataFrame
+    log_lines: list[str]
+
+
+def _find_keywords_column(df: pd.DataFrame, keywords: List[str]) -> Optional[str]:
+    for keyword in keywords:
+        keyword_norm = keyword.lower().replace(" ", "")
+        for col in df.columns:
+            if str(col).lower().replace(" ", "") == keyword_norm:
+                return str(col)
+    for keyword in keywords:
+        keyword_lower = keyword.lower()
+        for col in df.columns:
+            if keyword_lower in str(col).lower():
+                return str(col)
+    return None
+
+
+def _find_customer_name_column(df: pd.DataFrame, exclude: Optional[set[str]] = None) -> Optional[str]:
+    excluded = exclude or set()
+    for col in df.columns:
+        if col in excluded:
+            continue
+        col_norm = str(col).lower().replace(" ", "")
+        if "kund" in col_norm and not col_norm.endswith("nr") and not col_norm.endswith("nummer"):
+            return str(col)
+    return None
+
+
+def _status_to_int(value: object) -> Optional[int]:
+    try:
+        raw = str(value).strip().replace(",", ".")
+        if not raw:
+            return None
+        return int(float(raw))
+    except Exception:
+        return None
+
+
+def _build_order_to_customer_map(
+    details_df: Optional[pd.DataFrame],
+    overview_df: pd.DataFrame,
+    overview_order_col: Optional[str],
+    overview_customer_col: Optional[str],
+) -> Dict[str, str]:
+    order_to_customer: Dict[str, str] = {}
+
+    if isinstance(details_df, pd.DataFrame) and not details_df.empty:
+        details = _clean_columns(details_df.copy())
+        details_order_col = _find_keywords_column(details, ["order nr", "ordernr", "ordernummer", "order number", "orderid"])
+        details_customer_col = _find_customer_name_column(details, exclude={details_order_col} if details_order_col else set())
+        if details_order_col and details_customer_col:
+            try:
+                order_to_customer = (
+                    details.groupby(details_order_col)[details_customer_col]
+                    .first()
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .to_dict()
+                )
+            except Exception:
+                order_to_customer = {}
+
+    if order_to_customer or not overview_order_col or not overview_customer_col:
+        return order_to_customer
+
+    try:
+        return (
+            overview_df.groupby(overview_order_col)[overview_customer_col]
+            .first()
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .to_dict()
+        )
+    except Exception:
+        return {}
+
+
+def _build_overview_check_sheets(result: OverviewCheckResult) -> dict[str, pd.DataFrame]:
+    sheets: dict[str, pd.DataFrame] = {}
+    combined_parts: List[pd.DataFrame] = []
+
+    if isinstance(result.shipment_df, pd.DataFrame) and not result.shipment_df.empty:
+        shipment_df = result.shipment_df.copy()
+        if "Avvikelsetyp" not in shipment_df.columns:
+            shipment_df.insert(0, "Avvikelsetyp", "Sändningsnr med flera kunder/transportörer")
+        sheets["Sändningskontroll"] = shipment_df.copy()
+        combined_parts.append(shipment_df)
+
+    if isinstance(result.hib_df, pd.DataFrame) and not result.hib_df.empty:
+        hib_df = result.hib_df.copy()
+        if "Avvikelsetyp" not in hib_df.columns:
+            hib_df.insert(0, "Avvikelsetyp", "HIB över status 31 utan butikssändning")
+        sheets["HIB utan butikssändning"] = hib_df.copy()
+        combined_parts.append(hib_df)
+
+    if combined_parts:
+        sheets = {
+            "Orderkontroll": pd.concat(combined_parts, ignore_index=True, sort=False),
+            **sheets,
+        }
+    elif not sheets:
+        sheets["Orderkontroll"] = pd.DataFrame(columns=["Avvikelsetyp"])
+
+    return sheets
+
+
+def build_overview_check_result(
+    overview_df: pd.DataFrame,
+    details_df: Optional[pd.DataFrame] = None,
+) -> OverviewCheckResult:
+    df = _clean_columns(overview_df.copy())
+    if df.empty:
+        return OverviewCheckResult(pd.DataFrame(), pd.DataFrame(), [], [])
+
+    ship_col = _find_keywords_column(
+        df,
+        ["sändningsnr", "sändnings nr", "sändningsnummer", "sandningsnr", "sandnings nr", "sandningsnummer"],
+    )
+    if not ship_col:
+        raise KeyError("Kunde inte identifiera sändningsnummer-kolumnen i orderöversikten.")
+
+    cust_col = _find_keywords_column(df, ["kundnr", "kund nr", "kundnummer"])
+    if not cust_col:
+        cust_col = _find_customer_name_column(df, exclude={ship_col})
+    if not cust_col:
+        raise KeyError("Kunde inte identifiera kund-kolumnen i orderöversikten.")
+
+    trans_col = _find_keywords_column(df, ["transportör", "transportor", "transportörsnr", "transportorsnr"])
+    if not trans_col:
+        trans_col = "__transport_dummy__"
+        df[trans_col] = ""
+
+    order_col = _find_keywords_column(df, ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order id"])
+    if not order_col:
+        order_col = _find_keywords_column(df, ["order"])
+    ordertype_col = _find_keywords_column(df, ["ordertyp", "ordertype"])
+    status_col = _find_keywords_column(df, ["status", "orderstatus", "radstatus", "state"])
+    if not status_col:
+        status_col = _find_keywords_column(df, ["status"])
+
+    df[ship_col] = df[ship_col].astype(str).str.strip()
+    df[cust_col] = df[cust_col].astype(str).str.strip()
+    df[trans_col] = df[trans_col].astype(str).str.strip()
+    if order_col:
+        df[order_col] = df[order_col].astype(str).str.strip()
+
+    df = df[df[ship_col].astype(str).str.len() > 0].copy()
+    if df.empty:
+        return OverviewCheckResult(pd.DataFrame(), pd.DataFrame(), [], [])
+
+    order_to_customer = _build_order_to_customer_map(details_df, df, order_col, cust_col)
+
+    shipment_diff_rows: List[Dict[str, object]] = []
+    for ship, group in df.groupby(ship_col):
+        try:
+            customers = sorted(set(group[cust_col].dropna().astype(str).str.strip()))
+            carriers = sorted(set(group[trans_col].dropna().astype(str).str.strip()))
+            customers = [value for value in customers if value]
+            carriers = [value for value in carriers if value]
+
+            orders_list: List[str] = []
+            if order_col:
+                try:
+                    order_vals = sorted(set(group[order_col].dropna().astype(str).str.strip()))
+                except Exception:
+                    order_vals = []
+                for order_value in order_vals:
+                    customer_name = order_to_customer.get(order_value, "")
+                    orders_list.append(f"{order_value} ({customer_name})" if customer_name else order_value)
+
+            if len(customers) > 1 or len(carriers) > 1:
+                row: Dict[str, object] = {
+                    "Avvikelsetyp": "Sändningsnr med flera kunder/transportörer",
+                    "Sändningsnr": ship,
+                    "Unika kunder": len(customers),
+                    "Kunder": ", ".join(customers),
+                    "Unika transportörer": len(carriers),
+                    "Transportörer": ", ".join(carriers),
+                    "Antal orderrader": int(len(group)),
+                }
+                if orders_list:
+                    row["Ordernr (kundnamn)"] = ", ".join(orders_list)
+                shipment_diff_rows.append(row)
+        except Exception:
+            continue
+
+    shipment_df = pd.DataFrame(shipment_diff_rows) if shipment_diff_rows else pd.DataFrame()
+
+    missing_hib_cols: List[str] = []
+    if not order_col:
+        missing_hib_cols.append("ordernummer")
+    if not ordertype_col:
+        missing_hib_cols.append("ordertyp")
+    if not status_col:
+        missing_hib_cols.append("status")
+
+    hib_rows: List[Dict[str, object]] = []
+    if not missing_hib_cols and order_col and ordertype_col and status_col:
+        try:
+            hib_df = df[[order_col, ship_col, cust_col, ordertype_col, status_col]].copy()
+            hib_df["_ordertype_norm"] = hib_df[ordertype_col].astype(str).str.strip().str.upper()
+            hib_df["_status_num"] = hib_df[status_col].apply(_status_to_int)
+
+            store_mask = hib_df["_ordertype_norm"].eq("N") | hib_df["_ordertype_norm"].str.contains("BUTIK", na=False)
+            store_ships = set(hib_df.loc[store_mask, ship_col].dropna().astype(str).str.strip().tolist())
+            store_ships.discard("")
+
+            hib_only_df = hib_df[hib_df["_ordertype_norm"].str.contains("HIB", na=False)].copy()
+            for order_number, group in hib_only_df.groupby(order_col):
+                order_number_str = str(order_number).strip()
+                if not order_number_str:
+                    continue
+                status_values = [value for value in group["_status_num"].tolist() if value is not None]
+                if not status_values:
+                    continue
+                max_status = max(status_values)
+                if max_status <= 31:
+                    continue
+                hib_ships = sorted(set(group[ship_col].dropna().astype(str).str.strip()))
+                hib_ships = [value for value in hib_ships if value]
+                if not hib_ships or any(ship_value in store_ships for ship_value in hib_ships):
+                    continue
+
+                customer_name = order_to_customer.get(order_number_str, "")
+                if not customer_name:
+                    try:
+                        customers = [value for value in group[cust_col].dropna().astype(str).str.strip().tolist() if value]
+                        if customers:
+                            customer_name = customers[0]
+                    except Exception:
+                        customer_name = ""
+
+                row = {
+                    "Ordernr": order_number_str,
+                    "Sändningsnr": ", ".join(hib_ships),
+                    "Ordertyp": "HIB",
+                    "Status": int(max_status),
+                    "Anmärkning": "HIB-order med status > 31 saknar matchande butikssändning",
+                }
+                if customer_name:
+                    row["Kundnamn"] = customer_name
+                hib_rows.append(row)
+        except Exception:
+            pass
+
+    hib_result_df = pd.DataFrame(hib_rows) if hib_rows else pd.DataFrame()
+
+    log_lines: list[str] = []
+    if not shipment_df.empty:
+        log_lines.append("Orderöversikt: sändningsnummer med flera kunder eller transportörer:")
+        for _, row in shipment_df.iterrows():
+            try:
+                if int(row.get("Unika kunder", 0)) > 1:
+                    log_lines.append(f"  Sändningsnr {row['Sändningsnr']} har flera kunder: {row['Kunder']}")
+                if int(row.get("Unika transportörer", 0)) > 1:
+                    log_lines.append(f"  Sändningsnr {row['Sändningsnr']} har flera transportörer: {row['Transportörer']}")
+            except Exception:
+                continue
+    if not hib_result_df.empty:
+        log_lines.append(f"HIB-ordrar med status > 31 utan matchande butikssändning ({len(hib_result_df)} st):")
+        for _, row in hib_result_df.iterrows():
+            try:
+                name_part = f" ({row['Kundnamn']})" if str(row.get("Kundnamn", "")).strip() else ""
+                log_lines.append(f"  Order {row['Ordernr']}{name_part}: sändning {row['Sändningsnr']} (status {row['Status']})")
+            except Exception:
+                continue
+    if missing_hib_cols:
+        log_lines.append("HIB-kontrollen kunde inte köras fullt ut (saknar kolumner: " + ", ".join(missing_hib_cols) + ").")
+
+    return OverviewCheckResult(shipment_df, hib_result_df, missing_hib_cols, log_lines)
+
+
+def build_dispatch_check_result(
+    overview_df: pd.DataFrame,
+    dispatch_df: pd.DataFrame,
+    details_df: Optional[pd.DataFrame] = None,
+) -> DispatchCheckResult:
+    ov_df = _clean_columns(overview_df.copy())
+    dp_df = _clean_columns(dispatch_df.copy())
+    if ov_df.empty or dp_df.empty:
+        return DispatchCheckResult(pd.DataFrame(), [])
+
+    order_keywords = ["ordernr", "order nr", "ordernummer", "order number", "orderid", "order id"]
+    ship_keywords = ["sändningsnr", "sändnings nr", "sändningsnummer", "sandningsnr", "sandnings nr", "sandningsnummer", "shipment"]
+    plock_keywords = ["plockpallsnr", "plockpallsnr.", "plockpall", "plockpallnr", "plockpallsnummer", "plockpall nr"]
+
+    ov_order_col = _find_keywords_column(ov_df, order_keywords)
+    ov_ship_col = _find_keywords_column(ov_df, ship_keywords)
+    if not ov_order_col or not ov_ship_col:
+        raise KeyError("Kunde inte identifiera order- eller sändningskolumnen i orderöversikten.")
+
+    dp_order_col = _find_keywords_column(dp_df, order_keywords)
+    dp_ship_col = _find_keywords_column(dp_df, ship_keywords)
+    plock_col = _find_keywords_column(dp_df, plock_keywords)
+    if not dp_order_col or not dp_ship_col or not plock_col:
+        raise KeyError("Kunde inte identifiera order-, sändnings- eller plockpallskolumnen i dispatchfilen.")
+
+    ov_df[ov_order_col] = ov_df[ov_order_col].astype(str).str.strip()
+    ov_df[ov_ship_col] = ov_df[ov_ship_col].astype(str).str.strip()
+    dp_df[dp_order_col] = dp_df[dp_order_col].astype(str).str.strip()
+    dp_df[dp_ship_col] = dp_df[dp_ship_col].astype(str).str.strip()
+    dp_df[plock_col] = dp_df[plock_col].astype(str).str.strip()
+
+    overview_customer_col = _find_customer_name_column(ov_df, exclude={ov_order_col, ov_ship_col})
+    order_to_customer = _build_order_to_customer_map(details_df, ov_df, ov_order_col, overview_customer_col)
+
+    order_to_ship: Dict[str, str] = {}
+    try:
+        for order_number, sub in ov_df.groupby(ov_order_col):
+            ships = [value for value in sub[ov_ship_col] if isinstance(value, str) and value.strip()]
+            if ships:
+                order_to_ship[str(order_number).strip()] = ships[0].strip()
+    except Exception:
+        pass
+
+    diff_rows: List[Dict[str, object]] = []
+    for _, row in dp_df.iterrows():
+        try:
+            order_number = str(row[dp_order_col]).strip()
+            dispatch_ship = str(row[dp_ship_col]).strip()
+            expected_ship = order_to_ship.get(order_number)
+            if expected_ship and expected_ship != dispatch_ship:
+                diff_rows.append(
+                    {
+                        "Ordernr": order_number,
+                        "Översikt sändningsnr": expected_ship,
+                        "Dispatch sändningsnr": dispatch_ship,
+                        "Plockpallsnr": str(row[plock_col]).strip(),
+                        "kundnamn": order_to_customer.get(order_number, ""),
+                    }
+                )
+        except Exception:
+            continue
+
+    diff_df = pd.DataFrame(diff_rows) if diff_rows else pd.DataFrame()
+
+    log_lines: list[str] = []
+    if not diff_df.empty:
+        log_lines.append("Dispatchkontrollen har hittat avvikelser mellan orderöversikten och dispatchpallar:")
+        for _, row in diff_df.iterrows():
+            try:
+                name_part = f" ({row['kundnamn']})" if str(row.get("kundnamn", "")).strip() else ""
+                log_lines.append(
+                    "Order "
+                    f"{row['Ordernr']}{name_part} har sändningsnr {row['Översikt sändningsnr']} "
+                    f"i översikten men {row['Dispatch sändningsnr']} i dispatch "
+                    f"(plockpall {row['Plockpallsnr']})"
+                )
+            except Exception:
+                continue
+
+    return DispatchCheckResult(diff_df, log_lines)
+
+
 class SlideToggle(tk.Canvas):
     """Enkel iOS-liknande slide-toggle. Kör callback(bool) vid klick."""
 
@@ -4308,21 +4677,29 @@ class App(ttk.Frame):
                 pass
         return None
 
-    def _get_help_text(self, topic: str) -> str:
+    def _get_help_content(self, topic: str) -> tuple[str, str]:
+        """Returnerar (titel, brödtext) för ett hjälpämne.
+        Första icke-tomma raden i filen används som titel, resten som brödtext."""
         folder = "avancerat" if self._help_mode == "avancerat" else "enkel"
-        for base in [_resource_path(f"hjalp/{folder}/{topic}.txt"),
+        for path in [_resource_path(f"hjalp/{folder}/{topic}.txt"),
                      _resource_path(f"hjalp/enkel/{topic}.txt")]:
-            if base.exists():
+            if path.exists():
                 try:
-                    return base.read_text(encoding="utf-8").strip()
+                    raw = path.read_text(encoding="utf-8").strip()
+                    lines = raw.splitlines()
+                    title = next((l.strip() for l in lines if l.strip()), topic)
+                    body = "\n".join(lines[1:]).strip()
+                    return title, body
                 except Exception:
                     pass
-        return "Ingen hjälptext hittades för det här elementet."
+        return "Hjälp", "Ingen hjälptext hittades för det här elementet."
 
     def _show_help_popup(self, topic: Optional[str], x_root: int, y_root: int) -> None:
         self._close_help_popup()
-        text = self._get_help_text(topic) if topic else "Klicka på en knapp eller ett fält för mer information."
-        title = topic.replace("_", " ").title() if topic else "Hjälp"
+        if topic:
+            title, body = self._get_help_content(topic)
+        else:
+            title, body = "Hjälp", "Klicka på en knapp eller ett fält för mer information."
 
         popup = tk.Toplevel(self.master)
         popup.wm_title(title)
@@ -4331,11 +4708,11 @@ class App(ttk.Frame):
         self._help_popup = popup
 
         # Positionera nära klicket men håll den inom skärmen
-        pw, ph = 360, 200
+        pw, ph = 380, 220
         sx = self.master.winfo_screenwidth()
         sy = self.master.winfo_screenheight()
-        px = min(x_root + 12, sx - pw - 8)
-        py = min(y_root + 12, sy - ph - 8)
+        px = min(x_root + 14, sx - pw - 8)
+        py = min(y_root + 14, sy - ph - 8)
         popup.geometry(f"{pw}x{ph}+{px}+{py}")
 
         frm = tk.Frame(popup, bg="#1f2933", padx=10, pady=8)
@@ -4348,18 +4725,20 @@ class App(ttk.Frame):
         txt = tk.Text(frm, wrap="word", bg="#1f2933", fg="#e0e0e0",
                       font=("Arial", 10), relief="flat", height=7,
                       state="normal", cursor="arrow")
-        txt.insert("1.0", text)
+        txt.insert("1.0", body)
         txt.configure(state="disabled")
         txt.pack(fill="both", expand=True)
 
-        close_btn = tk.Button(frm, text="✕ Stäng", command=self._close_help_popup,
-                              bg="#444444", fg="white", relief="flat",
-                              activebackground="#666666", activeforeground="white",
-                              padx=8, pady=2)
+        # X-knappen avslutar hela hjälpläget (inte bara dialogen)
+        close_btn = tk.Button(frm, text="✕  Stäng hjälp", command=self._exit_help_mode,
+                              bg="#CC2222", fg="white", relief="flat",
+                              activebackground="#AA0000", activeforeground="white",
+                              font=("Arial", 9, "bold"), padx=8, pady=3)
         close_btn.pack(anchor="e", pady=(6, 0))
 
         popup.bind("<Escape>", lambda _e: self._exit_help_mode())
-        popup.protocol("WM_DELETE_WINDOW", self._close_help_popup)
+        # Native fönster-X avslutar också hela hjälpläget
+        popup.protocol("WM_DELETE_WINDOW", self._exit_help_mode)
 
     def _close_help_popup(self) -> None:
         if self._help_popup is not None:
@@ -4377,26 +4756,25 @@ class App(ttk.Frame):
         bar.configure(bg="#CC2222")   # röd kant runt hela baren
         self._help_bar = bar
 
-        frm = tk.Frame(bar, bg="#1a1a1a", padx=10, pady=8)
+        frm = tk.Frame(bar, bg="#1a1a1a", padx=10, pady=7)
         frm.pack(fill="both", expand=True, padx=2, pady=2)
 
-        tk.Label(frm, text="❓ Hjälpläge – klicka på valfri del av appen",
+        tk.Label(frm, text="❓ Hjälpläge",
                  bg="#1a1a1a", fg="white",
-                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 14))
+                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
 
         tk.Label(frm, text="Avancerat", bg="#1a1a1a", fg="#CCCCCC",
                  font=("Arial", 9)).pack(side="left")
         toggle = SlideToggle(frm, command=self._on_advanced_toggle, bg="#1a1a1a")
-        toggle.pack(side="left", padx=(6, 16))
+        toggle.pack(side="left", padx=(5, 12))
         self._help_toggle = toggle
 
-        tk.Button(frm, text="✕  Stäng hjälp", command=self._exit_help_mode,
+        tk.Button(frm, text="✕  Stäng", command=self._exit_help_mode,
                   bg="#CC2222", fg="white", relief="flat",
                   activebackground="#AA0000", activeforeground="white",
-                  font=("Arial", 10, "bold"), padx=8, pady=2).pack(side="left")
+                  font=("Arial", 10, "bold"), padx=10, pady=2).pack(side="left")
 
         bar.bind("<Escape>", lambda _e: self._exit_help_mode())
-        # Ge tkinter tid att rendera baren innan positionering
         bar.update_idletasks()
         self._reposition_help_bar()
 
@@ -4409,7 +4787,10 @@ class App(ttk.Frame):
         wx = self.master.winfo_rootx()
         wy = self.master.winfo_rooty()
         ww = self.master.winfo_width()
-        x = wx + ww - bw - 8
+        sw = self.master.winfo_screenwidth()
+        # Centrera baren ovanför fönstret; klipp till skärmen om den inte får plats
+        x = wx + (ww - bw) // 2
+        x = max(4, min(x, sw - bw - 4))
         y = wy + 8
         self._help_bar.geometry(f"+{x}+{y}")
 
