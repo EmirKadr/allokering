@@ -4770,23 +4770,40 @@ class App(ttk.Frame):
 
         bar.bind("<Escape>", lambda _e: self._exit_help_mode())
         bar.update_idletasks()
-        self._reposition_help_bar()
+        # Kort fördröjning så overlay hinner få sin slutliga geometri
+        self.after(20, self._reposition_help_bar)
 
     def _reposition_help_bar(self) -> None:
         if self._help_bar is None:
             return
         self._help_bar.update_idletasks()
         bw = self._help_bar.winfo_reqwidth()
-        bh = self._help_bar.winfo_reqheight()
-        # Använd App-ramen (self) inte master för att få innehållsytans koordinater
-        fx = self.winfo_rootx()
-        fy = self.winfo_rooty()
-        fw = self.winfo_width()
         sw = self.winfo_screenwidth()
-        # Övre högra hörnet av innehållsytan
-        x = fx + fw - bw - 4
+
+        # Läs overlay-geometrin direkt — den är korrekt satt av _position_overlay
+        ox, oy, ow = 0, 0, 0
+        if self._help_overlay is not None:
+            try:
+                self._help_overlay.update_idletasks()
+                import re as _re
+                m = _re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)",
+                              self._help_overlay.geometry())
+                if m:
+                    ow = int(m.group(1))
+                    ox = int(m.group(3))
+                    oy = int(m.group(4))
+            except Exception:
+                pass
+
+        if ow == 0:
+            self.update_idletasks()
+            ox = self.winfo_rootx()
+            oy = self.winfo_rooty()
+            ow = self.winfo_width()
+
+        x = ox + ow - bw - 4
         x = max(4, min(x, sw - bw - 4))
-        y = fy + 4
+        y = oy + 4
         self._help_bar.geometry(f"+{x}+{y}")
 
     def _close_help_bar(self) -> None:
