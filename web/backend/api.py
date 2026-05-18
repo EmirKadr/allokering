@@ -95,6 +95,12 @@ def list_flows() -> dict:
     return {"flows": flows.public_registry()}
 
 
+@app.get("/api/pool")
+def list_pool() -> dict:
+    """Datapoolens slots for den kombinerade huvudvyn (delade filer)."""
+    return {"pool": flows.public_pool()}
+
+
 @app.post("/api/detect")
 async def detect(file: UploadFile = File(...)) -> dict:
     """Identifiera filtyp (samma logik som GUI:ts drag&drop)."""
