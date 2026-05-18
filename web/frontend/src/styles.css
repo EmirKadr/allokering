@@ -402,6 +402,43 @@ body {
   font-size: 16px;
 }
 
+/* --- Action groups (huvudvyn) -------------------------------------------- */
+.action-group {
+  margin-bottom: 14px;
+}
+
+.action-group:last-child {
+  margin-bottom: 0;
+}
+
+.action-group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action-btn {
+  background: var(--panel-2);
+}
+
+.action-btn:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* --- Run row -------------------------------------------------------------- */
 .run-row {
   display: flex;

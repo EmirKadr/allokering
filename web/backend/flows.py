@@ -486,10 +486,27 @@ FLOWS: list[dict] = [
 
 FLOW_BY_ID: dict[str, dict] = {flow["id"]: flow for flow in FLOWS}
 
+# Floden som visas som egna vyer. Allt ovrigt samlas i den kombinerade
+# huvudvyn dar filerna delas mellan korningarna.
+SOLO_FLOWS = {
+    "eftersok",
+    "observations-update",
+    "observations-sync",
+    "split-values",
+    "update-check",
+}
+
 
 def public_registry() -> list[dict]:
-    """Registret utan handler-referenser - sant till frontenden."""
+    """Registret utan handler-referenser - sant till frontenden.
+
+    Varje flode far ett ``view``-falt: ``solo`` (egen vy) eller
+    ``combined`` (delar huvudvyn med ovriga combined-floden).
+    """
     return [
-        {key: value for key, value in flow.items() if key != "handler"}
+        {
+            **{key: value for key, value in flow.items() if key != "handler"},
+            "view": "solo" if flow["id"] in SOLO_FLOWS else "combined",
+        }
         for flow in FLOWS
     ]

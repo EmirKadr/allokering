@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import FlowView from './components/FlowView.jsx'
+import CombinedView from './components/CombinedView.jsx'
 import Modal from './components/Modal.jsx'
 import { getFlows, health } from './api.js'
+
+const COMBINED_ID = '__combined__'
 
 function useTheme() {
   const [theme, setTheme] = useState(
@@ -18,8 +21,8 @@ function useTheme() {
 export default function App() {
   const [theme, toggleTheme] = useTheme()
   const [flows, setFlows] = useState([])
-  const [activeId, setActiveId] = useState(null)
-  const [info, setInfo] = useState({ version: '', title: 'Allokering' })
+  const [activeId, setActiveId] = useState(COMBINED_ID)
+  const [info, setInfo] = useState({ version: '' })
   const [modal, setModal] = useState(null)
   const [loadError, setLoadError] = useState('')
 
@@ -28,12 +31,40 @@ export default function App() {
       .then(setInfo)
       .catch(() => {})
     getFlows()
-      .then((list) => {
-        setFlows(list)
-        setActiveId(list[0]?.id || null)
-      })
+      .then(setFlows)
       .catch((err) => setLoadError(String(err.message || err)))
   }, [])
+
+  const combinedFlows = useMemo(
+    () => flows.filter((f) => f.view === 'combined'),
+    [flows],
+  )
+  const soloFlows = useMemo(() => flows.filter((f) => f.view === 'solo'), [flows])
+
+  // Sidebar-grupper: huvudvyn forst, sedan solo-floden per kategori.
+  const navGroups = useMemo(() => {
+    const groups = [
+      {
+        name: 'Huvudvy',
+        items: [
+          {
+            id: COMBINED_ID,
+            label: 'Allokering & analys',
+            description: 'Allokering, ordersaldo, kontroller m.m. - delade filer.',
+          },
+        ],
+      },
+    ]
+    for (const flow of soloFlows) {
+      let group = groups.find((g) => g.name === flow.category)
+      if (!group) {
+        group = { name: flow.category, items: [] }
+        groups.push(group)
+      }
+      group.items.push({ id: flow.id, label: flow.label, description: flow.description })
+    }
+    return groups
+  }, [soloFlows])
 
   const showError = (title, body, tone = 'error') =>
     setModal({ title, tone, body: <p>{body}</p> })
@@ -45,15 +76,16 @@ export default function App() {
       body: (
         <div className="help-body">
           <p>
-            Hela allokerings-appen som ett <strong>API-styrt</strong> granssnitt. Varje flode i
-            menyn motsvarar ett CLI-kommando och kor exakt samma motor.
+            Hela allokerings-appen som ett <strong>API-styrt</strong> granssnitt. Varje flode kor
+            exakt samma motor som CLI:t.
           </p>
           <p>
-            <strong>Indata:</strong> slapp filer i drop-zonen sa sorteras de automatiskt, eller
-            valj per ruta. Textfalt fylls i for hand.
+            <strong>Huvudvyn "Allokering & analys"</strong> samlar allokering, ordersaldo, LYX,
+            pafyllnadsprio, kontroller och prognos. Ladda upp filerna en gang - de delas mellan
+            alla korningar.
           </p>
           <p>
-            <strong>Resultat:</strong> flikar per tabell. Oppna i Excel eller ladda ner som CSV.
+            <strong>Eftersok</strong> och <strong>Data & verktyg</strong> har egna vyer.
           </p>
           <p className="muted">
             CLI och det gamla tkinter-GUI:t ar oroda - detta ar ett nytt lager ovanpa samma logik.
@@ -62,7 +94,7 @@ export default function App() {
       ),
     })
 
-  const activeFlow = flows.find((f) => f.id === activeId)
+  const activeSolo = soloFlows.find((f) => f.id === activeId)
 
   return (
     <div className="app">
@@ -91,12 +123,16 @@ export default function App() {
         </div>
       ) : (
         <div className="shell">
-          <Sidebar flows={flows} activeId={activeId} onSelect={setActiveId} />
+          <Sidebar groups={navGroups} activeId={activeId} onSelect={setActiveId} />
           <main className="content">
-            {activeFlow ? (
-              <FlowView key={activeFlow.id} flow={activeFlow} onError={showError} />
-            ) : (
+            {flows.length === 0 ? (
               <div className="empty-state big">Laddar...</div>
+            ) : activeId === COMBINED_ID ? (
+              <CombinedView flows={combinedFlows} onError={showError} />
+            ) : activeSolo ? (
+              <FlowView key={activeSolo.id} flow={activeSolo} onError={showError} />
+            ) : (
+              <div className="empty-state big">Valj ett flode.</div>
             )}
           </main>
         </div>

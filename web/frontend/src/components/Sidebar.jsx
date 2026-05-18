@@ -1,30 +1,20 @@
 import React from 'react'
 
-// Flodesnavigation grupperad per kategori.
-export default function Sidebar({ flows, activeId, onSelect }) {
-  const categories = []
-  for (const flow of flows) {
-    let cat = categories.find((c) => c.name === flow.category)
-    if (!cat) {
-      cat = { name: flow.category, flows: [] }
-      categories.push(cat)
-    }
-    cat.flows.push(flow)
-  }
-
+// Navigation. groups = [{ name, items: [{ id, label, description }] }].
+export default function Sidebar({ groups, activeId, onSelect }) {
   return (
     <nav className="sidebar">
-      {categories.map((cat) => (
-        <div key={cat.name} className="nav-group">
-          <div className="nav-group-title">{cat.name}</div>
-          {cat.flows.map((flow) => (
+      {groups.map((group) => (
+        <div key={group.name} className="nav-group">
+          <div className="nav-group-title">{group.name}</div>
+          {group.items.map((item) => (
             <button
-              key={flow.id}
-              className={`nav-item ${flow.id === activeId ? 'active' : ''}`}
-              onClick={() => onSelect(flow.id)}
-              title={flow.description}
+              key={item.id}
+              className={`nav-item ${item.id === activeId ? 'active' : ''}`}
+              onClick={() => onSelect(item.id)}
+              title={item.description || ''}
             >
-              {flow.label}
+              {item.label}
             </button>
           ))}
         </div>
