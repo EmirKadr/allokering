@@ -6,7 +6,7 @@ export default function DataTable({ table }) {
     return <div className="empty-state">Ingen data.</div>
   }
   if (table.rows.length === 0) {
-    return <div className="empty-state">Tabellen ar tom ({table.row_count} rader).</div>
+    return <div className="empty-state">Tabellen är tom ({table.row_count} rader).</div>
   }
   return (
     <div className="table-wrap">
@@ -34,7 +34,7 @@ export default function DataTable({ table }) {
       </table>
       {table.truncated && (
         <div className="table-note">
-          Visar de forsta {table.rows.length} av {table.row_count} raderna. Oppna i Excel for hela
+          Visar de första {table.rows.length} av {table.row_count} raderna. Öppna i Excel för hela
           resultatet.
         </div>
       )}

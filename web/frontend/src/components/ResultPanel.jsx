@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import DataTable from './DataTable.jsx'
 import { downloadUrl, openExcel } from '../api.js'
 
-// Visar resultatet fran ett flode: summeringskort, tabellflikar,
+// Visar resultatet från ett flöde: summeringskort, tabellflikar,
 // fritext-rapport och logg.
 export default function ResultPanel({ result, onError }) {
   const [activeTab, setActiveTab] = useState(result.tables[0]?.key || null)
@@ -14,7 +14,7 @@ export default function ResultPanel({ result, onError }) {
     try {
       await openExcel(result.session_id, key)
     } catch (err) {
-      onError('Kunde inte oppna i Excel', String(err.message || err))
+      onError('Kunde inte öppna i Excel', String(err.message || err))
     }
   }
 
@@ -51,7 +51,7 @@ export default function ResultPanel({ result, onError }) {
             {active && (
               <div className="tab-actions">
                 <button className="btn-sm" onClick={() => handleExcel(active.key)}>
-                  Oppna i Excel
+                  Öppna i Excel
                 </button>
                 <a className="btn-sm link" href={downloadUrl(result.session_id, active.key)}>
                   Ladda ner CSV
@@ -64,7 +64,7 @@ export default function ResultPanel({ result, onError }) {
       )}
 
       {result.tables.length === 0 && !result.text && (
-        <div className="empty-state">Floden kordes - ingen tabelldata.</div>
+        <div className="empty-state">Flödet kördes - ingen tabelldata.</div>
       )}
 
       {result.log?.length > 0 && (

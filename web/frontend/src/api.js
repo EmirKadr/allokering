@@ -1,5 +1,5 @@
-// Tunt klientlager mot FastAPI. Relativa sokvagar fungerar bade bakom
-// Vite-proxyn (npm run dev) och nar FastAPI serverar den byggda frontenden.
+// Tunt klientlager mot FastAPI. Relativa sökvägar fungerar både bakom
+// Vite-proxyn (npm run dev) och när FastAPI serverar den byggda frontenden.
 
 async function parseError(res) {
   let detail
@@ -35,6 +35,14 @@ export async function detect(file) {
   const fd = new FormData()
   fd.append('file', file)
   return jsonOrThrow(await fetch('/api/detect', { method: 'POST', body: fd }))
+}
+
+export async function updateObservations(file) {
+  const fd = new FormData()
+  fd.append('file', file, file.name)
+  return jsonOrThrow(
+    await fetch('/api/observations/update', { method: 'POST', body: fd }),
+  )
 }
 
 // formData: FormData med filer (UploadFile) och textfalt.

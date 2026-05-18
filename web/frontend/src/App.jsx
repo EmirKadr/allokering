@@ -1,13 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import FlowView from './components/FlowView.jsx'
 import CombinedView from './components/CombinedView.jsx'
 import UploadView from './components/UploadView.jsx'
 import Modal from './components/Modal.jsx'
-import { getFlows, health } from './api.js'
+import { getFlows, health, updateObservations } from './api.js'
+import { deriveSlots } from './poolSlots.js'
 
 const UPLOAD_ID = '__upload__'
 const COMBINED_ID = '__combined__'
+const HIDDEN_FLOW_IDS = new Set(['observations-update', 'observations-sync'])
 
 function useTheme() {
   const [theme, setTheme] = useState(
@@ -27,9 +29,11 @@ export default function App() {
   const [info, setInfo] = useState({ version: '' })
   const [modal, setModal] = useState(null)
   const [loadError, setLoadError] = useState('')
+  const [autoStatus, setAutoStatus] = useState('')
+  const lastObservationsFile = useRef('')
 
-  // Uppladdade filer lever har sa de delas mellan Datauppladdning-sidan
-  // och korningarna i huvudvyn. logicalKey -> { name, file }.
+  // Uppladdade filer lever här så de delas mellan Datauppladdning-sidan
+  // och alla körningar. logicalKey -> { name, file }.
   const [poolFiles, setPoolFiles] = useState({})
 
   useEffect(() => {
@@ -41,14 +45,45 @@ export default function App() {
       .catch((err) => setLoadError(String(err.message || err)))
   }, [])
 
-  const combinedFlows = useMemo(
-    () => flows.filter((f) => f.view === 'combined'),
+  const visibleFlows = useMemo(
+    () => flows.filter((f) => !HIDDEN_FLOW_IDS.has(f.id)),
     [flows],
   )
-  const soloFlows = useMemo(() => flows.filter((f) => f.view === 'solo'), [flows])
+  const combinedFlows = useMemo(
+    () => visibleFlows.filter((f) => f.view === 'combined'),
+    [visibleFlows],
+  )
+  const soloFlows = useMemo(
+    () => visibleFlows.filter((f) => f.view === 'solo'),
+    [visibleFlows],
+  )
+  const allFileSlots = useMemo(() => deriveSlots(visibleFlows), [visibleFlows])
 
-  const setPoolFile = (key, file) =>
+  const triggerObservationsUpdate = async (file) => {
+    const signature = `${file.name}:${file.size}:${file.lastModified || ''}`
+    if (lastObservationsFile.current === signature) return
+    lastObservationsFile.current = signature
+    setAutoStatus('Observations uppdateras från buffertpallar...')
+    try {
+      const result = await updateObservations(file)
+      if (result.new_rows > 0) {
+        setAutoStatus(
+          `Observations uppdaterad: ${result.new_rows} nya pallid. Artikel_max: ${result.article_max_rows} rader.`,
+        )
+      } else {
+        setAutoStatus('Observations kontrollerad: inga nya pallid.')
+      }
+    } catch (err) {
+      lastObservationsFile.current = ''
+      setAutoStatus('')
+      showError('Observations kunde inte uppdateras', String(err.message || err), 'warn')
+    }
+  }
+
+  const setPoolFile = (key, file) => {
     setPoolFiles((v) => ({ ...v, [key]: { name: file.name, file } }))
+    if (key === 'buffer') triggerObservationsUpdate(file)
+  }
   const clearPoolFile = (key) =>
     setPoolFiles((v) => {
       const next = { ...v }
@@ -56,7 +91,7 @@ export default function App() {
       return next
     })
 
-  // Sidebar-grupper: huvudvy (datauppladdning + analys), sedan solo-floden.
+  // Sidebar-grupper: huvudvy (datauppladdning + analys), sedan solo-flöden.
   const navGroups = useMemo(() => {
     const groups = [
       {
@@ -65,7 +100,7 @@ export default function App() {
           {
             id: UPLOAD_ID,
             label: 'Datauppladdning',
-            description: 'Ladda upp alla filer pa ett stalle.',
+            description: 'Ladda upp alla filer på ett ställe.',
           },
           {
             id: COMBINED_ID,
@@ -96,21 +131,22 @@ export default function App() {
       body: (
         <div className="help-body">
           <p>
-            Hela allokerings-appen som ett <strong>API-styrt</strong> granssnitt. Varje flode kor
+            Hela allokerings-appen som ett <strong>API-styrt</strong> gränssnitt. Varje flöde kör
             exakt samma motor som CLI:t.
           </p>
           <p>
-            <strong>Datauppladdning</strong> ar en egen sida - ladda upp filerna en gang dar.
+            <strong>Datauppladdning</strong> är en egen sida för filstatus, men filer kan släppas
+            i hela den aktiva vyn.
           </p>
           <p>
-            <strong>Allokering & analys</strong> samlar allokering, ordersaldo, LYX, pafyllnadsprio,
-            kontroller och prognos. Varje knapp visar vilka uppladdade filer den behover.
+            <strong>Allokering & analys</strong> samlar allokering, ordersaldo, LYX, påfyllnadsprio,
+            kontroller och prognos. Varje knapp visar vilka uppladdade filer den behöver.
           </p>
           <p>
-            <strong>Eftersok</strong> och <strong>Data & verktyg</strong> har egna vyer.
+            <strong>Eftersök</strong> och <strong>Data & verktyg</strong> har egna vyer.
           </p>
           <p className="muted">
-            CLI och det gamla tkinter-GUI:t ar oroda - detta ar ett nytt lager ovanpa samma logik.
+            CLI och det gamla tkinter-GUI:t är orörda - detta är ett nytt lager ovanpå samma logik.
           </p>
         </div>
       ),
@@ -129,19 +165,19 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <button className="btn ghost" onClick={toggleTheme} title="Vaxla tema">
-            {theme === 'dark' ? '☀ Ljust' : '☾ Morkt'}
+          <button className="btn ghost" onClick={toggleTheme} title="Växla tema">
+            {theme === 'dark' ? '☀ Ljust' : '☾ Mörkt'}
           </button>
           <button className="btn ghost" onClick={showHelp}>
-            ? Hjalp
+            ? Hjälp
           </button>
         </div>
       </header>
 
       {loadError ? (
         <div className="load-error">
-          Kunde inte ladda floden: {loadError}
-          <div className="muted">Ar API-servern igang?</div>
+          Kunde inte ladda flöden: {loadError}
+          <div className="muted">Är API-servern igång?</div>
         </div>
       ) : (
         <div className="shell">
@@ -151,23 +187,34 @@ export default function App() {
               <div className="empty-state big">Laddar...</div>
             ) : activeId === UPLOAD_ID ? (
               <UploadView
-                flows={combinedFlows}
+                slots={allFileSlots}
                 files={poolFiles}
                 onSet={setPoolFile}
                 onClear={clearPoolFile}
                 onError={showError}
+                autoStatus={autoStatus}
               />
             ) : activeId === COMBINED_ID ? (
               <CombinedView
                 flows={combinedFlows}
+                allSlots={allFileSlots}
                 files={poolFiles}
+                onSet={setPoolFile}
                 onError={showError}
                 onGoToUpload={() => setActiveId(UPLOAD_ID)}
               />
             ) : activeSolo ? (
-              <FlowView key={activeSolo.id} flow={activeSolo} onError={showError} />
+              <FlowView
+                key={activeSolo.id}
+                flow={activeSolo}
+                allSlots={allFileSlots}
+                files={poolFiles}
+                onSet={setPoolFile}
+                onError={showError}
+                onGoToUpload={() => setActiveId(UPLOAD_ID)}
+              />
             ) : (
-              <div className="empty-state big">Valj ett flode.</div>
+              <div className="empty-state big">Välj ett flöde.</div>
             )}
           </main>
         </div>
