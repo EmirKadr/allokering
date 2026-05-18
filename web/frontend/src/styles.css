@@ -719,6 +719,22 @@ body {
   z-index: 1;
 }
 
+.copy-header-btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.copy-header-btn:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 .data-table tbody tr:hover {
   background: rgba(91, 140, 255, 0.07);
 }

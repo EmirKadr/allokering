@@ -1,20 +1,50 @@
 import React, { useState } from 'react'
 import DataTable from './DataTable.jsx'
-import { downloadUrl, openExcel } from '../api.js'
+import { downloadUrl, openExcel, tableColumnText } from '../api.js'
 
 // Visar resultatet från ett flöde: summeringskort, tabellflikar,
 // fritext-rapport och logg.
 export default function ResultPanel({ result, onError }) {
   const [activeTab, setActiveTab] = useState(result.tables[0]?.key || null)
+  const [copyStatus, setCopyStatus] = useState('')
 
   const active = result.tables.find((t) => t.key === activeTab) || result.tables[0]
   const summaryEntries = Object.entries(result.summary || {})
+  const copyColumns = result.flow_id === 'split-values'
 
   const handleExcel = async (key) => {
     try {
       await openExcel(result.session_id, key)
     } catch (err) {
       onError('Kunde inte öppna i Excel', String(err.message || err))
+    }
+  }
+
+  const copyText = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return
+    }
+
+    const field = document.createElement('textarea')
+    field.value = text
+    field.setAttribute('readonly', '')
+    field.style.position = 'fixed'
+    field.style.top = '-9999px'
+    document.body.appendChild(field)
+    field.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(field)
+    if (!ok) throw new Error('Urklipp kunde inte användas.')
+  }
+
+  const handleCopyColumn = async (key, columnIndex) => {
+    try {
+      const text = await tableColumnText(result.session_id, key, columnIndex)
+      await copyText(text)
+      setCopyStatus('Kopierat.')
+    } catch (err) {
+      onError('Kunde inte kopiera', String(err.message || err))
     }
   }
 
@@ -50,6 +80,7 @@ export default function ResultPanel({ result, onError }) {
             </div>
             {active && (
               <div className="tab-actions">
+                {copyStatus && <span className="status-text">{copyStatus}</span>}
                 <button className="btn-sm" onClick={() => handleExcel(active.key)}>
                   Öppna i Excel
                 </button>
@@ -59,7 +90,13 @@ export default function ResultPanel({ result, onError }) {
               </div>
             )}
           </div>
-          {active && <DataTable table={active.table} />}
+          {active && (
+            <DataTable
+              table={active.table}
+              copyColumnLabel={copyColumns ? 'Kopiera' : undefined}
+              onCopyColumn={copyColumns ? (index) => handleCopyColumn(active.key, index) : undefined}
+            />
+          )}
         </>
       )}
 
