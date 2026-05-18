@@ -124,34 +124,6 @@ export default function App() {
   const showError = (title, body, tone = 'error') =>
     setModal({ title, tone, body: <p>{body}</p> })
 
-  const showHelp = () =>
-    setModal({
-      title: 'Om appen',
-      tone: 'info',
-      body: (
-        <div className="help-body">
-          <p>
-            Hela allokerings-appen som ett <strong>API-styrt</strong> gränssnitt. Varje flöde kör
-            exakt samma motor som CLI:t.
-          </p>
-          <p>
-            <strong>Datauppladdning</strong> är en egen sida för filstatus, men filer kan släppas
-            i hela den aktiva vyn.
-          </p>
-          <p>
-            <strong>Allokering & analys</strong> samlar allokering, ordersaldo, LYX, påfyllnadsprio,
-            kontroller och prognos. Varje knapp visar vilka uppladdade filer den behöver.
-          </p>
-          <p>
-            <strong>Eftersök</strong> och <strong>Data & verktyg</strong> har egna vyer.
-          </p>
-          <p className="muted">
-            CLI och det gamla tkinter-GUI:t är orörda - detta är ett nytt lager ovanpå samma logik.
-          </p>
-        </div>
-      ),
-    })
-
   const activeSolo = soloFlows.find((f) => f.id === activeId)
 
   return (
@@ -167,9 +139,6 @@ export default function App() {
         <div className="topbar-actions">
           <button className="btn ghost" onClick={toggleTheme} title="Växla tema">
             {theme === 'dark' ? '☀ Ljust' : '☾ Mörkt'}
-          </button>
-          <button className="btn ghost" onClick={showHelp}>
-            ? Hjälp
           </button>
         </div>
       </header>
