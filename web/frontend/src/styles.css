@@ -514,6 +514,24 @@ body {
   }
 }
 
+.upload-status {
+  margin-top: 10px;
+}
+
+/* Notis i huvudvyn nar inga filer ar uppladdade an. */
+.upload-prompt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(243, 179, 74, 0.12);
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  color: var(--warn);
+}
+
 /* --- Run row -------------------------------------------------------------- */
 .run-row {
   display: flex;
