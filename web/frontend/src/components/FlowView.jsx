@@ -43,11 +43,13 @@ export default function FlowView({ flow, allSlots, files, onSet, onError, onGoTo
     return !values[i.key]
   })
   const canRun = missing.length === 0 && !busy
+  const runButtonLabel = flow.id === 'split-values' ? 'Dela värden' : 'Kör ' + flow.label
+  const busyButtonLabel = flow.id === 'split-values' ? 'Delar...' : 'Kör...'
 
   const run = async () => {
     if (!canRun) return
     setBusy(true)
-    setStatus('Kör ' + flow.label + '...')
+    setStatus(flow.id === 'split-values' ? 'Delar värden...' : 'Kör ' + flow.label + '...')
     setResult(null)
     const fd = new FormData()
     for (const inp of flow.inputs) {
@@ -137,6 +139,12 @@ export default function FlowView({ flow, allSlots, files, onSet, onError, onGoTo
                       type={inp.type === 'number' ? 'number' : 'text'}
                       value={values[inp.key] ?? (inp.default || '')}
                       onChange={(e) => setField(inp.key, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (flow.id === 'split-values' && inp.key === 'chunk_size' && e.key === 'Enter') {
+                          e.preventDefault()
+                          run()
+                        }
+                      }}
                     />
                   )}
                 </div>
@@ -150,7 +158,7 @@ export default function FlowView({ flow, allSlots, files, onSet, onError, onGoTo
 
           <div className="run-row">
             <button className="btn primary" disabled={!canRun} onClick={run}>
-              {busy ? 'Kör...' : 'Kör ' + flow.label}
+              {busy ? busyButtonLabel : runButtonLabel}
             </button>
             <span className="status-text">{status}</span>
           </div>

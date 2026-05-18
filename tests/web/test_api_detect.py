@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pandas as pd
 import pytest
 
 
@@ -135,16 +136,20 @@ def test_table_column_endpoint_returns_full_split_values_column():
     assert column_response.json()["text"].splitlines() == values
 
 
-def test_open_excel_writes_result_as_workbook(monkeypatch):
+def test_open_excel_for_split_values_uses_headerless_workbook(monkeypatch):
     client = TestClient(api.app)
     captured = {}
 
-    def fake_open_df_in_excel(payload, label="data"):
-        captured["payload"] = payload
+    def fake_open_df_in_excel_without_header(df, label):
+        captured["df"] = df
         captured["label"] = label
         return f"tmp_{label}.xlsx"
 
-    monkeypatch.setattr(api.engine, "open_df_in_excel", fake_open_df_in_excel)
+    monkeypatch.setattr(
+        api,
+        "_open_df_in_excel_without_header",
+        fake_open_df_in_excel_without_header,
+    )
 
     response = client.post(
         "/api/flow/split-values",
@@ -160,5 +165,19 @@ def test_open_excel_writes_result_as_workbook(monkeypatch):
     assert excel_response.status_code == 200
     assert excel_response.json()["path"].endswith("_Delade värden.xlsx")
     assert captured["label"] == "Delade värden"
-    assert list(captured["payload"]) == ["Delade värden"]
-    assert captured["payload"]["Delade värden"].columns.tolist() == ["Kolumn 1", "Kolumn 2"]
+    assert captured["df"].columns.tolist() == ["Kolumn 1", "Kolumn 2"]
+
+
+def test_headerless_excel_writer_starts_with_values(monkeypatch):
+    opened = []
+    monkeypatch.setattr(api, "_open_path", lambda path: opened.append(path))
+    df = pd.DataFrame({"Kolumn 1": ["A", "B"], "Kolumn 2": ["C", "D"]})
+
+    path = api._open_df_in_excel_without_header(df, label="Delade värden")
+
+    try:
+        written = pd.read_excel(path, header=None, dtype=str)
+        assert written.values.tolist() == [["A", "C"], ["B", "D"]]
+        assert opened == [path]
+    finally:
+        Path(path).unlink(missing_ok=True)
