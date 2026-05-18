@@ -1,4 +1,4 @@
-"""Snabbt end-to-end-test av API:t med FastAPI TestClient (ingen server behovs)."""
+"""End-to-end-test av API:t med FastAPI TestClient (ingen server behovs)."""
 from __future__ import annotations
 
 import sys
@@ -14,33 +14,51 @@ SAMPLE = Path(__file__).resolve().parents[1] / "sample_data"
 client = TestClient(api.app)
 
 
+def _f(name: str):
+    return open(SAMPLE / name, "rb")
+
+
 def main() -> int:
-    h = client.get("/api/health").json()
-    print("health:", h)
+    print("health:", client.get("/api/health").json()["status"])
 
-    with open(SAMPLE / "bestallningslinjer.csv", "rb") as f:
-        det = client.post("/api/detect", files={"file": ("bestallningslinjer.csv", f, "text/csv")})
-    print("detect orders:", det.json())
+    reg = client.get("/api/flows").json()["flows"]
+    print("flows registrerade:", len(reg))
 
-    with open(SAMPLE / "bestallningslinjer.csv", "rb") as o, open(SAMPLE / "buffertpallar.csv", "rb") as b:
-        res = client.post(
-            "/api/allocate",
-            files={
-                "orders": ("bestallningslinjer.csv", o, "text/csv"),
-                "buffer": ("buffertpallar.csv", b, "text/csv"),
-            },
-        )
+    with _f("bestallningslinjer.csv") as o:
+        print("detect:", client.post("/api/detect", files={"file": ("orders.csv", o, "text/csv")}).json())
+
+    # allocate
+    with _f("bestallningslinjer.csv") as o, _f("buffertpallar.csv") as b:
+        res = client.post("/api/flow/allocate", files={
+            "orders": ("orders.csv", o, "text/csv"),
+            "buffer": ("buffer.csv", b, "text/csv"),
+        })
     if res.status_code != 200:
         print("ALLOCATE FAILED", res.status_code, res.text)
         return 1
     data = res.json()
-    print("summary:", data["summary"])
-    print("result columns:", data["tables"]["result"]["columns"])
-    print("result rows:", data["tables"]["result"]["row_count"])
-    print("log lines:", len(data["log"]))
+    print("allocate summary:", data["summary"])
+    print("allocate tabeller:", [t["key"] for t in data["tables"]])
 
+    # ordersaldo
+    with _f("bestallningslinjer.csv") as o:
+        res = client.post("/api/flow/ordersaldo", files={"orders": ("orders.csv", o, "text/csv")})
+    print("ordersaldo:", res.status_code, res.json().get("summary") if res.status_code == 200 else res.text)
+
+    # vecka27
+    with _f("bestallningslinjer.csv") as o:
+        res = client.post("/api/flow/vecka27-check", files={"orders": ("orders.csv", o, "text/csv")})
+    print("vecka27:", res.status_code, res.json().get("summary") if res.status_code == 200 else res.text)
+
+    # split-values (textfalt)
+    res = client.post("/api/flow/split-values", data={"values": "A\nB\nC\nD", "chunk_size": "2"})
+    print("split-values:", res.status_code, res.json().get("summary") if res.status_code == 200 else res.text)
+
+    # excel-export + download
+    excel = client.post("/api/open-excel", json={"session_id": data["session_id"], "key": "result"})
+    print("open-excel:", excel.status_code)
     dl = client.get(f"/api/download/{data['session_id']}/result")
-    print("download status:", dl.status_code, "bytes:", len(dl.content))
+    print("download:", dl.status_code, len(dl.content), "bytes")
     print("OK")
     return 0
 

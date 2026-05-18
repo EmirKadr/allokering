@@ -10,13 +10,29 @@ presentationslager ovanpa ett HTTP-API som ocksa kan deployas som webbapp.
 web/
   backend/
     engine.py    - laddar motorn fran allokering12.1.py (delad logik)
-    api.py       - FastAPI: /api/allocate, /api/detect, /api/open-excel, /api/download
+    flows.py     - ett floden-handtag per CLI-kommando + registret
+    api.py       - FastAPI: /api/flows, /api/flow/{id}, /api/detect,
+                   /api/open-excel, /api/download
     desktop.py   - pywebview-launcher (kor API + visar React-appen i ett fonster)
-  frontend/      - React + Vite (drag&drop, filslots, resultattabs, popups)
+  frontend/      - React + Vite (sidebar, drag&drop, filslots, resultattabs,
+                   dark/light-tema, popups)
 ```
+
+Frontenden byggs dynamiskt fran `/api/flows` - lagg till ett nytt flode i
+`flows.py` sa dyker det upp i menyn automatiskt.
 
 CLI:t (`python allokering12.1.py allocate ...`) och tkinter-GUI:t ar oroda -
 demon ar additiv och ligger helt i `web/`.
+
+## Floden
+
+Alla 14 CLI-kommandon finns som floden i menyn:
+
+- **Allokering:** allocate
+- **Order & saldo:** ordersaldo, lyx, pafyllnadsprio
+- **Kontroller:** hib-koppling, overview-check, dispatch-check, vecka27-check
+- **Sokning & prognos:** eftersok, prognos-report
+- **Data & verktyg:** observations-update, observations-sync, split-values, update-check
 
 ## Kom igang
 
@@ -60,6 +76,9 @@ Oppna http://localhost:5173.
 
 ## Status
 
-Demo v1 tacker `allocate`-flodet (resultat, near-miss, refill HP/AutoStore,
-pallplatser). Ovriga CLI-kommandon kan kopplas in som fler endpoints enligt
-samma monster.
+Hela appen ar exponerad - samtliga 14 floden. Drag&drop sorterar filer till
+ratt ruta via samma filtypsdetektering som tkinter-GUI:t. Resultat oppnas i
+Excel lokalt eller laddas ner som CSV. Tema-toggle for ljust/morkt lage.
+
+`observations-update` och `observations-sync` skriver till temporara filer -
+repo-datan ror demon aldrig.
