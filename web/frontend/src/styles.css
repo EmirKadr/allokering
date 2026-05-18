@@ -877,10 +877,6 @@ body {
   text-align: right;
 }
 
-.help-body p {
-  margin: 0 0 10px;
-}
-
 /* --- Scrollbars ----------------------------------------------------------- */
 ::-webkit-scrollbar {
   width: 10px;
