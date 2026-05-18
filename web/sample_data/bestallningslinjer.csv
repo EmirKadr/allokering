@@ -1,0 +1,5 @@
+Artikel,Antal,Ordernr,Radnr,Status,Zon,Kund
+A1,6,O1,1,30,A,Butik Nord
+A2,10,O1,2,30,A,Butik Nord
+A3,5,O2,1,30,R,Butik Syd
+A1,4,O3,1,30,A,Butik Ost
