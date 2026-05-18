@@ -224,7 +224,7 @@ def open_excel(req: OpenExcelRequest) -> dict:
     if session is None or req.key not in session["tables"]:
         raise HTTPException(status_code=404, detail="Resultatet hittades inte (kör flödet igen).")
     label = session["labels"].get(req.key, req.key)
-    path = engine.open_df_in_excel(session["tables"][req.key], label=label)
+    path = engine.open_df_in_excel({label: session["tables"][req.key]}, label=label)
     return {"opened": True, "path": path}
 
 

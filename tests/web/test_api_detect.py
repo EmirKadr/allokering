@@ -133,3 +133,32 @@ def test_table_column_endpoint_returns_full_split_values_column():
 
     assert column_response.status_code == 200
     assert column_response.json()["text"].splitlines() == values
+
+
+def test_open_excel_writes_result_as_workbook(monkeypatch):
+    client = TestClient(api.app)
+    captured = {}
+
+    def fake_open_df_in_excel(payload, label="data"):
+        captured["payload"] = payload
+        captured["label"] = label
+        return f"tmp_{label}.xlsx"
+
+    monkeypatch.setattr(api.engine, "open_df_in_excel", fake_open_df_in_excel)
+
+    response = client.post(
+        "/api/flow/split-values",
+        data={"values": "A\nB\nC\nD", "chunk_size": "2"},
+    )
+    data = response.json()
+
+    excel_response = client.post(
+        "/api/open-excel",
+        json={"session_id": data["session_id"], "key": "report"},
+    )
+
+    assert excel_response.status_code == 200
+    assert excel_response.json()["path"].endswith("_Delade värden.xlsx")
+    assert captured["label"] == "Delade värden"
+    assert list(captured["payload"]) == ["Delade värden"]
+    assert captured["payload"]["Delade värden"].columns.tolist() == ["Kolumn 1", "Kolumn 2"]
