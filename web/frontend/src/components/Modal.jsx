@@ -1,6 +1,6 @@
 import React from 'react'
 
-// Ersatter tkinter messagebox/popups - fel, hjalp och bekraftelser.
+// Ersätter tkinter messagebox/popups - fel, hjälp och bekräftelser.
 export default function Modal({ open, title, tone = 'info', onClose, children }) {
   if (!open) return null
   return (
@@ -8,14 +8,14 @@ export default function Modal({ open, title, tone = 'info', onClose, children })
       <div className={`modal modal-${tone}`} onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h3>{title}</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Stang">
+          <button className="icon-btn" onClick={onClose} aria-label="Stäng">
             ✕
           </button>
         </header>
         <div className="modal-body">{children}</div>
         <footer className="modal-foot">
           <button className="btn" onClick={onClose}>
-            Stang
+            Stäng
           </button>
         </footer>
       </div>

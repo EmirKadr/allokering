@@ -1,11 +1,11 @@
-"""Laddar allokerings-motorn fran allokering12.1.py.
+"""Laddar allokerings-motorn från allokering12.1.py.
 
-Modulfilen heter ``allokering12.1.py`` vilket inte ar ett giltigt
-Python-identifierare, sa den laddas via importlib fran sokvagen. All
-domanlogik aterexporteras harifran sa att API-lagret aldrig behover
+Modulfilen heter ``allokering12.1.py`` vilket inte är ett giltigt
+Python-identifierare, så den laddas via importlib från sökvägen. All
+domänlogik återexporteras härifrån så att API-lagret aldrig behöver
 importera tkinter-widgets eller CLI-parsern direkt.
 
-Detta foljer AGENTS.md: GUI/CLI/API delar exakt samma underliggande motor.
+Detta följer AGENTS.md: GUI/CLI/API delar exakt samma underliggande motor.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _load_engine():
 
 engine = _load_engine()
 
-# --- Domanfunktioner som API-lagret anvander ---------------------------------
+# --- Domänfunktioner som API-lagret använder ---------------------------------
 read_table = engine._read_cli_table
 normalize_saldo = engine.normalize_saldo
 normalize_items = engine.normalize_items
@@ -44,15 +44,17 @@ compute_pallet_spaces = engine.compute_pallet_spaces
 reclassify_skrymmande = engine.App._reclassify_skrymmande  # staticmethod
 merge_item_flags = engine._merge_item_flags
 open_df_in_excel = engine._open_df_in_excel
+build_observations_update_result = engine.build_observations_update_result
+fetch_observations_from_github = engine.fetch_observations_from_github
 
 APP_VERSION = engine.APP_VERSION
 APP_TITLE = engine.APP_TITLE
 
 
 def detect_file_type(path: str):
-    """Ateranvander GUI:ts filtypsdetektering.
+    """Återanvänder GUI:ts filtypsdetektering.
 
-    ``App._detect_file_type`` ror aldrig ``self``, sa den kan anropas
+    ``App._detect_file_type`` rör aldrig ``self``, så den kan anropas
     obunden med ``None`` som self.
     """
     return engine.App._detect_file_type(None, path)

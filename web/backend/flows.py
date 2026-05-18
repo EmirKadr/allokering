@@ -1,18 +1,18 @@
-"""Floden: ett API-handtag per CLI-kommando i allokering12.1.py.
+"""Flöden: ett API-handtag per CLI-kommando i allokering12.1.py.
 
 Varje handler tar emot:
-  files  - dict {input_key: Path till temporar uppladdad fil}
-  params - dict {input_key: stranvarde} for text/nummer/textarea-falt
+  files  - dict {input_key: Path till temporär uppladdad fil}
+  params - dict {input_key: strängvärde} för text/nummer/textarea-fält
 
 och returnerar en standarddict:
   {
-    "summary": {etikett: varde, ...},   # visas som kort
+    "summary": {etikett: värde, ...},   # visas som kort
     "tables":  [(key, label, DataFrame), ...],
-    "text":    str | None,              # fritext-rapport (eftersok, vecka27)
+    "text":    str | None,              # fritext-rapport (eftersök, vecka27)
     "log":     [str, ...],
   }
 
-All domanlogik kommer fran motorn - inga berakningar dupliceras har.
+All domänlogik kommer från motorn - inga beräkningar dupliceras här.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from engine import engine as E
 NEAR_MISS_COLUMNS = [
     "Artikel", "OrderID", "OrderRad", "PallID", "Kallplats", "Mottagen",
     "Behov_vid_tillfallet", "Pall_kvantitet", "Skillnad",
-    "Procentuell skillnad (%)", "Anledning", "Galler (INSTEAD R/A)",
+    "Procentuell skillnad (%)", "Anledning", "Gäller (INSTEAD R/A)",
 ]
 
 
@@ -37,7 +37,7 @@ def _read(path: Path) -> pd.DataFrame:
 
 
 def _temp(suffix: str) -> Path:
-    """En unik temporar sokvag som annu inte finns (motorn skapar filen)."""
+    """En unik temporär sökväg som ännu inte finns (motorn skapar filen)."""
     return Path(tempfile.gettempdir()) / f"allok_{uuid.uuid4().hex}{suffix}"
 
 
@@ -138,17 +138,17 @@ def flow_pafyllnadsprio(files: dict, params: dict) -> dict:
             )
             mode = "lastningsfonster"
         except Exception as exc:  # noqa: BLE001
-            log = [f"Lastningsfonster-lage misslyckades, faller tillbaka: {exc}"]
+            log = [f"Lastningsfönster-läge misslyckades, faller tillbaka: {exc}"]
             report_df, missing_ref = E.build_pafyllnadsprio_report(shortage_df, max_df)
     else:
         report_df, missing_ref = E.build_pafyllnadsprio_report(shortage_df, max_df)
 
-    tables = [("report", "Pafyllnadsprio", report_df)]
+    tables = [("report", "Påfyllnadsprio", report_df)]
     if isinstance(window_map_df, pd.DataFrame):
-        tables.append(("window_map", "Lastningsfonster", window_map_df))
+        tables.append(("window_map", "Lastningsfönster", window_map_df))
     return {
         "summary": {
-            "Lage": "Lastningsfonster" if mode == "lastningsfonster" else "Standard",
+            "Läge": "Lastningsfönster" if mode == "lastningsfonster" else "Standard",
             "Rapportrader": len(report_df),
             "Saknad referens": int(missing_ref),
         },
@@ -163,10 +163,10 @@ def flow_hib_koppling(files: dict, params: dict) -> dict:
     changes_df = E.compute_hib_koppling(details_df, overview_df)
     missed_df = E.compute_missed_departures(details_df, overview_df)
     return {
-        "summary": {"Andringar": len(changes_df), "Missade avgangar": len(missed_df)},
+        "summary": {"Ändringar": len(changes_df), "Missade avgångar": len(missed_df)},
         "tables": [
-            ("changes", "Andringar", changes_df),
-            ("missed", "Missade avgangar", missed_df),
+            ("changes", "Ändringar", changes_df),
+            ("missed", "Missade avgångar", missed_df),
         ],
         "log": [],
     }
@@ -180,7 +180,7 @@ def flow_overview_check(files: dict, params: dict) -> dict:
     tables = [(key.lower().replace(" ", "_"), key, df) for key, df in sheets.items()]
     return {
         "summary": {
-            "Sandningsrader": len(result.shipment_df),
+            "Sändningsrader": len(result.shipment_df),
             "HIB-rader": len(result.hib_df),
         },
         "tables": tables,
@@ -215,17 +215,17 @@ def flow_eftersok(files: dict, params: dict) -> dict:
     purchase = (params.get("purchase") or "").strip()
     article = (params.get("article") or "").strip()
     if not purchase or not article:
-        raise ValueError("Ange bade inkopsnummer och artikelnummer.")
+        raise ValueError("Ange både inköpsnummer och artikelnummer.")
     if "wms_receive" not in files:
-        raise ValueError("Mottagningslogg (v_ask_receive_log) kravs.")
+        raise ValueError("Mottagningslogg (v_ask_receive_log) krävs.")
     wms_paths = {
         key: (str(files[key]) if key in files else None)
         for key in ("wms_receive", "wms_booking", "wms_buffert", "wms_trans", "wms_pick", "wms_correct")
     }
     result = E.build_eftersok_result(purchase, article, wms_paths)
     return {
-        "summary": {"Inkop": purchase, "Artikel": article, "Rapportrader": len(result.report_lines)},
-        "tables": [("report", "Eftersok", result.report_df)],
+        "summary": {"Inköp": purchase, "Artikel": article, "Rapportrader": len(result.report_lines)},
+        "tables": [("report", "Eftersök", result.report_df)],
         "text": result.report_text,
         "log": [],
     }
@@ -235,7 +235,7 @@ def flow_prognos_report(files: dict, params: dict) -> dict:
     if "prognos" not in files and "campaign" not in files:
         raise ValueError("Ange minst en prognosfil eller en kampanjfil.")
     if "saldo" not in files:
-        raise ValueError("Saldo/automation kravs - rapporten filtrerar pa Robot=Y.")
+        raise ValueError("Saldo/automation krävs - rapporten filtrerar på Robot=Y.")
     prognos_df = E._load_prognos_cli_source(str(files["prognos"])) if "prognos" in files else None
     campaign_df = E._load_campaign_cli_source(str(files["campaign"])) if "campaign" in files else None
     saldo_df = _read(files["saldo"])
@@ -260,7 +260,7 @@ def flow_prognos_report(files: dict, params: dict) -> dict:
 
 def flow_observations_update(files: dict, params: dict) -> dict:
     buffer_df = _read(files["buffer"])
-    # Skriv till temporara filer - ror aldrig repo-data fran demon.
+    # Skriv till temporära filer - rör aldrig repo-data från demon.
     result = E.build_observations_update_result(
         buffer_df,
         observations_path=str(_temp(".csv.gz")),
@@ -270,11 +270,11 @@ def flow_observations_update(files: dict, params: dict) -> dict:
     return {
         "summary": {
             "Nya observationer": result.new_row_count,
-            "Artikel-max rader": result.article_max_rows,
+            "Artikel-max-rader": result.article_max_rows,
         },
         "tables": [("new_rows", "Nya observationer", result.new_rows_df)],
         "log": [
-            "Skrivet till temporara filer (repo-data orord).",
+            "Skrivet till temporära filer (repo-data orörd).",
             f"Observations: {result.observations_path}",
             f"Artikel-max: {result.article_max_path}",
         ],
@@ -290,12 +290,12 @@ def flow_observations_sync(files: dict, params: dict) -> dict:
     )
     return {
         "summary": {
-            "Hamtade rader": result.fetched_rows,
+            "Hämtade rader": result.fetched_rows,
             "Totalt observationer": result.total_observations,
-            "Artikel-max rader": result.article_max_rows,
+            "Artikel-max-rader": result.article_max_rows,
         },
         "tables": [],
-        "log": ["Synkat till temporara filer (repo-data orord, ingen push)."],
+        "log": ["Synkat till temporära filer (repo-data orörd, ingen push)."],
     }
 
 
@@ -306,7 +306,7 @@ def flow_split_values(files: dict, params: dict) -> dict:
         raw = params.get("values") or ""
         values = [line.strip() for line in raw.splitlines() if line.strip()]
     if not values:
-        raise ValueError("Inga varden angivna - klistra in eller ladda upp en textfil.")
+        raise ValueError("Inga värden angivna - klistra in eller ladda upp en textfil.")
     try:
         chunk_size = int(params.get("chunk_size") or 2000)
     except ValueError:
@@ -314,11 +314,11 @@ def flow_split_values(files: dict, params: dict) -> dict:
     result = E.build_chunked_values_result(values, chunk_size=max(1, chunk_size))
     return {
         "summary": {
-            "Antal varden": result.value_count,
+            "Antal värden": result.value_count,
             "Antal kolumner": result.chunk_count,
             "Per kolumn": result.chunk_size,
         },
-        "tables": [("report", "Delade varden", result.report_df)],
+        "tables": [("report", "Delade värden", result.report_df)],
         "log": [],
     }
 
@@ -335,7 +335,7 @@ def flow_update_check(files: dict, params: dict) -> dict:
         "text": (
             f"Release: {result.release_url}\nInstallerare: {result.installer_name}"
             if result.has_update
-            else "Appen ar uppdaterad."
+            else "Appen är uppdaterad."
         ),
         "log": [],
     }
@@ -349,10 +349,10 @@ def flow_update_check(files: dict, params: dict) -> dict:
 FLOWS: list[dict] = [
     {
         "id": "allocate", "label": "Allokering", "category": "Allokering",
-        "description": "Allokera kundorder mot buffertpallar (Helpall -> AutoStore -> Huvudplock, FIFO) med near-miss-loggning, refill och pallplatsberakning.",
+        "description": "Allokera kundorder mot buffertpallar (Helpall -> AutoStore -> Huvudplock, FIFO) med near-miss-loggning, refill och pallplatsberäkning.",
         "handler": flow_allocate,
         "inputs": [
-            {"key": "orders", "label": "Bestallningslinjer", "type": "file", "required": True, "detect": ["orders"]},
+            {"key": "orders", "label": "Beställningslinjer", "type": "file", "required": True, "detect": ["orders"]},
             {"key": "buffer", "label": "Buffertpallar", "type": "file", "required": True, "detect": ["buffer"]},
             {"key": "saldo", "label": "Saldo / automation", "type": "file", "required": False, "detect": ["automation"]},
             {"key": "items", "label": "Item option", "type": "file", "required": False, "detect": ["item"]},
@@ -361,16 +361,16 @@ FLOWS: list[dict] = [
     },
     {
         "id": "ordersaldo", "label": "Ordersaldo", "category": "Order & saldo",
-        "description": "Berakna kompletta ordrar och artiklar med underskott utifran bestallningslinjer.",
+        "description": "Beräkna kompletta ordrar och artiklar med underskott utifrån beställningslinjer.",
         "handler": flow_ordersaldo,
         "inputs": [
-            {"key": "orders", "label": "Bestallningslinjer", "type": "file", "required": True, "detect": ["orders"]},
+            {"key": "orders", "label": "Beställningslinjer", "type": "file", "required": True, "detect": ["orders"]},
             {"key": "saldo", "label": "Saldo / automation (Utbestallt)", "type": "file", "required": False, "detect": ["automation"]},
         ],
     },
     {
         "id": "lyx", "label": "LYX-artiklar", "category": "Order & saldo",
-        "description": "Identifiera LYX-artiklar utifran en saldofil och artikel_max-referens.",
+        "description": "Identifiera LYX-artiklar utifrån en saldofil och artikel_max-referens.",
         "handler": flow_lyx,
         "inputs": [
             {"key": "saldo", "label": "Saldofil", "type": "file", "required": True, "detect": ["automation", "buffer"]},
@@ -378,42 +378,42 @@ FLOWS: list[dict] = [
         ],
     },
     {
-        "id": "pafyllnadsprio", "label": "Pafyllnadsprio", "category": "Order & saldo",
-        "description": "Prioritera pafyllnad utifran underskott. Med orderoversikt anvands lastningsfonster-lage.",
+        "id": "pafyllnadsprio", "label": "Påfyllnadsprio", "category": "Order & saldo",
+        "description": "Prioritera påfyllnad utifrån underskott. Med orderöversikt används lastningsfönster-läge.",
         "handler": flow_pafyllnadsprio,
         "inputs": [
-            {"key": "orders", "label": "Bestallningslinjer", "type": "file", "required": True, "detect": ["orders"]},
+            {"key": "orders", "label": "Beställningslinjer", "type": "file", "required": True, "detect": ["orders"]},
             {"key": "saldo", "label": "Saldo / automation", "type": "file", "required": False, "detect": ["automation"]},
-            {"key": "overview", "label": "Orderoversikt (lastningsfonster)", "type": "file", "required": False, "detect": ["overview"]},
+            {"key": "overview", "label": "Orderöversikt (lastningsfönster)", "type": "file", "required": False, "detect": ["overview"]},
             {"key": "max_csv", "label": "artikel_max.csv (valfri)", "type": "file", "required": False, "detect": []},
         ],
     },
     {
         "id": "hib-koppling", "label": "HIB-koppling", "category": "Kontroller",
-        "description": "Rakna ut vilka HIB-ordrar som behover kopplas om samt missade avgangar.",
+        "description": "Räkna ut vilka HIB-ordrar som behöver kopplas om samt missade avgångar.",
         "handler": flow_hib_koppling,
         "inputs": [
-            {"key": "details", "label": "Bestallningslinjer", "type": "file", "required": True, "detect": ["orders"]},
-            {"key": "overview", "label": "Orderoversikt", "type": "file", "required": True, "detect": ["overview"]},
+            {"key": "details", "label": "Beställningslinjer", "type": "file", "required": True, "detect": ["orders"]},
+            {"key": "overview", "label": "Orderöversikt", "type": "file", "required": True, "detect": ["overview"]},
         ],
     },
     {
-        "id": "overview-check", "label": "Orderoversiktkontroll", "category": "Kontroller",
-        "description": "Hitta sandningsnr med flera kunder/transportorer och HIB utan butikssandning.",
+        "id": "overview-check", "label": "Orderöversiktkontroll", "category": "Kontroller",
+        "description": "Hitta sändningsnr med flera kunder/transportörer och HIB utan butikssändning.",
         "handler": flow_overview_check,
         "inputs": [
-            {"key": "overview", "label": "Orderoversikt", "type": "file", "required": True, "detect": ["overview"]},
-            {"key": "details", "label": "Bestallningslinjer (kundnamn)", "type": "file", "required": False, "detect": ["orders"]},
+            {"key": "overview", "label": "Orderöversikt", "type": "file", "required": True, "detect": ["overview"]},
+            {"key": "details", "label": "Beställningslinjer (kundnamn)", "type": "file", "required": False, "detect": ["orders"]},
         ],
     },
     {
         "id": "dispatch-check", "label": "Dispatchkontroll", "category": "Kontroller",
-        "description": "Jamfor orderoversikt mot dispatchpallar och lista avvikelser.",
+        "description": "Jämför orderöversikt mot dispatchpallar och lista avvikelser.",
         "handler": flow_dispatch_check,
         "inputs": [
-            {"key": "overview", "label": "Orderoversikt", "type": "file", "required": True, "detect": ["overview"]},
+            {"key": "overview", "label": "Orderöversikt", "type": "file", "required": True, "detect": ["overview"]},
             {"key": "dispatch", "label": "Dispatchpallar", "type": "file", "required": True, "detect": ["dispatch"]},
-            {"key": "details", "label": "Bestallningslinjer (kundnamn)", "type": "file", "required": False, "detect": ["orders"]},
+            {"key": "details", "label": "Beställningslinjer (kundnamn)", "type": "file", "required": False, "detect": ["orders"]},
         ],
     },
     {
@@ -421,15 +421,15 @@ FLOWS: list[dict] = [
         "description": "Kontrollera orderrader mot vecka 27-reglerna.",
         "handler": flow_vecka27_check,
         "inputs": [
-            {"key": "orders", "label": "Bestallningslinjer", "type": "file", "required": True, "detect": ["orders"]},
+            {"key": "orders", "label": "Beställningslinjer", "type": "file", "required": True, "detect": ["orders"]},
         ],
     },
     {
-        "id": "eftersok", "label": "Eftersok", "category": "Sokning & prognos",
-        "description": "Spara en artikel/pall genom WMS-loggarna utifran inkops- och artikelnummer.",
+        "id": "eftersok", "label": "Eftersök", "category": "Sökning & prognos",
+        "description": "Spåra en artikel/pall genom WMS-loggarna utifrån inköps- och artikelnummer.",
         "handler": flow_eftersok,
         "inputs": [
-            {"key": "purchase", "label": "Inkopsnummer", "type": "text", "required": True},
+            {"key": "purchase", "label": "Inköpsnummer", "type": "text", "required": True},
             {"key": "article", "label": "Artikelnummer", "type": "text", "required": True},
             {"key": "wms_receive", "label": "Mottagningslogg", "type": "file", "required": True, "detect": ["wms_receive"]},
             {"key": "wms_booking", "label": "Inlagringslogg", "type": "file", "required": False, "detect": ["wms_booking"]},
@@ -440,8 +440,8 @@ FLOWS: list[dict] = [
         ],
     },
     {
-        "id": "prognos-report", "label": "Prognosrapport", "category": "Sokning & prognos",
-        "description": "Bygg prognos-/kampanjrapport mot autoplock. Saldo kravs (Robot=Y-filter).",
+        "id": "prognos-report", "label": "Prognosrapport", "category": "Sökning & prognos",
+        "description": "Bygg prognos-/kampanjrapport mot autoplock. Saldo krävs (Robot=Y-filter).",
         "handler": flow_prognos_report,
         "inputs": [
             {"key": "prognos", "label": "Prognosfil", "type": "file", "required": False, "detect": ["prognos"]},
@@ -452,7 +452,7 @@ FLOWS: list[dict] = [
     },
     {
         "id": "observations-update", "label": "Observations-uppdatering", "category": "Data & verktyg",
-        "description": "Lagg till nya status-30-pallar i observations och racka om artikel_max. Skriver till temporara filer.",
+        "description": "Lägg till nya status-30-pallar i observations och räkna om artikel_max. Skriver till temporära filer.",
         "handler": flow_observations_update,
         "inputs": [
             {"key": "buffer", "label": "Buffertpallar", "type": "file", "required": True, "detect": ["buffer"]},
@@ -460,25 +460,25 @@ FLOWS: list[dict] = [
     },
     {
         "id": "observations-sync", "label": "Observations-synk", "category": "Data & verktyg",
-        "description": "Hamta observations fran GitHub (eller en lokal fil). Ingen push, skriver till temporara filer.",
+        "description": "Hämta observations från GitHub (eller en lokal fil). Ingen push, skriver till temporära filer.",
         "handler": flow_observations_sync,
         "inputs": [
             {"key": "remote_file", "label": "Lokal observationsfil (valfri)", "type": "file", "required": False, "detect": []},
         ],
     },
     {
-        "id": "split-values", "label": "Dela varden", "category": "Data & verktyg",
-        "description": "Dela en lang lista av varden i kolumner med valbar kolumnstorlek.",
+        "id": "split-values", "label": "Dela värden", "category": "Data & verktyg",
+        "description": "Dela en lång lista av värden i kolumner med valbar kolumnstorlek.",
         "handler": flow_split_values,
         "inputs": [
-            {"key": "values", "label": "Varden (ett per rad)", "type": "textarea", "required": False},
+            {"key": "values", "label": "Värden (ett per rad)", "type": "textarea", "required": False},
             {"key": "values_file", "label": "...eller ladda upp textfil", "type": "file", "required": False, "detect": []},
             {"key": "chunk_size", "label": "Antal per kolumn", "type": "number", "required": False, "default": "2000"},
         ],
     },
     {
         "id": "update-check", "label": "Uppdateringskoll", "category": "Data & verktyg",
-        "description": "Kontrollera om en nyare version av appen finns pa GitHub.",
+        "description": "Kontrollera om en nyare version av appen finns på GitHub.",
         "handler": flow_update_check,
         "inputs": [],
     },
@@ -486,8 +486,8 @@ FLOWS: list[dict] = [
 
 FLOW_BY_ID: dict[str, dict] = {flow["id"]: flow for flow in FLOWS}
 
-# Floden som visas som egna vyer. Allt ovrigt samlas i den kombinerade
-# huvudvyn dar filerna delas mellan korningarna.
+# Flöden som visas som egna vyer. Allt övrigt samlas i den kombinerade
+# huvudvyn där filerna delas mellan körningarna.
 SOLO_FLOWS = {
     "eftersok",
     "observations-update",
@@ -497,14 +497,14 @@ SOLO_FLOWS = {
 }
 
 
-# Gemensam datapool: combined-floden laddar upp filerna EN gang har, och
-# varje flodes filinput mappas till en pool-nyckel. Endast "details" skiljer
-# sig fran sin pool-nyckel (samma filformat som "orders").
+# Gemensam datapool: combined-flöden laddar upp filerna EN gång här, och
+# varje flödes filinput mappas till en pool-nyckel. Endast "details" skiljer
+# sig från sin pool-nyckel (samma filformat som "orders").
 DATA_POOL: list[dict] = [
-    {"key": "orders", "label": "Bestallningslinjer", "detect": ["orders"]},
+    {"key": "orders", "label": "Beställningslinjer", "detect": ["orders"]},
     {"key": "buffer", "label": "Buffertpallar", "detect": ["buffer"]},
     {"key": "saldo", "label": "Saldo / automation", "detect": ["automation"]},
-    {"key": "overview", "label": "Orderoversikt", "detect": ["overview"]},
+    {"key": "overview", "label": "Orderöversikt", "detect": ["overview"]},
     {"key": "dispatch", "label": "Dispatchpallar", "detect": ["dispatch"]},
     {"key": "items", "label": "Item option", "detect": ["item"]},
     {"key": "not_putaway", "label": "Ej inlagrade", "detect": []},
@@ -523,9 +523,9 @@ def _pool_key(input_key: str) -> str:
 def public_registry() -> list[dict]:
     """Registret utan handler-referenser - sant till frontenden.
 
-    Varje flode far ett ``view``-falt: ``solo`` (egen vy) eller
-    ``combined`` (delar huvudvyn med ovriga combined-floden). Filinputs i
-    combined-floden far en ``pool``-nyckel mot den gemensamma datapoolen.
+    Varje flöde får ett ``view``-fält: ``solo`` (egen vy) eller
+    ``combined`` (delar huvudvyn med övriga combined-flöden). Filinputs i
+    combined-flöden får en ``pool``-nyckel mot den gemensamma datapoolen.
     """
     result: list[dict] = []
     for flow in FLOWS:
@@ -545,5 +545,5 @@ def public_registry() -> list[dict]:
 
 
 def public_pool() -> list[dict]:
-    """Datapoolens slots - sant till frontenden for den kombinerade vyn."""
+    """Datapoolens slots - sänt till frontenden för den kombinerade vyn."""
     return [dict(slot) for slot in DATA_POOL]

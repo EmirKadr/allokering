@@ -160,6 +160,34 @@ body {
   padding: 22px 26px;
 }
 
+.drop-area {
+  position: relative;
+  min-height: calc(100vh - 105px);
+  width: 100%;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: rgba(91, 140, 255, 0.1);
+}
+
+.drop-overlay-msg {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-weight: 700;
+  padding: 14px 18px;
+}
+
 /* --- Flow view ------------------------------------------------------------ */
 .flow-view {
   max-width: 1120px;
@@ -193,41 +221,22 @@ body {
   color: var(--muted);
 }
 
-/* --- Dropzone ------------------------------------------------------------- */
-.dropzone {
-  border: 2px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 22px 18px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  background: var(--bg-2);
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
-.dropzone-hover {
-  border-color: var(--accent);
-  background: rgba(91, 140, 255, 0.08);
+.panel-head .panel-title {
+  margin: 0;
 }
 
-.dropzone-busy {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.dropzone-icon {
-  font-size: 26px;
-  color: var(--accent);
-}
-
-.dropzone-title {
-  font-weight: 600;
-  margin-top: 4px;
-}
-
-.dropzone-sub {
+.drop-hint {
   color: var(--muted);
   font-size: 12px;
-  margin-top: 4px;
+  margin: 0 0 12px;
 }
 
 /* --- File slots ----------------------------------------------------------- */
@@ -377,6 +386,12 @@ body {
   cursor: not-allowed;
 }
 
+.btn:disabled,
+.btn-sm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn.ghost {
   background: transparent;
 }
@@ -508,6 +523,37 @@ body {
   margin-top: auto;
 }
 
+.flow-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.flow-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 8px 10px;
+}
+
+.flow-file-row-filled {
+  border-color: rgba(62, 207, 142, 0.4);
+}
+
+.flow-file-name {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 720px) {
   .pool-grid {
     grid-template-columns: 1fr;
@@ -518,10 +564,11 @@ body {
   margin-top: 10px;
 }
 
-/* Notis i huvudvyn nar inga filer ar uppladdade an. */
+/* Notis i huvudvyn när inga filer är uppladdade än. */
 .upload-prompt {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   background: rgba(243, 179, 74, 0.12);
   border: 1px solid var(--warn);

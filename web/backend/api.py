@@ -1,13 +1,16 @@
-"""FastAPI-lager for allokerings-demon.
+"""FastAPI-lager för allokerings-demon.
 
-Exponerar hela appen: ett generiskt floden-API dar varje CLI-kommando i
-allokering12.1.py har en motsvarande endpoint. Frontenden (React) ar ett
-rent presentationslager - samma kontrakt fungerar i pywebview-fonstret
+Exponerar hela appen: ett generiskt flöden-API där varje CLI-kommando i
+allokering12.1.py har en motsvarande endpoint. Frontenden (React) är ett
+rent presentationslager - samma kontrakt fungerar i pywebview-fönstret
 lokalt och som webbapp senare.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import math
+import re
+import threading
 import tempfile
 import traceback
 import uuid
@@ -25,7 +28,22 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 import engine
 import flows
 
-app = FastAPI(title="Allokering API", version=engine.APP_VERSION)
+
+def _sync_observations_background() -> None:
+    try:
+        engine.fetch_observations_from_github()
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Matcha tkinter-appen: synka observations i bakgrunden vid start.
+    threading.Thread(target=_sync_observations_background, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Allokering API", version=engine.APP_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,12 +52,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Resultat fran en korning halls i minnet sa Excel/CSV-export kan ateranvanda dem.
+# Resultat från en körning hålls i minnet så Excel/CSV-export kan återanvända dem.
 # SESSIONS[session_id] = {"tables": {key: DataFrame}, "labels": {key: label}}
 SESSIONS: dict[str, dict] = {}
 
 
-# --- Hjalpfunktioner ---------------------------------------------------------
+# --- Hjälpfunktioner ---------------------------------------------------------
 
 def _cell(value: object) -> str:
     if value is None:
@@ -69,9 +87,17 @@ def _df_to_table(df: Optional[pd.DataFrame], preview_limit: int = 1000) -> dict:
     }
 
 
+def _safe_upload_stem(filename: str | None) -> str:
+    """Returnera ett säkert filnamnsfragment utan att tappa typ-hints."""
+    stem = Path(filename or "upload").stem or "upload"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-")
+    return (safe or "upload")[:80]
+
+
 async def _save_upload(upload: UploadFile) -> Path:
     suffix = Path(upload.filename or "").suffix or ".csv"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    prefix = f"allok_upload_{_safe_upload_stem(upload.filename)}_"
+    tmp = tempfile.NamedTemporaryFile(delete=False, prefix=prefix, suffix=suffix)
     tmp.write(await upload.read())
     tmp.close()
     return Path(tmp.name)
@@ -91,13 +117,13 @@ def health() -> dict:
 
 @app.get("/api/flows")
 def list_flows() -> dict:
-    """Floden-registret - frontenden bygger UI:t dynamiskt fran detta."""
+    """Flöden-registret - frontenden bygger UI:t dynamiskt från detta."""
     return {"flows": flows.public_registry()}
 
 
 @app.get("/api/pool")
 def list_pool() -> dict:
-    """Datapoolens slots for den kombinerade huvudvyn (delade filer)."""
+    """Datapoolens slots för den kombinerade huvudvyn (delade filer)."""
     return {"pool": flows.public_pool()}
 
 
@@ -114,12 +140,36 @@ async def detect(file: UploadFile = File(...)) -> dict:
     return {"file_type": file_type}
 
 
+@app.post("/api/observations/update")
+async def update_observations(file: UploadFile = File(...)) -> dict:
+    """Uppdatera observations/artikel_max från en uppladdad buffertfil."""
+    path = await _save_upload(file)
+    try:
+        buffer_df = engine.read_table(str(path))
+        result = engine.build_observations_update_result(buffer_df, push_to_github=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "trace": traceback.format_exc()},
+        )
+    finally:
+        path.unlink(missing_ok=True)
+
+    return {
+        "new_rows": int(result.new_row_count),
+        "article_max_rows": int(result.article_max_rows),
+        "pushed_to_github": bool(result.pushed_to_github),
+        "observations_path": result.observations_path,
+        "article_max_path": result.article_max_path,
+    }
+
+
 @app.post("/api/flow/{flow_id}")
 async def run_flow(flow_id: str, request: Request) -> dict:
-    """Kor ett flode. Filer och textfalt skickas som multipart/form-data."""
+    """Kör ett flöde. Filer och textfält skickas som multipart/form-data."""
     flow = flows.FLOW_BY_ID.get(flow_id)
     if flow is None:
-        raise HTTPException(status_code=404, detail=f"Okant flode: {flow_id}")
+        raise HTTPException(status_code=404, detail=f"Okänt flöde: {flow_id}")
 
     form = await request.form()
     files: dict[str, Path] = {}
@@ -169,10 +219,10 @@ async def run_flow(flow_id: str, request: Request) -> dict:
 
 @app.post("/api/open-excel")
 def open_excel(req: OpenExcelRequest) -> dict:
-    """Skriv ett resultat till temporar fil och oppna det i OS:et (desktop-lage)."""
+    """Skriv ett resultat till temporär fil och öppna det i OS:et (desktop-läge)."""
     session = SESSIONS.get(req.session_id)
     if session is None or req.key not in session["tables"]:
-        raise HTTPException(status_code=404, detail="Resultatet hittades inte (kor floden igen).")
+        raise HTTPException(status_code=404, detail="Resultatet hittades inte (kör flödet igen).")
     label = session["labels"].get(req.key, req.key)
     path = engine.open_df_in_excel(session["tables"][req.key], label=label)
     return {"opened": True, "path": path}
@@ -180,7 +230,7 @@ def open_excel(req: OpenExcelRequest) -> dict:
 
 @app.get("/api/download/{session_id}/{key}")
 def download(session_id: str, key: str):
-    """Ladda ner ett resultat som CSV (webbappslage)."""
+    """Ladda ner ett resultat som CSV (webbappsläge)."""
     session = SESSIONS.get(session_id)
     if session is None or key not in session["tables"]:
         raise HTTPException(status_code=404, detail="Resultatet hittades inte.")
@@ -192,7 +242,7 @@ def download(session_id: str, key: str):
 
 
 # --- Statiska filer (byggd React-frontend) -----------------------------------
-# Maste mountas SIST sa att /api/*-routerna far foretrade.
+# Måste mountas SIST så att /api/*-routerna får företräde.
 _DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 if _DIST.exists():
     app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")
