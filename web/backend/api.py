@@ -8,8 +8,12 @@ lokalt och som webbapp senare.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import importlib.util
 import math
+import os
 import re
+import subprocess
+import sys
 import threading
 import tempfile
 import traceback
@@ -101,6 +105,36 @@ async def _save_upload(upload: UploadFile) -> Path:
     tmp.write(await upload.read())
     tmp.close()
     return Path(tmp.name)
+
+
+def _open_path(path: str) -> None:
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+def _excel_writer_engine() -> str:
+    if importlib.util.find_spec("openpyxl"):
+        return "openpyxl"
+    if importlib.util.find_spec("xlsxwriter"):
+        return "xlsxwriter"
+    raise RuntimeError("Saknar Excel-skrivare (installera 'openpyxl' eller 'xlsxwriter').")
+
+
+def _open_df_in_excel_without_header(df: pd.DataFrame, label: str) -> str:
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{label}.xlsx")
+    path = tmp.name
+    tmp.close()
+    with pd.ExcelWriter(path, engine=_excel_writer_engine()) as writer:
+        df.to_excel(writer, sheet_name=str(label)[:31] or "Sheet1", index=False, header=False)
+    _open_path(path)
+    return path
 
 
 class OpenExcelRequest(BaseModel):
@@ -200,6 +234,7 @@ async def run_flow(flow_id: str, request: Request) -> dict:
     tables = result.get("tables", [])
     session_id = uuid.uuid4().hex
     SESSIONS[session_id] = {
+        "flow_id": flow_id,
         "tables": {key: df for key, _label, df in tables},
         "labels": {key: label for key, label, _df in tables},
     }
@@ -224,7 +259,10 @@ def open_excel(req: OpenExcelRequest) -> dict:
     if session is None or req.key not in session["tables"]:
         raise HTTPException(status_code=404, detail="Resultatet hittades inte (kör flödet igen).")
     label = session["labels"].get(req.key, req.key)
-    path = engine.open_df_in_excel({label: session["tables"][req.key]}, label=label)
+    if session.get("flow_id") == "split-values":
+        path = _open_df_in_excel_without_header(session["tables"][req.key], label=label)
+    else:
+        path = engine.open_df_in_excel({label: session["tables"][req.key]}, label=label)
     return {"opened": True, "path": path}
 
 
