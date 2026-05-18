@@ -1,7 +1,7 @@
 import React from 'react'
 
 // Visar en resultattabell ({columns, rows, row_count, truncated}).
-export default function DataTable({ table }) {
+export default function DataTable({ table, copyColumnLabel, onCopyColumn }) {
   if (!table || table.columns.length === 0) {
     return <div className="empty-state">Ingen data.</div>
   }
@@ -14,8 +14,21 @@ export default function DataTable({ table }) {
         <thead>
           <tr>
             <th className="row-num">#</th>
-            {table.columns.map((c) => (
-              <th key={c}>{c}</th>
+            {table.columns.map((c, index) => (
+              <th key={`${c}-${index}`}>
+                {onCopyColumn ? (
+                  <button
+                    type="button"
+                    className="copy-header-btn"
+                    title={`Kopiera ${c}`}
+                    onClick={() => onCopyColumn(index)}
+                  >
+                    {copyColumnLabel || c}
+                  </button>
+                ) : (
+                  c
+                )}
+              </th>
             ))}
           </tr>
         </thead>

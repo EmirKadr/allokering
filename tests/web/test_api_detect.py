@@ -112,3 +112,24 @@ def test_observations_update_endpoint_uses_uploaded_buffer(monkeypatch):
     assert calls["path"].name.startswith("allok_upload_buffertpallar_")
     assert calls["push_to_github"] is True
     assert not calls["path"].exists()
+
+
+def test_table_column_endpoint_returns_full_split_values_column():
+    client = TestClient(api.app)
+    values = [f"V{i}" for i in range(1005)]
+
+    response = client.post(
+        "/api/flow/split-values",
+        data={"values": "\n".join(values), "chunk_size": "1005"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    table = data["tables"][0]["table"]
+    assert table["truncated"] is True
+    assert len(table["rows"]) == 1000
+
+    column_response = client.get(f"/api/table-column/{data['session_id']}/report/0")
+
+    assert column_response.status_code == 200
+    assert column_response.json()["text"].splitlines() == values

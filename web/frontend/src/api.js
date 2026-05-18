@@ -62,6 +62,15 @@ export async function openExcel(sessionId, key) {
   )
 }
 
+export async function tableColumnText(sessionId, key, columnIndex) {
+  const data = await jsonOrThrow(
+    await fetch(
+      `/api/table-column/${encodeURIComponent(sessionId)}/${encodeURIComponent(key)}/${columnIndex}`,
+    ),
+  )
+  return data.text || ''
+}
+
 export function downloadUrl(sessionId, key) {
   return `/api/download/${sessionId}/${key}`
 }

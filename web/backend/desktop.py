@@ -1,8 +1,8 @@
 """Desktop-launcher: startar API:t och visar React-frontenden i ett pywebview-fonster.
 
-Kor:  python web/backend/desktop.py
+Kör:  python web/backend/desktop.py
 
-Detta ger en "riktig app"-kansla men under huven ar allt samma HTTP-API
+Detta ger en "riktig app"-känsla men under huven är allt samma HTTP-API
 som senare kan deployas som webbapp.
 """
 from __future__ import annotations
@@ -13,12 +13,13 @@ import time
 import urllib.request
 from pathlib import Path
 
-# Sa att "import api" / "import engine" fungerar oavsett varifran scriptet kors.
+# Så att "import api" / "import engine" fungerar oavsett varifrån scriptet körs.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HOST = "127.0.0.1"
 PORT = 8765
 URL = f"http://{HOST}:{PORT}"
+APP_ICON = Path(__file__).resolve().parents[1] / "frontend" / "public" / "app.ico"
 
 
 def _run_server() -> None:
@@ -43,7 +44,7 @@ def _wait_for_server(timeout: float = 20.0) -> bool:
 def main() -> int:
     dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
     if not dist.exists():
-        print("Frontenden ar inte byggd an. Kor forst:")
+        print("Frontenden är inte byggd än. Kör först:")
         print("  cd web/frontend && npm install && npm run build")
         return 1
 
@@ -60,14 +61,14 @@ def main() -> int:
         pass
 
     webview.create_window(
-        "Allokering - Demo",
+        "Allokering",
         URL,
         width=1440,
         height=920,
         min_size=(1100, 720),
     )
-    # http_server=False: vi serverar allt sjalva via FastAPI.
-    webview.start()
+    # http_server=False: vi serverar allt själva via FastAPI.
+    webview.start(icon=str(APP_ICON) if APP_ICON.exists() else None)
     return 0
 
 

@@ -228,6 +228,22 @@ def open_excel(req: OpenExcelRequest) -> dict:
     return {"opened": True, "path": path}
 
 
+@app.get("/api/table-column/{session_id}/{key}/{column_index}")
+def table_column(session_id: str, key: str, column_index: int) -> dict:
+    session = SESSIONS.get(session_id)
+    if session is None or key not in session["tables"]:
+        raise HTTPException(status_code=404, detail="Resultatet hittades inte.")
+
+    df = session["tables"][key]
+    if column_index < 0 or column_index >= len(df.columns):
+        raise HTTPException(status_code=404, detail="Kolumnen hittades inte.")
+
+    values = [_cell(value) for value in df.iloc[:, column_index].tolist()]
+    while values and values[-1] == "":
+        values.pop()
+    return {"text": "\n".join(values)}
+
+
 @app.get("/api/download/{session_id}/{key}")
 def download(session_id: str, key: str):
     """Ladda ner ett resultat som CSV (webbappsläge)."""
