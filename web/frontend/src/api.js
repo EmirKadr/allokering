@@ -26,6 +26,11 @@ export async function getFlows() {
   return data.flows
 }
 
+export async function getPool() {
+  const data = await jsonOrThrow(await fetch('/api/pool'))
+  return data.pool
+}
+
 export async function detect(file) {
   const fd = new FormData()
   fd.append('file', file)

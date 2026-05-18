@@ -123,20 +123,24 @@ export default function CombinedView({ flows, onError }) {
     group.flows.push(flow)
   }
 
+  const filledCount = slots.filter((s) => values[s.key]).length
+
   return (
     <div className="flow-view">
       <div className="flow-header">
-        <h1>Allokering & analys</h1>
+        <h1>Allokering &amp; analys</h1>
         <p className="flow-desc">
-          Ladda upp filerna en gang - de delas mellan alla korningar nedan. Kor valfri analys
-          med de filer som finns inlagda.
+          Ladda upp filerna en gang - de delas mellan alla korningar nedan. Varje knapp visar
+          vilka filer den behover: gron text = uppladdad, rod text = saknas.
         </p>
       </div>
 
       <section className="panel">
-        <h2 className="panel-title">Indata</h2>
+        <h2 className="panel-title">
+          Datauppladdning · {filledCount}/{slots.length} filer inlagda
+        </h2>
         <DropZone onFiles={routeDropped} busy={!!busyId} />
-        <div className="slots">
+        <div className="pool-grid">
           {slots.map((slot) => (
             <FileSlot
               key={slot.key}
@@ -154,29 +158,44 @@ export default function CombinedView({ flows, onError }) {
         {groups.map((group) => (
           <div key={group.name} className="action-group">
             <div className="action-group-title">{group.name}</div>
-            <div className="action-row">
+            <div className="action-grid">
               {group.flows.map((flow) => {
-                const missing = missingFor(flow)
+                const ready = missingFor(flow).length === 0
                 return (
-                  <button
-                    key={flow.id}
-                    className="btn action-btn"
-                    disabled={missing.length > 0 || !!busyId}
-                    title={
-                      missing.length
-                        ? 'Kravs: ' + missing.map((m) => m.label).join(', ')
-                        : flow.description
-                    }
-                    onClick={() => run(flow)}
-                  >
-                    {busyId === flow.id ? 'Kor...' : flow.label}
-                  </button>
+                  <div key={flow.id} className={`action-card ${ready ? 'ready' : ''}`}>
+                    <h3 className="action-title">{flow.label}</h3>
+                    <p className="action-desc">{flow.description}</p>
+                    <div className="action-files">
+                      {flow.inputs.map((inp) => {
+                        const filled = !!values[logicalKey(inp.key)]
+                        const cls = filled ? 'ok' : inp.required ? 'missing' : 'opt'
+                        const label = SLOT_LABELS[logicalKey(inp.key)] || inp.label
+                        return (
+                          <span key={inp.key} className={`file-tag ${cls}`}>
+                            {filled ? '✓' : inp.required ? '✗' : '○'} {label}
+                            {!inp.required && ' (valfri)'}
+                          </span>
+                        )
+                      })}
+                    </div>
+                    <button
+                      className="btn primary action-btn"
+                      disabled={!ready || !!busyId}
+                      onClick={() => run(flow)}
+                    >
+                      {busyId === flow.id ? 'Kor...' : 'Kor ' + flow.label}
+                    </button>
+                  </div>
                 )
               })}
             </div>
           </div>
         ))}
-        {status && <div className="run-row"><span className="status-text">{status}</span></div>}
+        {status && (
+          <div className="run-row">
+            <span className="status-text">{status}</span>
+          </div>
+        )}
       </section>
 
       {result && (

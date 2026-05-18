@@ -497,16 +497,53 @@ SOLO_FLOWS = {
 }
 
 
+# Gemensam datapool: combined-floden laddar upp filerna EN gang har, och
+# varje flodes filinput mappas till en pool-nyckel. Endast "details" skiljer
+# sig fran sin pool-nyckel (samma filformat som "orders").
+DATA_POOL: list[dict] = [
+    {"key": "orders", "label": "Bestallningslinjer", "detect": ["orders"]},
+    {"key": "buffer", "label": "Buffertpallar", "detect": ["buffer"]},
+    {"key": "saldo", "label": "Saldo / automation", "detect": ["automation"]},
+    {"key": "overview", "label": "Orderoversikt", "detect": ["overview"]},
+    {"key": "dispatch", "label": "Dispatchpallar", "detect": ["dispatch"]},
+    {"key": "items", "label": "Item option", "detect": ["item"]},
+    {"key": "not_putaway", "label": "Ej inlagrade", "detect": []},
+    {"key": "prognos", "label": "Prognosfil", "detect": ["prognos"]},
+    {"key": "campaign", "label": "Kampanjfil", "detect": ["campaign"]},
+    {"key": "max_csv", "label": "artikel_max.csv", "detect": []},
+]
+
+_POOL_KEY_OVERRIDE = {"details": "orders"}
+
+
+def _pool_key(input_key: str) -> str:
+    return _POOL_KEY_OVERRIDE.get(input_key, input_key)
+
+
 def public_registry() -> list[dict]:
     """Registret utan handler-referenser - sant till frontenden.
 
     Varje flode far ett ``view``-falt: ``solo`` (egen vy) eller
-    ``combined`` (delar huvudvyn med ovriga combined-floden).
+    ``combined`` (delar huvudvyn med ovriga combined-floden). Filinputs i
+    combined-floden far en ``pool``-nyckel mot den gemensamma datapoolen.
     """
-    return [
-        {
+    result: list[dict] = []
+    for flow in FLOWS:
+        view = "solo" if flow["id"] in SOLO_FLOWS else "combined"
+        inputs: list[dict] = []
+        for inp in flow["inputs"]:
+            new_inp = dict(inp)
+            if view == "combined" and inp.get("type") == "file":
+                new_inp["pool"] = _pool_key(inp["key"])
+            inputs.append(new_inp)
+        result.append({
             **{key: value for key, value in flow.items() if key != "handler"},
-            "view": "solo" if flow["id"] in SOLO_FLOWS else "combined",
-        }
-        for flow in FLOWS
-    ]
+            "inputs": inputs,
+            "view": view,
+        })
+    return result
+
+
+def public_pool() -> list[dict]:
+    """Datapoolens slots - sant till frontenden for den kombinerade vyn."""
+    return [dict(slot) for slot in DATA_POOL]
