@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import FlowView from './components/FlowView.jsx'
 import CombinedView from './components/CombinedView.jsx'
+import UploadView from './components/UploadView.jsx'
 import Modal from './components/Modal.jsx'
 import { getFlows, health } from './api.js'
 
+const UPLOAD_ID = '__upload__'
 const COMBINED_ID = '__combined__'
 
 function useTheme() {
@@ -21,10 +23,14 @@ function useTheme() {
 export default function App() {
   const [theme, toggleTheme] = useTheme()
   const [flows, setFlows] = useState([])
-  const [activeId, setActiveId] = useState(COMBINED_ID)
+  const [activeId, setActiveId] = useState(UPLOAD_ID)
   const [info, setInfo] = useState({ version: '' })
   const [modal, setModal] = useState(null)
   const [loadError, setLoadError] = useState('')
+
+  // Uppladdade filer lever har sa de delas mellan Datauppladdning-sidan
+  // och korningarna i huvudvyn. logicalKey -> { name, file }.
+  const [poolFiles, setPoolFiles] = useState({})
 
   useEffect(() => {
     health()
@@ -41,12 +47,26 @@ export default function App() {
   )
   const soloFlows = useMemo(() => flows.filter((f) => f.view === 'solo'), [flows])
 
-  // Sidebar-grupper: huvudvyn forst, sedan solo-floden per kategori.
+  const setPoolFile = (key, file) =>
+    setPoolFiles((v) => ({ ...v, [key]: { name: file.name, file } }))
+  const clearPoolFile = (key) =>
+    setPoolFiles((v) => {
+      const next = { ...v }
+      delete next[key]
+      return next
+    })
+
+  // Sidebar-grupper: huvudvy (datauppladdning + analys), sedan solo-floden.
   const navGroups = useMemo(() => {
     const groups = [
       {
         name: 'Huvudvy',
         items: [
+          {
+            id: UPLOAD_ID,
+            label: 'Datauppladdning',
+            description: 'Ladda upp alla filer pa ett stalle.',
+          },
           {
             id: COMBINED_ID,
             label: 'Allokering & analys',
@@ -80,9 +100,11 @@ export default function App() {
             exakt samma motor som CLI:t.
           </p>
           <p>
-            <strong>Huvudvyn "Allokering & analys"</strong> samlar allokering, ordersaldo, LYX,
-            pafyllnadsprio, kontroller och prognos. Ladda upp filerna en gang - de delas mellan
-            alla korningar.
+            <strong>Datauppladdning</strong> ar en egen sida - ladda upp filerna en gang dar.
+          </p>
+          <p>
+            <strong>Allokering & analys</strong> samlar allokering, ordersaldo, LYX, pafyllnadsprio,
+            kontroller och prognos. Varje knapp visar vilka uppladdade filer den behover.
           </p>
           <p>
             <strong>Eftersok</strong> och <strong>Data & verktyg</strong> har egna vyer.
@@ -127,8 +149,21 @@ export default function App() {
           <main className="content">
             {flows.length === 0 ? (
               <div className="empty-state big">Laddar...</div>
+            ) : activeId === UPLOAD_ID ? (
+              <UploadView
+                flows={combinedFlows}
+                files={poolFiles}
+                onSet={setPoolFile}
+                onClear={clearPoolFile}
+                onError={showError}
+              />
             ) : activeId === COMBINED_ID ? (
-              <CombinedView flows={combinedFlows} onError={showError} />
+              <CombinedView
+                flows={combinedFlows}
+                files={poolFiles}
+                onError={showError}
+                onGoToUpload={() => setActiveId(UPLOAD_ID)}
+              />
             ) : activeSolo ? (
               <FlowView key={activeSolo.id} flow={activeSolo} onError={showError} />
             ) : (
