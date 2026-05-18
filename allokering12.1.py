@@ -4777,15 +4777,17 @@ class App(ttk.Frame):
 
     def _enter_help_mode(self, mode: str) -> None:
         self._help_mode = mode
+        # X-hörnet byggs inuti overlayen i _show_help_overlay
         self._show_help_overlay()
-        self._build_help_bar()
         self.master.bind("<Escape>", lambda _e: self._exit_help_mode())
 
     def _exit_help_mode(self) -> None:
         self._help_mode = ""
+        # X-hörnet förstörs automatiskt med overlayen (är ett child)
+        self._help_toggle = None
+        self._help_bar = None
         self._remove_help_overlay()
         self._close_help_popup()
-        self._close_help_bar()
         try:
             self.master.unbind("<Escape>")
         except Exception:
@@ -4797,14 +4799,40 @@ class App(ttk.Frame):
         overlay = tk.Toplevel(self.master)
         overlay.wm_overrideredirect(True)
         overlay.wm_attributes("-topmost", True)
-        overlay.wm_attributes("-alpha", 0.35)
+        overlay.wm_attributes("-alpha", 0.45)
         overlay.configure(cursor="question_arrow")
         self._help_overlay = overlay
         self._update_overlay_color()
         self._position_overlay()
+        # Bygg X-hörnet som child-widget INUTI overlayen (place(relx=1.0)
+        # garanterar att den alltid hamnar i övre högra hörnet av overlayen).
+        self._build_help_corner_in(overlay)
         overlay.bind("<Button-1>", self._on_help_click)
         overlay.bind("<Escape>", lambda _e: self._exit_help_mode())
         self.master.bind("<Configure>", self._on_main_configure_help, add="+")
+
+    def _build_help_corner_in(self, parent: tk.Misc) -> None:
+        """Bygger X-hörnet som child av overlay-fönstret.
+        place(relx=1.0, anchor='ne') förankrar det i overlayns övre högra hörn."""
+        bar = tk.Frame(parent, bg="#000000", padx=2, pady=2)
+        bar.place(relx=1.0, rely=0.0, anchor="ne", x=-4, y=4)
+
+        inner = tk.Frame(bar, bg="#1a1a1a", padx=8, pady=6)
+        inner.pack()
+
+        tk.Label(inner, text="Avancerat", bg="#1a1a1a", fg="#FFFFFF",
+                 font=("Arial", 10, "bold")).pack(side="left", padx=(0, 6))
+
+        toggle = SlideToggle(inner, command=self._on_advanced_toggle, bg="#1a1a1a")
+        toggle.pack(side="left", padx=(0, 12))
+        self._help_toggle = toggle
+
+        x_btn = tk.Button(inner, text="✕  Stäng", command=self._exit_help_mode,
+                          bg="#FF2222", fg="#FFFFFF", relief="flat",
+                          activebackground="#CC0000", activeforeground="#FFFFFF",
+                          font=("Arial", 11, "bold"), padx=10, pady=2,
+                          borderwidth=0)
+        x_btn.pack(side="left")
 
     def _update_overlay_color(self) -> None:
         if self._help_overlay is None:
@@ -4826,7 +4854,6 @@ class App(ttk.Frame):
     def _on_main_configure_help(self, event) -> None:
         if event.widget is self.master or event.widget is self:
             self._position_overlay()
-            self._reposition_help_bar()
 
     def _remove_help_overlay(self) -> None:
         try:
@@ -4841,6 +4868,9 @@ class App(ttk.Frame):
             self._help_overlay = None
 
     def _on_help_click(self, event) -> None:
+        # Ignorera klick på child-widgets (X-knapp och toggle); de hanterar sig själva
+        if event.widget is not self._help_overlay:
+            return
         topic = self._find_topic_at(event.x_root, event.y_root)
         self._show_help_popup(topic, event.x_root, event.y_root)
 
@@ -4933,77 +4963,6 @@ class App(ttk.Frame):
             except Exception:
                 pass
             self._help_popup = None
-
-    def _build_help_bar(self) -> None:
-        self._close_help_bar()
-        bar = tk.Toplevel(self.master)
-        bar.wm_overrideredirect(True)
-        bar.wm_attributes("-topmost", True)
-        bar.configure(bg="#CC2222")
-        self._help_bar = bar
-
-        frm = tk.Frame(bar, bg="#1a1a1a", padx=8, pady=6)
-        frm.pack(fill="both", expand=True, padx=2, pady=2)
-
-        # Avancerat-toggle till vänster
-        tk.Label(frm, text="Avancerat", bg="#1a1a1a", fg="#CCCCCC",
-                 font=("Arial", 9)).pack(side="left", padx=(0, 4))
-        toggle = SlideToggle(frm, command=self._on_advanced_toggle, bg="#1a1a1a")
-        toggle.pack(side="left", padx=(0, 10))
-        self._help_toggle = toggle
-
-        # Stor tydlig X-knapp till höger
-        tk.Button(frm, text="✕", command=self._exit_help_mode,
-                  bg="#CC2222", fg="white", relief="flat",
-                  activebackground="#AA0000", activeforeground="white",
-                  font=("Arial", 13, "bold"), width=2, pady=0).pack(side="left")
-
-        bar.bind("<Escape>", lambda _e: self._exit_help_mode())
-        bar.update_idletasks()
-        # Kort fördröjning så overlay hinner få sin slutliga geometri
-        self.after(20, self._reposition_help_bar)
-
-    def _reposition_help_bar(self) -> None:
-        if self._help_bar is None:
-            return
-        self._help_bar.update_idletasks()
-        bw = self._help_bar.winfo_reqwidth()
-        sw = self.winfo_screenwidth()
-
-        # Läs overlay-geometrin direkt — den är korrekt satt av _position_overlay
-        ox, oy, ow = 0, 0, 0
-        if self._help_overlay is not None:
-            try:
-                self._help_overlay.update_idletasks()
-                import re as _re
-                m = _re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)",
-                              self._help_overlay.geometry())
-                if m:
-                    ow = int(m.group(1))
-                    ox = int(m.group(3))
-                    oy = int(m.group(4))
-            except Exception:
-                pass
-
-        if ow == 0:
-            self.update_idletasks()
-            ox = self.winfo_rootx()
-            oy = self.winfo_rooty()
-            ow = self.winfo_width()
-
-        x = ox + ow - bw - 4
-        x = max(4, min(x, sw - bw - 4))
-        y = oy + 4
-        self._help_bar.geometry(f"+{x}+{y}")
-
-    def _close_help_bar(self) -> None:
-        if self._help_bar is not None:
-            try:
-                self._help_bar.destroy()
-            except Exception:
-                pass
-            self._help_bar = None
-            self._help_toggle = None
 
     def _on_advanced_toggle(self, state: bool) -> None:
         self._help_mode = "avancerat" if state else "enkel"
