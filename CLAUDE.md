@@ -1,213 +1,155 @@
-# CLAUDE.md — AI Assistant Guide for `allokering`
+# CLAUDE.md - AI Assistant Guide for `allokering`
 
-## Project Overview
+Las `AGENTS.md` forst. Den filen innehaller repo-reglerna for hur nya funktioner ska byggas sa att GUI och CLI delar samma logik.
 
-**Buffertpallar → Order-allokering (GUI)** is a Swedish warehouse management desktop application that allocates customer orders to buffer (inventory) pallets. It calculates optimal pallet space usage, refill requirements, and generates reports for warehouse operators.
+## Project Snapshot
 
-**Current version:** 9.2 (file: `allokera9.2.py`)
-**Language:** Swedish (all UI text, comments, and docstrings)
-**Runtime:** Python 3.9+ desktop application
+- Main application: `allokering12.1.py`
+- Current app metadata: `app_info.py`
+- Current version: `12.1.4`
+- Language: Swedish for user-facing text, reports, help texts, and most domain naming
+- Runtime: Python desktop app with both GUI and CLI entry points
 
----
+This repo is still centered around one large application file, but it is no longer "GUI only". The app now supports both:
 
-## Repository Structure
+- GUI for human users
+- CLI for automation, testing, and agent-driven simulations
 
-```
-allokering/
-├── allokera9.2.py                      # Entire application — single file (~2,500 lines)
-└── .github/
-    └── workflows/
-        └── auto-merge-claude.yml       # Auto-merges claude/** branches into main
-```
+## Current Repository Structure
 
-This is a **single-file monolith**. All logic, GUI, schemas, and constants live in `allokera9.2.py`. There are no separate `src/`, `tests/`, or `config/` directories.
+Key files and folders:
 
----
+- `allokering12.1.py` - main GUI and CLI application
+- `app_info.py` - app identity, version, GitHub release metadata, analytics config
+- `update_service.py` - update check and installer download logic
+- `analytics_store.py` - local analytics event storage
+- `analytics_dashboard.py` - dashboard for reading local analytics files
+- `wms_sok79.py` - WMS search support used by Eftersok
+- `tests/` - pytest suite
+- `TESTING.md` - how to run tests and CLI commands
+- `AGENTS.md` - repo rules for agent-friendly implementation
+- `../ALLOKERING_FILKUNSKAP.md` - shared file and column knowledge for CLI-facing flows across `projects`
+- `packaging/windows/` - Windows installer and packaging assets
 
-## Technology Stack
+There is no database and no server component. The app processes CSV/XLSX inputs in memory and writes reports to text, CSV, or XLSX files.
 
-| Component        | Technology                              |
-|------------------|-----------------------------------------|
-| GUI              | `tkinter` / `ttk` (stdlib)              |
-| Data Processing  | `pandas`, `numpy`                       |
-| Excel I/O        | `openpyxl` (read), `openpyxl`/`xlsxwriter` (write, optional) |
-| Drag-and-drop    | `tkinterdnd2` (optional)                |
-| Language         | Python 3.9+                             |
-| CI/CD            | GitHub Actions                          |
+## Running
 
-Optional dependencies are detected at import time; the app degrades gracefully if they're missing.
+GUI:
 
----
-
-## Running the Application
-
-```bash
-# Install dependencies
-pip install pandas numpy openpyxl tkinterdnd2
-
-# Launch
-python3 allokera9.2.py
+```powershell
+python allokering12.1.py
 ```
 
-No build step, no tests, no configuration files — just run the Python file.
+CLI help:
 
----
-
-## Key Constants (top of `allokera9.2.py`)
-
-```python
-APP_TITLE = "Buffertpallar → Order-allokering (GUI) — 8.5"
-DEFAULT_OUTPUT = "allocated_orders.csv"
-ALLOC_BUFFER_STATUSES = {29, 30, 32}   # Valid statuses for allocation
-REFILL_BUFFER_STATUSES = {29, 30}      # Valid statuses for refill
-NEAR_MISS_PCT = 0.30                   # 30% threshold for near-miss pallets
-INVALID_LOC_PREFIXES = ("AA",)         # Warehouse location prefixes to exclude
-INVALID_LOC_EXACT = {"TRANSIT", "TRANSIT_ERROR", "MISSING", "UT2"}
+```powershell
+python allokering12.1.py --help
 ```
 
-These are the primary configuration points. There are no external config files or `.env` files.
+Run tests:
 
----
-
-## Code Architecture
-
-### Input Schemas (flexible column mapping)
-
-Each schema defines candidate column names for fuzzy, case-insensitive matching via `find_col()`:
-
-| Schema            | Purpose                                 |
-|-------------------|-----------------------------------------|
-| `ORDER_SCHEMA`    | Customer order lines (article, qty, status, ordernr, radnr) |
-| `BUFFER_SCHEMA`   | Buffer/pallet inventory (artikel, qty, location, timestamp, id, status) |
-| `NOT_PUTAWAY_SCHEMA` | Articles not yet put away           |
-| `SALDO_SCHEMA`    | Current inventory balance              |
-| `ITEM_SCHEMA`     | Item master data (stackability flags)  |
-
-`find_col(df, candidates)` matches columns case-insensitively, stripping non-alphanumeric characters. This tolerates varied input file formats.
-
-### Core Processing Functions
-
-| Function                          | Description                                          |
-|-----------------------------------|------------------------------------------------------|
-| `read_prognos_xlsx(path)`         | Parse forecast XLSX (strips header rows/columns)     |
-| `read_campaign_xlsx(path)`        | Parse campaign volume XLSX                           |
-| `normalize_not_putaway(path)`     | Process articles not yet put away                    |
-| `normalize_saldo(path)`           | Normalize inventory balance CSV                      |
-| `normalize_pick_log(path)`        | Process pick log and compute sales metrics           |
-| `normalize_items(path)`           | Load item master data (stackability)                 |
-| `compute_sales_metrics(df)`       | ABC classification and sales analytics               |
-| `allocate(orders_df, buffer_df)`  | Core FIFO allocation algorithm                       |
-| `calculate_refill(buffer_df, ...)`| Calculate replenishment requirements                 |
-| `compute_pallet_spaces(...)`      | Required pallet spaces per customer                  |
-| `build_prognos_vs_autoplock_report(...)` | Forecast vs. autopick comparison report      |
-
-### GUI Class
-
-`App(ttk.Frame)` — single main window with:
-- File picker buttons (`pick_*()` methods) for all input files
-- `run_allocation()` — main entry point that orchestrates all processing
-- `open_*_in_excel()` — exports result DataFrames to temp files, opens in system Excel
-- `reset_cache()` — clears cached DataFrames
-
-### Utility Helpers
-
-```python
-find_col(df, candidates, required=True, default=None)  # Fuzzy column finder
-to_num(x) -> float                                     # Safe numeric conversion
-_safe_str_series(s: pd.Series) -> pd.Series            # Safe string conversion
+```powershell
+pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
----
+## Current CLI Commands
 
-## Allocation Logic
+The following commands exist today:
 
-### Three-Stage Priority
+- `allocate`
+- `ordersaldo`
+- `lyx`
+- `pafyllnadsprio`
+- `hib-koppling`
+- `overview-check`
+- `dispatch-check`
+- `vecka27-check`
+- `eftersok`
+- `prognos-report`
+- `observations-update`
+- `observations-sync`
+- `split-values`
+- `update-check`
 
-1. **HELPALL** — Manual picking zone pallets (highest priority)
-2. **AUTOSTORE** — Automated bin storage pallets
-3. **HAUPTPLOCK** — Main picking area pallets (fallback)
+When adding new report-like or data-processing features, prefer building them so they can join this list.
 
-### Zone Classification
+## Architecture Guidance
 
-| Code | Zone Name      | Description                    |
-|------|----------------|--------------------------------|
-| `H`  | HELPALL        | Manual warehouse picking       |
-| `A`  | AUTOSTORE      | Automated bin storage          |
-| `R`  | REFILL         | Replenishment zone             |
-| `F`  | HIB            | Special handling               |
-| `S`  | SKRYMMANDE     | Bulky/overflow items           |
-| `E`  | EHANDEL        | E-commerce zone                |
-| `Q`, `O` | —         | Miscellaneous special zones    |
-| `D`  | DISPLAY        | Display picking                |
+Use this mental model:
 
-### FIFO Allocation
+1. Input loading and normalization
+2. Shared workflow or domain logic
+3. CLI adapter
+4. GUI adapter
 
-- Pallets sorted by received timestamp
-- Cumulative sum used to determine how many pallets cover an order
-- **Near-miss detection**: a pallet is flagged as near-miss if it covers 70–100% of remaining demand (within `NEAR_MISS_PCT = 0.30`)
+Avoid pushing business logic deeper into `tkinter` handlers than necessary.
 
----
+Preferred behavior:
 
-## Data Flow
+- Shared workflow returns data, summaries, warnings, and report content
+- CLI writes files and machine-readable summaries
+- GUI shows messages, buttons, and "open in Excel" behavior
 
-```
-Input CSVs/XLSXs
-  (orders, buffer, saldo, items, forecast, campaign)
-         ↓
-  normalize_* functions
-  (fuzzy column matching, type coercion, filtering)
-         ↓
-  allocate() — FIFO allocation per article
-         ↓
-  calculate_refill(), compute_pallet_spaces(),
-  build_prognos_vs_autoplock_report()
-         ↓
-  Temporary CSV/XLSX files → opened in system Excel
-```
+If GUI and CLI need the same feature, they should call the same underlying workflow.
 
-No database is used. All processing is in-memory with pandas DataFrames.
+## Testing Status
 
----
+Pytest is present and should be extended when behavior changes.
 
-## Git Workflow
+Current test areas include:
 
-### Branch Convention
+- CLI end-to-end tests in `tests/cli/test_cli_commands.py`
+- update logic tests in `tests/services/test_update_service.py`
+- analytics storage tests in `tests/services/test_analytics_store.py`
 
-- **Main branch:** `master` (auto-merge target)
-- **AI branches:** `claude/<description>-<session-id>` (e.g., `claude/fix-bug-abc123`)
+When changing behavior, prefer adding:
 
-### Auto-merge CI
+- service-level tests for logic and normalization
+- CLI end-to-end tests for full workflows
 
-Pushing to any `claude/**` branch triggers `.github/workflows/auto-merge-claude.yml`, which:
-1. Merges the branch into `main` with `--no-ff`
-2. Pushes the result automatically
+See `AGENTS.md` for the stronger "build it CLI-friendly" rule and a backlog of high-value next tests.
 
-**Always push Claude-generated changes to a `claude/` prefixed branch.** The auto-merge workflow handles integration into `main`.
+## Analytics and Updates
 
-```bash
-git push -u origin claude/<your-branch-name>
-```
+The repo now includes lightweight local analytics support:
 
----
+- events are stored locally via `analytics_store.py`
+- configuration defaults live in `app_info.py`
+- the dashboard reads those local files via `analytics_dashboard.py`
 
-## Versioning Convention
+Update handling is also built in:
 
-The version is stored in `APP_TITLE` as a string constant — there is no separate version file or `pyproject.toml`. When incrementing versions, update `APP_TITLE` and rename the file (e.g., `allokera9.2.py` → `allokera9.3.py`).
+- release metadata comes from GitHub releases
+- update logic lives in `update_service.py`
+- Windows packaging scripts live in `packaging/windows/`
 
----
+## GitHub Workflows
 
-## Language Note
+Current workflows live in `.github/workflows/`:
 
-All user-facing text, comments, docstrings, and error messages are written in **Swedish**. When adding new UI strings, error messages, or comments, use Swedish to match the existing codebase style.
+- `auto-merge-claude.yml`
+- `merge-observations.yml`
+- `windows-release.yml`
 
----
+Do not assume the repo is still using the old "single GUI file, no tests, no CLI" model. That is outdated.
 
-## What Does Not Exist (don't create unless requested)
+## What Is Still True
 
-- No test suite — no pytest, unittest, or test files
-- No `requirements.txt` or `pyproject.toml`
-- No database or migrations
-- No CLI interface
-- No API or server component
-- No `.env` or external configuration files
-- No separate modules or packages — keep everything in the single `.py` file
+- The main application logic is still concentrated in `allokering12.1.py`
+- User-facing behavior should stay Swedish
+- Input formats can vary, so flexible column matching and defensive normalization still matter
+- Temporary exports and Excel-friendly outputs are still a central part of the workflow
+
+## What Is No Longer True
+
+The following old assumptions are wrong and should not be repeated:
+
+- "There is no test suite"
+- "There is no CLI"
+- "There are no requirements files"
+- "Everything lives in one file only"
+- "The app has no analytics or update support"
+
+If you are unsure how to extend the app, start with `AGENTS.md`, then `TESTING.md`, then inspect the closest existing CLI workflow in `allokering12.1.py`.

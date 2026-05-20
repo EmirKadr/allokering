@@ -1,0 +1,22 @@
+﻿Plockzon	Beskrivning	Startplats	Slutplats	Ändrad	"Min antal"	"Summera artikel"	"Jämna lav"	"Jämna antal"	"Ingen check"	Multiplock	"Kundzon override"
+B	"Orderdelning B"	XX	XX	"2025-08-22 11:39:44"	0	N	N	N	Y	Y	Y
+C	"Komplettering MG"	XX	XX	"2025-08-22 11:39:50"	0	N	N	N	Y	Y	Y
+E	E-Handel	XX	XX	"2025-08-22 08:52:46"	0	N	N	N	Y	Y	Y
+F	"HIB plock"	xx	xx	"2026-02-24 12:12:22"	0	N	N	N	Y	Y	Y
+L	"SPC Plock MG"	XX	XX	"2025-08-22 11:39:59"	0	N	N	N	Y	Y	Y
+N	"Orderdelning MG"	XX	XX	"2025-08-22 11:40:07"	0	N	N	N	Y	Y	Y
+O	"Skrymmande Plock MG"	LS03011	LT50036	"2025-08-22 11:40:11"	0	N	N	N	Y	Y	Y
+O	"Skrymmande Plock MG"	MGOLV1	MGOLV99	"2025-08-22 11:40:15"	0	N	N	N	Y	Y	Y
+O	"Skrymmande Plock MG"	MLIST001	MLIST110	"2026-01-29 10:57:04"	0	N	N	N	Y	Y	Y
+Q	E-Handel	XX	XX	"2025-08-22 11:40:22"	0	N	N	N	Y	Y	Y
+R	AutoStore	XX	XX	"2025-10-13 10:34:32"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	AA03A	AA14C	"2025-12-16 10:26:46"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	BNL01	BNL08	"2026-04-29 07:10:34"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	BO01011	BQ10026	"2025-12-01 10:46:59"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	BQH01A	BQH06C	"2026-04-30 08:07:38"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	EXPLO01	EXPLO05	"2025-08-22 11:40:28"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	KAM01	KAM10	"2026-02-24 06:33:28"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	SK011A	SK056C	"2026-04-21 07:35:24"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	SK1	SK99	"2025-08-22 11:40:36"	0	N	N	N	Y	Y	Y
+S	"Skrymmande Plock GG"	SKKAM	SKKAM	"2025-09-30 09:33:46"	0	N	N	N	Y	Y	Y
+S	Brandplock	ZBRAND01011	ZBRAND22034	"2025-08-22 11:40:31"	0	N	N	N	Y	Y	Y

@@ -471,7 +471,7 @@ VECKA27_ROOF_TO_MOWERS: dict[str, frozenset[str]] = {
 
 NEAR_MISS_PCT: float = 0.30  # 30 % över behov
 
-# Artiklar som undantas från R+F-räkningen i compute_pallet_spaces
+# Artiklar som undantas från R-räkningen i compute_pallet_spaces
 RF_PALLPLATS_EXCLUDE_ARTICLES: set[str] = {
     "1075621","1154474","1265531","1265532","1265533","1265534","1265535","1265536","1265537","1265539",
     "1265541","1265542","1265543","1265545","1265547","1265548","1265549","1265550","1265551","1265552",
@@ -1756,7 +1756,11 @@ def _recompute_artikel_max(observations: pd.DataFrame, ut_path: Path) -> int:
     return len(rader)
 
 
-def update_observations_from_buffer(buffer_raw: pd.DataFrame) -> Tuple[int, pd.DataFrame]:
+def update_observations_from_buffer(
+    buffer_raw: pd.DataFrame,
+    observations_path: Optional[Path] = None,
+    artikel_max_path: Optional[Path] = None,
+) -> Tuple[int, pd.DataFrame]:
     """Lagg till nya status-30-pallid i observations.csv.gz och racka om artikel_max.csv.
 
     Returnerar (antal_nya, dataframe_med_endast_nya_rader).
@@ -1780,7 +1784,10 @@ def update_observations_from_buffer(buffer_raw: pd.DataFrame) -> Tuple[int, pd.D
     df["antal"] = df["antal"].astype(int).astype(str)
     df = df[["artikelnummer", "pallid", "antal"]].drop_duplicates(subset="pallid")
 
-    obs_path = _observations_path()
+    obs_path = Path(observations_path) if observations_path else _observations_path()
+    max_path = Path(artikel_max_path) if artikel_max_path else _artikel_max_path()
+    obs_path.parent.mkdir(parents=True, exist_ok=True)
+    max_path.parent.mkdir(parents=True, exist_ok=True)
     befintliga = _read_observations(obs_path)
     befintliga_ids = set(befintliga["pallid"].astype(str))
 
@@ -1790,7 +1797,7 @@ def update_observations_from_buffer(buffer_raw: pd.DataFrame) -> Tuple[int, pd.D
 
     kombinerat = pd.concat([befintliga, nya], ignore_index=True)
     kombinerat.to_csv(obs_path, index=False, compression="gzip")
-    _recompute_artikel_max(kombinerat, _artikel_max_path())
+    _recompute_artikel_max(kombinerat, max_path)
     return len(nya), nya
 
 
@@ -1862,7 +1869,12 @@ def push_new_observations_to_github(nya: pd.DataFrame) -> bool:
     return 200 <= status < 300
 
 
-def fetch_observations_from_github() -> Tuple[int, int]:
+def fetch_observations_from_github(
+    observations_path: Optional[Path] = None,
+    artikel_max_path: Optional[Path] = None,
+    remote_file: Optional[str] = None,
+    push_orphaned: bool = True,
+) -> Tuple[int, int]:
     """Tvavags-sync med GitHub master:
     1. Hamta nya rader fran master och merga in i lokal observations.csv.gz
     2. Hitta orphaned lokala pallid (sparade offline / push misslyckats) och push:a dem
@@ -1870,29 +1882,42 @@ def fetch_observations_from_github() -> Tuple[int, int]:
     Returnerar (antal_hamtade, antal_pushade_orphaned).
     Tyst no-op pa natfel, JSON-fel eller saknade kolumner.
     """
-    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_OBS_BRANCH}/{GITHUB_OBS_FILE}"
-    token = _load_github_token()
-    headers = {"User-Agent": "allokering-app"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(raw_url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = resp.read()
-    except Exception:
-        return 0, 0
+    if remote_file:
+        remote_path = Path(remote_file)
+        if not remote_path.exists():
+            raise FileNotFoundError(f"Filen finns inte: {remote_path}")
+        try:
+            compression = "gzip" if remote_path.suffix.lower() == ".gz" else "infer"
+            remote = pd.read_csv(remote_path, compression=compression, dtype=str)
+        except Exception:
+            return 0, 0
+    else:
+        raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_OBS_BRANCH}/{GITHUB_OBS_FILE}"
+        token = _load_github_token()
+        headers = {"User-Agent": "allokering-app"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(raw_url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read()
+        except Exception:
+            return 0, 0
 
-    from io import BytesIO
-    try:
-        remote = pd.read_csv(BytesIO(data), compression="gzip", dtype=str)
-    except Exception:
-        return 0, 0
+        from io import BytesIO
+        try:
+            remote = pd.read_csv(BytesIO(data), compression="gzip", dtype=str)
+        except Exception:
+            return 0, 0
     for col in OBSERVATIONS_COLS:
         if col not in remote.columns:
             return 0, 0
     remote = remote[OBSERVATIONS_COLS]
 
-    obs_path = _observations_path()
+    obs_path = Path(observations_path) if observations_path else _observations_path()
+    max_path = Path(artikel_max_path) if artikel_max_path else _artikel_max_path()
+    obs_path.parent.mkdir(parents=True, exist_ok=True)
+    max_path.parent.mkdir(parents=True, exist_ok=True)
     lokal = _read_observations(obs_path)
     remote_ids = set(remote["pallid"].astype(str))
     lokal_ids = set(lokal["pallid"].astype(str))
@@ -1903,13 +1928,13 @@ def fetch_observations_from_github() -> Tuple[int, int]:
     if n_hamtade:
         kombinerat = pd.concat([lokal, nya_fran_remote], ignore_index=True)
         kombinerat.to_csv(obs_path, index=False, compression="gzip")
-        _recompute_artikel_max(kombinerat, _artikel_max_path())
+        _recompute_artikel_max(kombinerat, max_path)
         lokal = kombinerat
 
     # 2. Hitta orphaned lokala (finns lokalt, inte pa master) och push:a dem
     orphaned = lokal[~lokal["pallid"].astype(str).isin(remote_ids)]
     n_pushade = 0
-    if not orphaned.empty:
+    if push_orphaned and not orphaned.empty:
         try:
             if push_new_observations_to_github(orphaned):
                 n_pushade = len(orphaned)
@@ -2334,20 +2359,28 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
         result_df: DataFrame med allokerade orderrader efter saldofil-omklassificering och item/ej staplingsbar-sammanfogning.
 
     Returnerar:
-        Ett DataFrame med kolumnerna ["Kund", "Kund1", "Botten Pallar", "Topp Pallar", "Totalt Pallar", "Pallplatser"].
+        Ett DataFrame med pallplatser per kund, inklusive separata delkolumner for t.ex. Plockpall, autostore och HIB.
         Om nödvändiga kolumner saknas returneras ett tomt DataFrame.
     """
     if result_df is None or result_df.empty:
         return pd.DataFrame(columns=["Kund", "Kund1", "Botten Pallar", "Topp Pallar", "Totalt Pallar", "Pallplatser"])
     df = result_df.copy()
     try:
-        kund_col = find_col(df, ["kund", "customer"], required=True)
+        kund_col = find_col(df, ["kund", "customer", "kundnr", "kund nr", "kundnummer", "kund-id", "kundid"], required=True)
     except Exception:
+        print(f"[compute_pallet_spaces] Kunde inte hitta kund-kolumn. Tillgängliga: {list(df.columns)}")
         return pd.DataFrame(columns=["Kund", "Kund1", "Botten Pallar", "Topp Pallar", "Totalt Pallar", "Pallplatser"])
     try:
         kund1_col = find_col(df, ["kund1", "kund 1", "customer1", "kund.1"], required=False, default=None)
     except Exception:
         kund1_col = None
+
+    # Fallback: om primär kund-kolumn är helt tom men Kund.1 har värden, använd Kund.1 istället
+    if kund_col and kund_col in df.columns:
+        non_empty = df[kund_col].fillna("").astype(str).str.strip().ne("").sum()
+        if non_empty == 0 and kund1_col and kund1_col in df.columns:
+            kund_col, kund1_col = kund1_col, None
+
     zone_col = "Zon (beräknad)" if "Zon (beräknad)" in df.columns else None
     stack_col = None
     try:
@@ -2356,6 +2389,7 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
         stack_col = None
     palltyp_col = "Palltyp (matchad)" if "Palltyp (matchad)" in df.columns else None
     if zone_col is None or palltyp_col is None:
+        print(f"[compute_pallet_spaces] Saknar kolumn: zone_col={zone_col}, palltyp_col={palltyp_col}. Tillgängliga: {list(df.columns)}")
         return pd.DataFrame(columns=["Kund", "Kund1", "Botten Pallar", "Topp Pallar", "Totalt Pallar", "Pallplatser"])
 
     df[zone_col] = df[zone_col].fillna("").astype(str).str.strip().str.upper()
@@ -2616,7 +2650,6 @@ def build_prognos_vs_autoplock_report(
     if isinstance(saldo_norm_df, pd.DataFrame) and not saldo_norm_df.empty:
         orig_cols = [str(c).strip().lower() for c in saldo_norm_df.columns]
         has_robot_col = any("robot" == c for c in orig_cols)
-        has_auto_col = any("saldo autoplock" in c for c in orig_cols)
         if not has_robot_col:
             missing.append("saldo")
             pr["Robot"] = "N"
@@ -2638,7 +2671,7 @@ def build_prognos_vs_autoplock_report(
             s["Saldo autoplock"] = _num_series(s["Saldo autoplock"])
             pr = pr.merge(s[["Artikel", "Robot", "Saldo autoplock"]], left_on="Artikelnummer", right_on="Artikel", how="left")
             pr = pr.drop(columns=["Artikel"], errors="ignore")
-            pr["Robot"].fillna("N", inplace=True)
+            pr["Robot"] = pr["Robot"].fillna("N")
             pr["Saldo i autoplock"] = pr["Saldo autoplock"].fillna(0.0)
     else:
         missing.append("saldo")
@@ -3254,6 +3287,52 @@ class EftersokResult:
     report_df: pd.DataFrame
 
 
+@dataclass
+class PrognosReportResult:
+    combined_df: pd.DataFrame
+    report_df: pd.DataFrame
+    meta: dict[str, str]
+    log_lines: list[str]
+
+
+@dataclass
+class ChunkedValuesResult:
+    report_df: pd.DataFrame
+    value_count: int
+    chunk_count: int
+    chunk_size: int
+
+
+@dataclass
+class ObservationsUpdateResult:
+    new_rows_df: pd.DataFrame
+    new_row_count: int
+    article_max_rows: int
+    pushed_to_github: bool
+    observations_path: str
+    article_max_path: str
+
+
+@dataclass
+class ObservationsSyncResult:
+    fetched_rows: int
+    pushed_rows: int
+    total_observations: int
+    article_max_rows: int
+    observations_path: str
+    article_max_path: str
+
+
+@dataclass
+class UpdateCheckCliResult:
+    has_update: bool
+    current_version: str
+    latest_version: str
+    release_url: str
+    installer_name: str
+    downloaded_path: str
+
+
 WMS_EXPECTED_FILENAMES: Dict[str, str] = {
     "wms_receive": "v_ask_receive_log.csv",
     "wms_booking": "v_ask_booking_putaway.csv",
@@ -3261,6 +3340,15 @@ WMS_EXPECTED_FILENAMES: Dict[str, str] = {
     "wms_trans": "v_ask_trans_log.csv",
     "wms_pick": "v_ask_pick_log_full.csv",
     "wms_correct": "v_ask_correct_log.csv",
+}
+
+WMS_EMPTY_COLUMNS: Dict[str, list[str]] = {
+    "wms_receive": ["Inköpsnr", "Artikel", "Pallid", "Mottaget", "Ändrad"],
+    "wms_booking": ["Pall nr", "Inköpsnr", "Ändrad"],
+    "wms_buffert": ["Pallid", "Lagerplats", "Datum/tid"],
+    "wms_trans": ["Pallid", "Till", "Timestamp", "Från"],
+    "wms_pick": ["Pallid", "Artikelnr", "Plockat", "Ordernr", "Datum"],
+    "wms_correct": ["Pallid", "Antal", "Anledning", "Artikel", "Ändrad"],
 }
 
 _WMS_ANALYZER_CLS = None
@@ -3359,6 +3447,353 @@ def _build_order_to_customer_map(
         )
     except Exception:
         return {}
+
+
+def _empty_prognos_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=["Artikelnummer", "Beskrivning", "Antal styck", "Antal rader", "Antal butiker"]
+    )
+
+
+def _normalize_prognos_cli_table(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return _empty_prognos_df()
+
+    work = _clean_columns(df.copy())
+    col_map: dict[str, str] = {}
+    for col in work.columns:
+        col_norm = str(col).strip().lower()
+        if col_norm in {"product code", "artikelnummer", "artikelnr", "artnr", "sku", "article"}:
+            col_map[col] = "Artikelnummer"
+        elif col_norm in {"product name", "name", "benämning", "benamning", "beskrivning"}:
+            col_map[col] = "Beskrivning"
+        elif col_norm in {"antal styck", "antal", "qty", "quantity"}:
+            col_map[col] = "Antal styck"
+        elif col_norm in {"antal rader", "rows", "number of rows"}:
+            col_map[col] = "Antal rader"
+        elif col_norm in {"antal butiker", "stores", "butiker", "number of stores"}:
+            col_map[col] = "Antal butiker"
+    if col_map:
+        work = work.rename(columns=col_map)
+
+    out = _empty_prognos_df()
+    for column_name in out.columns:
+        if column_name in work.columns:
+            out[column_name] = work[column_name]
+    out["Artikelnummer"] = out["Artikelnummer"].fillna("").astype(str).str.strip()
+    out["Beskrivning"] = out["Beskrivning"].fillna("").astype(str).str.strip()
+    for num_col in ["Antal styck", "Antal rader", "Antal butiker"]:
+        out[num_col] = pd.to_numeric(out[num_col], errors="coerce").fillna(0).astype(int)
+    out = out.loc[out["Artikelnummer"].str.len().gt(0) | out["Beskrivning"].str.len().gt(0)].reset_index(drop=True)
+    return out
+
+
+def _normalize_campaign_cli_table(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(columns=["Artikelnummer", "Antal styck"])
+
+    work = _clean_columns(df.copy())
+    col_map: dict[str, str] = {}
+    for col in work.columns:
+        col_norm = str(col).strip().lower()
+        if col_norm in {"artikelnummer", "artikelnr", "artnr", "sku", "article", "product code"}:
+            col_map[col] = "Artikelnummer"
+        elif col_norm in {"antal styck", "antal", "qty", "quantity"}:
+            col_map[col] = "Antal styck"
+    if col_map:
+        work = work.rename(columns=col_map)
+
+    if "Artikelnummer" not in work.columns or "Antal styck" not in work.columns:
+        return pd.DataFrame(columns=["Artikelnummer", "Antal styck"])
+
+    out = work[["Artikelnummer", "Antal styck"]].copy()
+    out["Artikelnummer"] = out["Artikelnummer"].fillna("").astype(str).str.strip()
+    out["Antal styck"] = pd.to_numeric(out["Antal styck"], errors="coerce").fillna(0).astype(int)
+    out = out.loc[out["Artikelnummer"].str.len().gt(0)].reset_index(drop=True)
+    return out
+
+
+def _load_prognos_cli_source(path: str) -> pd.DataFrame:
+    suffix = Path(path).suffix.lower()
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}:
+        return read_prognos_xlsx(path)
+    return _normalize_prognos_cli_table(_read_cli_table(path))
+
+
+def _load_campaign_cli_source(path: str) -> pd.DataFrame:
+    suffix = Path(path).suffix.lower()
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls"}:
+        return read_campaign_xlsx(path)
+    return _normalize_campaign_cli_table(_read_cli_table(path))
+
+
+def _combine_prognos_and_campaign(
+    prognos_df: Optional[pd.DataFrame],
+    campaign_df: Optional[pd.DataFrame],
+    saldo_df: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    has_prognos = isinstance(prognos_df, pd.DataFrame) and not prognos_df.empty
+    has_campaign = isinstance(campaign_df, pd.DataFrame) and not campaign_df.empty
+    if not has_prognos and not has_campaign:
+        raise ValueError("Välj och läs in antingen prognosfilen eller kampanjvolymerna först.")
+
+    if has_prognos:
+        combined_df = _normalize_prognos_cli_table(prognos_df)
+    else:
+        combined_df = _empty_prognos_df()
+
+    if not has_campaign:
+        return combined_df
+
+    camp_df = _normalize_campaign_cli_table(campaign_df)
+    if camp_df.empty:
+        return combined_df
+
+    if isinstance(saldo_df, pd.DataFrame) and not saldo_df.empty:
+        saldo_work = _clean_columns(saldo_df.copy())
+        art_col_sal = None
+        robot_col_sal = None
+        for col in saldo_work.columns:
+            col_norm = str(col).strip().lower()
+            if not art_col_sal and col_norm in {"artikel", "artikelnummer", "artnr", "art.nr", "sku", "article"}:
+                art_col_sal = str(col)
+            if not robot_col_sal and col_norm == "robot":
+                robot_col_sal = str(col)
+        if art_col_sal and robot_col_sal:
+            saldo_work = saldo_work[[art_col_sal, robot_col_sal]].copy()
+            saldo_work.columns = ["Artikelnummer", "Robot"]
+            saldo_work["Artikelnummer"] = saldo_work["Artikelnummer"].astype(str).str.strip()
+            saldo_work["Robot"] = saldo_work["Robot"].astype(str).str.upper().str.strip()
+            saldo_work = saldo_work.loc[saldo_work["Robot"] == "Y"]
+            if not saldo_work.empty:
+                camp_df = camp_df.merge(saldo_work[["Artikelnummer"]], on="Artikelnummer", how="inner")
+            else:
+                camp_df = camp_df.iloc[0:0]
+        else:
+            camp_df = camp_df.iloc[0:0]
+
+    if camp_df.empty:
+        return combined_df
+
+    vol_by_art = camp_df.groupby("Artikelnummer")["Antal styck"].sum().to_dict()
+    combined_df["Artikelnummer"] = combined_df["Artikelnummer"].astype(str).str.strip()
+    combined_df["Antal styck"] = pd.to_numeric(
+        combined_df.get("Antal styck", 0), errors="coerce"
+    ).fillna(0).astype(int)
+    existing_arts = set(combined_df["Artikelnummer"].astype(str))
+    for art, vol in vol_by_art.items():
+        if art in existing_arts:
+            mask = combined_df["Artikelnummer"] == art
+            combined_df.loc[mask, "Antal styck"] = (
+                combined_df.loc[mask, "Antal styck"].astype(int) + int(vol)
+            ).astype(int)
+        else:
+            combined_df = pd.concat(
+                [
+                    combined_df,
+                    pd.DataFrame(
+                        {
+                            "Artikelnummer": [art],
+                            "Beskrivning": [None],
+                            "Antal styck": [int(vol)],
+                            "Antal rader": [0],
+                            "Antal butiker": [0],
+                        }
+                    ),
+                ],
+                ignore_index=True,
+            )
+    return combined_df.reset_index(drop=True)
+
+
+def _validate_prognos_report_saldo(saldo_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    if not isinstance(saldo_df, pd.DataFrame) or saldo_df.empty:
+        raise ValueError("Ladda eller ange Saldo inkl. automation forst. Prognosrapporten filtrerar pa Robot=Y.")
+
+    saldo_work = _clean_columns(saldo_df.copy())
+    has_robot_col = any(str(col).strip().lower() == "robot" for col in saldo_work.columns)
+    if not has_robot_col:
+        raise ValueError("Saldofilen saknar kolumnen Robot. Prognosrapporten filtrerar pa Robot=Y.")
+    return saldo_work
+
+
+def build_prognos_report_result(
+    prognos_df: Optional[pd.DataFrame] = None,
+    campaign_df: Optional[pd.DataFrame] = None,
+    saldo_df: Optional[pd.DataFrame] = None,
+    buffer_df: Optional[pd.DataFrame] = None,
+) -> PrognosReportResult:
+    combined_df = _combine_prognos_and_campaign(prognos_df, campaign_df, saldo_df)
+    saldo_df = _validate_prognos_report_saldo(saldo_df)
+    report_df, meta = build_prognos_vs_autoplock_report(
+        prognos_df=combined_df,
+        saldo_norm_df=saldo_df,
+        buffer_df=buffer_df,
+        exclude_source_ids=None,
+        allocated_df=None,
+    )
+    log_lines = [f"Prognosrapport skapad ({len(report_df)} rader)."]
+    if isinstance(meta, dict) and meta.get("partial") == "yes":
+        missing = str(meta.get("missing", "")).replace(",", ", ").strip()
+        if missing:
+            log_lines.append(f"PARTIELL: saknar {missing}.")
+        note = str(meta.get("note", "")).strip()
+        if note:
+            log_lines.append(note)
+    return PrognosReportResult(combined_df, report_df, meta, log_lines)
+
+
+def _build_prognos_report_sheets(result: PrognosReportResult) -> dict[str, pd.DataFrame]:
+    sheets: dict[str, pd.DataFrame] = {}
+    meta = result.meta if isinstance(result.meta, dict) else {}
+    if meta.get("partial") == "yes" or meta.get("note"):
+        lines: list[str] = []
+        if meta.get("partial") == "yes":
+            missing = str(meta.get("missing", "")).strip()
+            lines.append("PARTIELL RAPPORT - mer data kravs for fullstandig bild.")
+            if missing:
+                lines.append(f"Saknar underlag: {missing}.")
+        if meta.get("note"):
+            lines.append(str(meta["note"]))
+        if lines:
+            sheets["Info"] = pd.DataFrame({"Info": [" ".join(lines)]})
+    sheets["Prognos vs Autoplock"] = result.report_df.copy()
+    return sheets
+
+
+def build_chunked_values_result(values: list[str], chunk_size: int = 2000) -> ChunkedValuesResult:
+    cleaned_values = [str(value).strip() for value in values if str(value).strip()]
+    if not cleaned_values:
+        raise ValueError("Klistra in värden först (en per rad).")
+    try:
+        chunk_size_int = int(chunk_size)
+    except Exception as exc:
+        raise ValueError("Antal per kolumn måste vara ett heltal > 0.") from exc
+    if chunk_size_int <= 0:
+        raise ValueError("Antal per kolumn måste vara ett heltal > 0.")
+
+    chunks = [
+        cleaned_values[start:start + chunk_size_int]
+        for start in range(0, len(cleaned_values), chunk_size_int)
+    ]
+    out_cols: dict[str, pd.Series] = {}
+    for idx, chunk in enumerate(chunks, start=1):
+        out_cols[f"Kolumn {idx}"] = pd.Series([str(value) for value in chunk], dtype="string")
+    report_df = pd.DataFrame(out_cols).fillna("")
+    return ChunkedValuesResult(report_df, len(cleaned_values), len(chunks), chunk_size_int)
+
+
+def build_observations_update_result(
+    buffer_df: pd.DataFrame,
+    observations_path: Optional[str] = None,
+    artikel_max_out: Optional[str] = None,
+    push_to_github: bool = False,
+) -> ObservationsUpdateResult:
+    obs_path = Path(observations_path) if observations_path else _observations_path()
+    max_path = Path(artikel_max_out) if artikel_max_out else _artikel_max_path()
+    new_row_count, new_rows_df = update_observations_from_buffer(
+        buffer_df,
+        observations_path=obs_path,
+        artikel_max_path=max_path,
+    )
+    pushed = bool(push_to_github and new_row_count and push_new_observations_to_github(new_rows_df))
+    article_max_rows = 0
+    if max_path.exists() and max_path.stat().st_size > 0:
+        try:
+            article_max_rows = int(len(pd.read_csv(max_path, dtype=str, encoding="utf-8-sig")))
+        except Exception:
+            article_max_rows = 0
+    return ObservationsUpdateResult(
+        new_rows_df=new_rows_df,
+        new_row_count=int(new_row_count),
+        article_max_rows=article_max_rows,
+        pushed_to_github=pushed,
+        observations_path=str(obs_path.resolve()),
+        article_max_path=str(max_path.resolve()),
+    )
+
+
+def build_observations_sync_result(
+    observations_path: Optional[str] = None,
+    artikel_max_out: Optional[str] = None,
+    remote_file: Optional[str] = None,
+    push_orphaned: bool = True,
+) -> ObservationsSyncResult:
+    obs_path = Path(observations_path) if observations_path else _observations_path()
+    max_path = Path(artikel_max_out) if artikel_max_out else _artikel_max_path()
+    fetched_rows, pushed_rows = fetch_observations_from_github(
+        observations_path=obs_path,
+        artikel_max_path=max_path,
+        remote_file=remote_file,
+        push_orphaned=push_orphaned,
+    )
+    total_observations = int(len(_read_observations(obs_path)))
+    article_max_rows = 0
+    if max_path.exists() and max_path.stat().st_size > 0:
+        try:
+            article_max_rows = int(len(pd.read_csv(max_path, dtype=str, encoding="utf-8-sig")))
+        except Exception:
+            article_max_rows = 0
+    return ObservationsSyncResult(
+        fetched_rows=int(fetched_rows),
+        pushed_rows=int(pushed_rows),
+        total_observations=total_observations,
+        article_max_rows=article_max_rows,
+        observations_path=str(obs_path.resolve()),
+        article_max_path=str(max_path.resolve()),
+    )
+
+
+def _build_update_session_from_release_json(path: str):
+    release_payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+
+    class _StaticResponse:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._data
+
+    class _StaticSession:
+        def __init__(self, data):
+            self._response = _StaticResponse(data)
+
+        def get(self, url, **kwargs):
+            return self._response
+
+    return _StaticSession(release_payload)
+
+
+def build_update_check_cli_result(
+    release_json_path: Optional[str] = None,
+    download_dir: Optional[str] = None,
+) -> UpdateCheckCliResult:
+    session = _build_update_session_from_release_json(release_json_path) if release_json_path else None
+    info = check_for_update(session=session)
+    downloaded_path = ""
+    if info and download_dir:
+        downloaded_path = str(download_update_installer(info, target_dir=Path(download_dir)))
+    if not info:
+        return UpdateCheckCliResult(
+            has_update=False,
+            current_version=APP_VERSION,
+            latest_version=APP_VERSION,
+            release_url="",
+            installer_name="",
+            downloaded_path=downloaded_path,
+        )
+    return UpdateCheckCliResult(
+        has_update=True,
+        current_version=APP_VERSION,
+        latest_version=info.version,
+        release_url=info.release_url,
+        installer_name=info.installer_name,
+        downloaded_path=downloaded_path,
+    )
 
 
 def _build_overview_check_sheets(result: OverviewCheckResult) -> dict[str, pd.DataFrame]:
@@ -3738,12 +4173,15 @@ def build_eftersok_result(
     with tempfile.TemporaryDirectory() as tmpdir:
         for key, src in wms_paths.items():
             src_path = str(src or "").strip()
-            if not src_path:
-                continue
             dst_name = WMS_EXPECTED_FILENAMES.get(key)
             if not dst_name:
                 continue
-            shutil.copy(src_path, os.path.join(tmpdir, dst_name))
+            dst_path = os.path.join(tmpdir, dst_name)
+            if src_path:
+                shutil.copy(src_path, dst_path)
+                continue
+            empty_columns = WMS_EMPTY_COLUMNS.get(key, [])
+            pd.DataFrame(columns=empty_columns).to_csv(dst_path, index=False, sep="\t", encoding="utf-8")
         analyzer = cls(data_path=tmpdir)
         report_text = str(analyzer.analyze(purchase, article) or "").strip()
 
@@ -4593,7 +5031,7 @@ class App(ttk.Frame):
             self.open_overview_check_btn: "Tryck forst: Kontrollera orderoversikt",
             self.open_dispatch_check_btn: "Tryck forst: Kontrollera dispatchpallar",
             self.open_eftersok_btn: "Tryck forst: Eftersok",
-            self.open_prognos_btn: "Ladda upp Prognos eller Kampanjvolymer forst",
+            self.open_prognos_btn: "Ladda upp Prognos/Kampanj och Saldo inkl. automation forst",
         }
         for open_btn in self._open_button_hints:
             open_btn.bind("<Enter>", self._on_open_button_hover, add="+")
@@ -6051,6 +6489,36 @@ class App(ttk.Frame):
         except Exception:
             pass
 
+    def _refresh_open_prognos_button(self) -> None:
+        has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
+        has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
+        has_saldo = isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty
+        self.open_prognos_btn.configure(state="normal" if ((has_prognos or has_campaign) and has_saldo) else "disabled")
+
+    def _load_automation(self, path: str) -> None:
+        try:
+            df = _clean_columns(_read_cli_table(path))
+            self._saldo_raw = df
+            self._saldo_norm = normalize_saldo(df)
+            self._track_event(
+                "input_loaded",
+                file_type="automation",
+                rows=int(len(df)),
+                unique_articles=int(self._saldo_norm["Artikel"].nunique()) if isinstance(self._saldo_norm, pd.DataFrame) and "Artikel" in self._saldo_norm.columns else int(len(df)),
+            )
+            try:
+                n_art = int(self._saldo_norm["Artikel"].nunique()) if isinstance(self._saldo_norm, pd.DataFrame) and "Artikel" in self._saldo_norm.columns else len(df)
+                self._log(f"Saldo inkl. automation inläst: {len(df)} rader, {n_art} artiklar.")
+            except Exception:
+                self._log(f"Saldo inkl. automation inläst: {len(df)} rader.")
+        except Exception as e:
+            self._saldo_raw = None
+            self._saldo_norm = None
+            self._refresh_open_prognos_button()
+            messagebox.showerror(APP_TITLE, f"Kunde inte läsa saldofilen:\n{e}")
+            return
+        self._refresh_open_prognos_button()
+
     def _set_file_path(self, file_type: str, path: str, source: str = "dialog") -> None:
         path = str(path or "").strip()
         if not path:
@@ -6075,6 +6543,11 @@ class App(ttk.Frame):
         if file_type == "prognos":
             try:
                 self._load_prognos(path)
+            except Exception:
+                pass
+        elif file_type == "automation":
+            try:
+                self._load_automation(path)
             except Exception:
                 pass
         elif file_type == "campaign":
@@ -6104,10 +6577,11 @@ class App(ttk.Frame):
             if file_type == "campaign":
                 self._campaign_raw = None
                 self._campaign_norm = None
-            if file_type in ("prognos", "campaign"):
-                has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
-                has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
-                self.open_prognos_btn.configure(state="normal" if (has_prognos or has_campaign) else "disabled")
+            if file_type == "automation":
+                self._saldo_raw = None
+                self._saldo_norm = None
+            if file_type in ("prognos", "campaign", "automation"):
+                self._refresh_open_prognos_button()
         except Exception:
             pass
         self.update_file_status_icons()
@@ -6287,26 +6761,19 @@ class App(ttk.Frame):
             lines = [r.strip() for r in self.split_input_text.get("1.0", tk.END).splitlines() if r.strip()]
         except Exception:
             lines = []
-        if not lines:
-            messagebox.showwarning(APP_TITLE, "Klistra in värden först (en per rad).")
+        try:
+            chunk_result = build_chunked_values_result(lines, chunk_size=str(self.split_chunk_var.get()).strip())
+        except ValueError as e:
+            msg = str(e)
+            if "Klistra in" in msg:
+                messagebox.showwarning(APP_TITLE, msg)
+            else:
+                messagebox.showerror(APP_TITLE, msg)
             return
         try:
-            chunk_size = int(str(self.split_chunk_var.get()).strip())
-            if chunk_size <= 0:
-                raise ValueError
-        except Exception:
-            messagebox.showerror(APP_TITLE, "Antal per kolumn måste vara ett heltal > 0.")
-            return
-
-        chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
-        out_cols: dict[str, pd.Series] = {}
-        for idx, chunk in enumerate(chunks, start=1):
-            out_cols[f"Kolumn {idx}"] = pd.Series([str(v) for v in chunk], dtype="string")
-        out_df = pd.DataFrame(out_cols).fillna("")
-        try:
-            path = _open_df_in_excel({"Delade värden": out_df}, label="2000tal_split")
+            path = _open_df_in_excel({"Delade värden": chunk_result.report_df}, label="2000tal_split")
             self._log(f"2000-tal: öppnade temporär Excel-fil: {path}")
-            self._track_feature("chunked_values", "opened_result", rows=int(len(out_df)))
+            self._track_feature("chunked_values", "opened_result", rows=int(chunk_result.value_count))
             messagebox.showinfo(APP_TITLE, "Excel-filen öppnades direkt. Spara i Excel om du vill behålla den.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna Excel-filen:\n{e}")
@@ -6368,7 +6835,7 @@ class App(ttk.Frame):
                 pass
         else:
             self._prognos_df = None
-            self.open_prognos_btn.configure(state="disabled")
+            self._refresh_open_prognos_button()
 
     def _load_prognos(self, path: str) -> None:
         """Läs in prognosfilen och aktivera knappen för öppning."""
@@ -6386,10 +6853,10 @@ class App(ttk.Frame):
                 self._log(f"Prognos inläst: {len(df)} rader, {n_art} artiklar.")
             except Exception:
                 self._log(f"Prognos inläst: {len(df)} rader.")
-            self.open_prognos_btn.configure(state="normal")
+            self._refresh_open_prognos_button()
         except Exception as e:
             self._prognos_df = None
-            self.open_prognos_btn.configure(state="disabled")
+            self._refresh_open_prognos_button()
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa prognosfilen:\n{e}")
 
     def pick_campaign(self) -> None:
@@ -6404,6 +6871,7 @@ class App(ttk.Frame):
                 pass
         else:
             self._campaign_norm = None
+            self._refresh_open_prognos_button()
 
     def _load_campaign(self, path: str) -> None:
         """Läs in kampanjvolymer och lagra den normaliserade datan."""
@@ -6423,11 +6891,12 @@ class App(ttk.Frame):
                 self._log(f"Kampanjvolymer inlästa: {len(df)} rader.")
             try:
                 if (self._prognos_df is not None and isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty) or (isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty):
-                    self.open_prognos_btn.configure(state="normal")
+                    self._refresh_open_prognos_button()
             except Exception:
                 pass
         except Exception as e:
             self._campaign_norm = None
+            self._refresh_open_prognos_button()
             messagebox.showerror(APP_TITLE, f"Kunde inte läsa kampanjfilen:\n{e}")
 
     def open_prognos_in_excel(self) -> None:
@@ -6444,76 +6913,92 @@ class App(ttk.Frame):
             messagebox.showinfo(APP_TITLE, "Välj och läs in antingen prognosfilen eller kampanjvolymerna först.")
             return
         try:
-            if has_prognos:
-                combined_df: pd.DataFrame = self._prognos_df.copy()
-            else:
-                combined_df = pd.DataFrame(columns=["Artikelnummer", "Beskrivning", "Antal styck", "Antal rader", "Antal butiker"])
-            if isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty:
-                camp_df = self._campaign_norm.copy()
-                if isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty:
-                    s = self._saldo_raw.copy()
-                    art_col_sal = None
-                    robot_col_sal = None
-                    for c in s.columns:
-                        lc = str(c).strip().lower()
-                        if not art_col_sal and lc in ("artikel", "artikelnummer", "artnr", "art.nr", "sku", "article"):
-                            art_col_sal = c
-                        if not robot_col_sal and lc == "robot":
-                            robot_col_sal = c
-                    if art_col_sal and robot_col_sal:
-                        s = s[[art_col_sal, robot_col_sal]].copy()
-                        s.columns = ["Artikelnummer", "Robot"]
-                        s["Artikelnummer"] = s["Artikelnummer"].astype(str).str.strip()
-                        s["Robot"] = s["Robot"].astype(str).str.upper().str.strip()
-                        s = s.loc[s["Robot"] == "Y"]
-                        if not s.empty:
-                            camp_df = camp_df.merge(s[["Artikelnummer"]], on="Artikelnummer", how="inner")
-                        else:
-                            camp_df = camp_df.iloc[0:0]
-                    else:
-                        camp_df = camp_df.iloc[0:0]
-                if not camp_df.empty:
-                    vol_by_art = camp_df.groupby("Artikelnummer")["Antal styck"].sum().to_dict()
-                    combined_df["Artikelnummer"] = combined_df["Artikelnummer"].astype(str).str.strip()
-                    combined_df["Antal styck"] = pd.to_numeric(combined_df.get("Antal styck", 0), errors="coerce").fillna(0).astype(int)
-                    existing_arts = set(combined_df["Artikelnummer"].astype(str))
-                    for art, vol in vol_by_art.items():
-                        if art in existing_arts:
-                            mask = combined_df["Artikelnummer"] == art
-                            combined_df.loc[mask, "Antal styck"] = (combined_df.loc[mask, "Antal styck"].astype(int) + int(vol)).astype(int)
-                        else:
-                            combined_df = pd.concat([
-                                combined_df,
-                                pd.DataFrame({
-                                    "Artikelnummer": [art],
-                                    "Beskrivning": [None],
-                                    "Antal styck": [int(vol)],
-                                    "Antal rader": [0],
-                                    "Antal butiker": [0],
-                                })
-                            ], ignore_index=True)
-            report_df, meta = build_prognos_vs_autoplock_report(
-                prognos_df=combined_df,
-                saldo_norm_df=(self._saldo_raw if isinstance(self._saldo_raw, pd.DataFrame) else None),
+            result = build_prognos_report_result(
+                prognos_df=(self._prognos_df if isinstance(self._prognos_df, pd.DataFrame) else None),
+                campaign_df=(self._campaign_norm if isinstance(self._campaign_norm, pd.DataFrame) else None),
+                saldo_df=(self._saldo_raw if isinstance(self._saldo_raw, pd.DataFrame) else None),
                 buffer_df=(self._buffer_raw if isinstance(self._buffer_raw, pd.DataFrame) else None),
-                exclude_source_ids=None,
-                allocated_df=None,
             )
-            path = open_prognos_vs_autoplock_excel(report_df, meta)
-            msg = f"Prognosrapport skapad ({len(report_df)} rader)."
-            if isinstance(meta, dict) and meta.get("partial") == "yes":
-                miss = meta.get("missing", "").replace(",", ", ")
-                if miss:
-                    msg += f" PARTIELL: saknar {miss}."
-            self._log(msg)
+            path = open_prognos_vs_autoplock_excel(result.report_df, result.meta)
+            self._log(" ".join(result.log_lines))
             self._track_feature(
                 "prognos_report",
                 "opened_result",
-                report_rows=int(len(report_df)),
-                partial=bool(isinstance(meta, dict) and meta.get("partial") == "yes"),
+                report_rows=int(len(result.report_df)),
+                partial=bool(isinstance(result.meta, dict) and result.meta.get("partial") == "yes"),
             )
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Kunde inte skapa/öppna prognosrapporten:\n{e}")
+
+    def open_prognos_in_excel(self) -> None:
+        """
+        Skapa och Ã¶ppna en prognosrapport i en temporÃ¤r Excelâ€‘fil.
+
+        Rapporten jÃ¤mfÃ¶r prognosbehovet med saldo i autoplock, ej inlagrade artiklar samt buffertpallar
+        (FIFOâ€‘logik) och fÃ¶ljer exakt samma utrÃ¤kningar som i originalprojektet. Om prognosen eller
+        saldofilen saknas visas ett meddelande istÃ¤llet.
+        """
+        has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
+        has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
+        if not has_prognos and not has_campaign:
+            messagebox.showinfo(APP_TITLE, "VÃ¤lj och lÃ¤s in antingen prognosfilen eller kampanjvolymerna fÃ¶rst.")
+            return
+        if not (isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty):
+            automation_path = str(self.automation_var.get()).strip() if hasattr(self, "automation_var") else ""
+            if automation_path:
+                self._load_automation(automation_path)
+        if not (isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty):
+            messagebox.showinfo(APP_TITLE, "Ladda upp Saldo inkl. automation fÃ¶rst. Prognosrapporten filtrerar pÃ¥ Robot=Y.")
+            return
+        try:
+            result = build_prognos_report_result(
+                prognos_df=(self._prognos_df if isinstance(self._prognos_df, pd.DataFrame) else None),
+                campaign_df=(self._campaign_norm if isinstance(self._campaign_norm, pd.DataFrame) else None),
+                saldo_df=(self._saldo_raw if isinstance(self._saldo_raw, pd.DataFrame) else None),
+                buffer_df=(self._buffer_raw if isinstance(self._buffer_raw, pd.DataFrame) else None),
+            )
+            path = open_prognos_vs_autoplock_excel(result.report_df, result.meta)
+            self._log(" ".join(result.log_lines))
+            self._track_feature(
+                "prognos_report",
+                "opened_result",
+                report_rows=int(len(result.report_df)),
+                partial=bool(isinstance(result.meta, dict) and result.meta.get("partial") == "yes"),
+            )
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte skapa/Ã¶ppna prognosrapporten:\n{e}")
+
+    def open_prognos_in_excel(self) -> None:
+        """Skapa och oppna en prognosrapport i en temporar Excel-fil."""
+        has_prognos = isinstance(self._prognos_df, pd.DataFrame) and not self._prognos_df.empty
+        has_campaign = isinstance(self._campaign_norm, pd.DataFrame) and not self._campaign_norm.empty
+        if not has_prognos and not has_campaign:
+            messagebox.showinfo(APP_TITLE, "Valj och las in antingen prognosfilen eller kampanjvolymerna forst.")
+            return
+        if not (isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty):
+            automation_path = str(self.automation_var.get()).strip() if hasattr(self, "automation_var") else ""
+            if automation_path:
+                self._load_automation(automation_path)
+        if not (isinstance(self._saldo_raw, pd.DataFrame) and not self._saldo_raw.empty):
+            messagebox.showinfo(APP_TITLE, "Ladda upp Saldo inkl. automation forst. Prognosrapporten filtrerar pa Robot=Y.")
+            return
+        try:
+            result = build_prognos_report_result(
+                prognos_df=(self._prognos_df if isinstance(self._prognos_df, pd.DataFrame) else None),
+                campaign_df=(self._campaign_norm if isinstance(self._campaign_norm, pd.DataFrame) else None),
+                saldo_df=(self._saldo_raw if isinstance(self._saldo_raw, pd.DataFrame) else None),
+                buffer_df=(self._buffer_raw if isinstance(self._buffer_raw, pd.DataFrame) else None),
+            )
+            path = open_prognos_vs_autoplock_excel(result.report_df, result.meta)
+            self._log(" ".join(result.log_lines))
+            self._track_feature(
+                "prognos_report",
+                "opened_result",
+                report_rows=int(len(result.report_df)),
+                partial=bool(isinstance(result.meta, dict) and result.meta.get("partial") == "yes"),
+            )
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Kunde inte skapa/oppna prognosrapporten:\n{e}")
 
     def reset_cache(self) -> None:
         """
@@ -7919,8 +8404,18 @@ class App(ttk.Frame):
 
             try:
                 self._pallet_spaces_df = compute_pallet_spaces(self._result_df)
-            except Exception:
+                if isinstance(self._pallet_spaces_df, pd.DataFrame) and self._pallet_spaces_df.empty:
+                    self._log("Pallplatsberäkning returnerade tomt resultat (saknas kolumner?)")
+                elif self._pallet_spaces_df is None:
+                    self._log("Pallplatsberäkning returnerade None.")
+                else:
+                    self._log(f"Pallplatsberäkning klar: {len(self._pallet_spaces_df)} kunder.")
+            except Exception as _e_ps:
                 self._pallet_spaces_df = None
+                try:
+                    self._log(f"Pallplatsberäkning misslyckades: {_e_ps}")
+                except Exception:
+                    pass
 
             try:
                 self.update_summary_table(result)
@@ -8479,6 +8974,149 @@ def _cli_eftersok(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_cli_text_lines(path: str) -> list[str]:
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"Filen finns inte: {target}")
+    try:
+        text = target.read_text(encoding="utf-8-sig")
+    except Exception:
+        text = target.read_text(encoding="utf-8")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _cli_prognos_report(args: argparse.Namespace) -> int:
+    if not args.prognos and not args.campaign:
+        raise ValueError("Ange minst --prognos eller --campaign.")
+    if not args.saldo:
+        raise ValueError("Ange --saldo. Prognosrapporten filtrerar pa Robot=Y.")
+
+    prognos_df = _load_prognos_cli_source(args.prognos) if args.prognos else None
+    campaign_df = _load_campaign_cli_source(args.campaign) if args.campaign else None
+    saldo_df = _read_cli_table(args.saldo) if args.saldo else None
+    buffer_df = _read_cli_table(args.buffer) if args.buffer else None
+    result = build_prognos_report_result(
+        prognos_df=prognos_df,
+        campaign_df=campaign_df,
+        saldo_df=saldo_df,
+        buffer_df=buffer_df,
+    )
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        report_path = Path(args.report_out)
+        if report_path.suffix.lower() == ".xlsx":
+            output_paths["report"] = _write_cli_workbook(_build_prognos_report_sheets(result), args.report_out)
+        else:
+            output_paths["report"] = _write_cli_dataframe(result.report_df, args.report_out)
+    if args.combined_out:
+        output_paths["combined"] = _write_cli_dataframe(result.combined_df, args.combined_out)
+
+    meta = result.meta if isinstance(result.meta, dict) else {}
+    summary = {
+        "command": "prognos-report",
+        "combined_rows": int(len(result.combined_df)),
+        "report_rows": int(len(result.report_df)),
+        "partial": bool(meta.get("partial") == "yes"),
+        "missing": str(meta.get("missing", "")),
+        "outputs": output_paths,
+    }
+    if args.json:
+        summary["log_lines"] = result.log_lines
+        summary["note"] = str(meta.get("note", ""))
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_observations_update(args: argparse.Namespace) -> int:
+    buffer_df = _read_cli_table(args.buffer)
+    result = build_observations_update_result(
+        buffer_df,
+        observations_path=args.observations_path,
+        artikel_max_out=args.article_max_out,
+        push_to_github=bool(args.push),
+    )
+
+    output_paths: dict[str, str] = {
+        "observations": result.observations_path,
+        "article_max": result.article_max_path,
+    }
+    if args.new_out:
+        output_paths["new_rows"] = _write_cli_dataframe(result.new_rows_df, args.new_out)
+
+    summary = {
+        "command": "observations-update",
+        "new_rows": int(result.new_row_count),
+        "article_max_rows": int(result.article_max_rows),
+        "pushed_to_github": bool(result.pushed_to_github),
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_observations_sync(args: argparse.Namespace) -> int:
+    result = build_observations_sync_result(
+        observations_path=args.observations_path,
+        artikel_max_out=args.article_max_out,
+        remote_file=args.remote_file,
+        push_orphaned=not bool(args.no_push),
+    )
+
+    summary = {
+        "command": "observations-sync",
+        "fetched_rows": int(result.fetched_rows),
+        "pushed_rows": int(result.pushed_rows),
+        "total_observations": int(result.total_observations),
+        "article_max_rows": int(result.article_max_rows),
+        "outputs": {
+            "observations": result.observations_path,
+            "article_max": result.article_max_path,
+        },
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_split_values(args: argparse.Namespace) -> int:
+    values = _read_cli_text_lines(args.input)
+    result = build_chunked_values_result(values, chunk_size=args.chunk_size)
+
+    output_paths: dict[str, str] = {}
+    if args.report_out:
+        output_paths["report"] = _write_cli_dataframe(result.report_df, args.report_out)
+
+    summary = {
+        "command": "split-values",
+        "value_count": int(result.value_count),
+        "chunk_count": int(result.chunk_count),
+        "chunk_size": int(result.chunk_size),
+        "row_count": int(len(result.report_df)),
+        "outputs": output_paths,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
+def _cli_update_check(args: argparse.Namespace) -> int:
+    result = build_update_check_cli_result(
+        release_json_path=args.release_json,
+        download_dir=args.download_dir,
+    )
+
+    summary = {
+        "command": "update-check",
+        "has_update": bool(result.has_update),
+        "current_version": result.current_version,
+        "latest_version": result.latest_version,
+        "release_url": result.release_url,
+        "installer_name": result.installer_name,
+        "downloaded_path": result.downloaded_path,
+    }
+    _emit_cli_summary(summary, args.json)
+    return 0
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--smoke-test", action="store_true")
@@ -8568,6 +9206,46 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     eftersok_parser.add_argument("--report-out", help="Utfil for Eftersok-rapport.")
     eftersok_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
     eftersok_parser.set_defaults(cli_handler=_cli_eftersok)
+
+    prognos_parser = subparsers.add_parser("prognos-report", help="Kor prognos- eller kampanjrapport utan GUI.")
+    prognos_parser.add_argument("--prognos", help="Prognosfil XLSX eller normaliserad CSV/XLSX.")
+    prognos_parser.add_argument("--campaign", help="Kampanjfil XLSX eller normaliserad CSV/XLSX.")
+    prognos_parser.add_argument("--saldo", help="Saldo/automation CSV/XLSX (kravs for Robot=Y-filter).")
+    prognos_parser.add_argument("--buffer", help="Buffertpallar CSV/XLSX.")
+    prognos_parser.add_argument("--report-out", help="Utfil for prognosrapport.")
+    prognos_parser.add_argument("--combined-out", help="Utfil for kombinerat prognosunderlag.")
+    prognos_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    prognos_parser.set_defaults(cli_handler=_cli_prognos_report)
+
+    observations_update_parser = subparsers.add_parser("observations-update", help="Uppdatera observations och artikel_max fran buffertfil.")
+    observations_update_parser.add_argument("--buffer", required=True, help="Buffertpallar CSV/XLSX.")
+    observations_update_parser.add_argument("--observations-path", help="Valfri observations.csv.gz att skriva till.")
+    observations_update_parser.add_argument("--article-max-out", help="Valfri artikel_max.csv att skriva till.")
+    observations_update_parser.add_argument("--new-out", help="Utfil for endast nya observationsrader.")
+    observations_update_parser.add_argument("--push", action="store_true", help="Forsok pusha nya observationsrader till GitHub.")
+    observations_update_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    observations_update_parser.set_defaults(cli_handler=_cli_observations_update)
+
+    observations_sync_parser = subparsers.add_parser("observations-sync", help="Synca observations med GitHub eller lokal källfil.")
+    observations_sync_parser.add_argument("--observations-path", help="Valfri observations.csv.gz att uppdatera.")
+    observations_sync_parser.add_argument("--article-max-out", help="Valfri artikel_max.csv att skriva till.")
+    observations_sync_parser.add_argument("--remote-file", help="Lokal observationsfil for offline-test eller agentkorning.")
+    observations_sync_parser.add_argument("--no-push", action="store_true", help="Pusha inte orphaned lokala observationer.")
+    observations_sync_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    observations_sync_parser.set_defaults(cli_handler=_cli_observations_sync)
+
+    split_values_parser = subparsers.add_parser("split-values", help="Dela varden i kolumner utan GUI.")
+    split_values_parser.add_argument("--input", required=True, help="Textfil med ett varde per rad.")
+    split_values_parser.add_argument("--chunk-size", type=int, default=2000, help="Antal varden per kolumn.")
+    split_values_parser.add_argument("--report-out", help="Utfil for delade varden.")
+    split_values_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    split_values_parser.set_defaults(cli_handler=_cli_split_values)
+
+    update_check_parser = subparsers.add_parser("update-check", help="Kontrollera om det finns en ny version.")
+    update_check_parser.add_argument("--release-json", help="Lokal GitHub release-json for offline-test eller agentkorning.")
+    update_check_parser.add_argument("--download-dir", help="Mapp att ladda ner installeraren till om uppdatering finns.")
+    update_check_parser.add_argument("--json", action="store_true", help="Skriv sammanfattning som JSON.")
+    update_check_parser.set_defaults(cli_handler=_cli_update_check)
 
     return parser
 
