@@ -1,0 +1,512 @@
+﻿Kund	Kund	Adress	"Post nr"	Ort	Pallhöjd	Palltyp	Timestamp	Multi	"Pall reg"	"Text 1"	"Text 2"	Lager	Lastbärare	Bitfield	"Mellanpalls höjd"	"Pack instr"	"Auto filma"	Bolag	Beställargrupp	Säljare	"Lägg till paket"	"Dela order"	"Standard Transportörsnr"	Land	"Adress namn"	"Utökat plock"	EMail	Telefon	GLN	Plockzon	"Leverans text"	"SRS id"	"Extern kundgrupp"	Provins	"Adress 2"	"Adress 3"	"Skriv ut följesedel"	"Master kundnr"
+110	"Bolist Västanhede"	"BUSKAVÄGEN 19"	"774 98"	HORNDAL	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			info@vhtj.se	0226-71039									Y	
+111	"Hultsfreds Järnvaruaffär"	"ANDERSBOVÄGEN 17"	"577 34"	HULTSFRED	0		"2026-03-04 10:09:04"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			info@h-jarn.se	0495-14030									Y	
+122	"Järnboden i Mariefred AB"	"STORGATAN 8"	64730	Mariefred	0		"2026-03-24 09:19:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			KONTORET@JARNBODEN-MARIEFRED.SE	0159-10690			"Öppnar kl: 0900"						Y	
+133	"Wirströms Järn & Färg"	"KOCKSGATAN 5"	"116 24"	STOCKHOLM	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@wirstroms.se	08-6400924										
+137	"Handelsgruppen Sälen"	"VÄSTRA LÅNGSTRAND 221"	"780 67"	SÄLEN	0		"2026-01-05 12:12:02"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			salen@handelsgruppen.se	010-4719520										
+145	"Eskilstunaboden AB"	"BONDEGATAN 6"	"573 74"	Ydre	0		"2025-10-07 07:33:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			info@ESKILSTUNABODEN.SE	0381-60350										
+146	"Allert Järn & Bygg AB"	"ÖDÄNGSVÄGEN 4"	"590 38"	KISA	0		"2025-10-07 07:34:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			inbox@jarnochbygg.se	0494-10400										
+150	"Braås Järnhandel"	"SJÖSÅS KRUTHUSET"	"363 91"	BRAÅS	0		"2025-10-07 07:34:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			info@braasjarn.se	0474-30330										
+154	"Lövångers Järn & Maskin"	"Kungsvägen 20"	93261	Lövånger	0		"2026-01-05 12:12:01"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@lovangersmaskin.se	0913-10038										
+160	"Fjugesta Järn & Färg"	"LETSTIGEN 21"	"716 30"	FJUGESTA	0		"2026-04-29 09:13:40"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			info@fjugestajarnfarg.se	0585-31225									Y	
+163	"Degerfors Järn & Färghandel"	"KVARNBERGSVÄGEN 1"	"693 35"	DEGERFORS	0		"2026-03-24 09:11:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info.degerfors@svenskahem.se	0586-44388										
+166	"Handelsgruppen  Malung"	"HANTVERKARGATAN 42"	"782 34"	MALUNG	0		"2026-01-05 12:24:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			malung@handelsgruppen.se	010-4719620										
+168	"Handelsgruppen Vansbro"	"BERGSLAGSVÄGEN 1"	"786 33"	VANSBRO	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			christoffer.bohlin@handelsgruppen.se	010-4719570										
+169	"Dorotea Järnhandel"				0		"2026-01-05 12:14:00"	Y					0	192	0			MG																				
+170	"Bolist Hallen"	"NEDRE BYNOM 565"	"845 91"	HALLEN	0		"2026-03-24 09:19:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			bitte@hallenselobygg.com	0643-30380										
+175	"J GUSTAVSSONS BYGGMATERIAL"	"Trävägen 2"	"432 78"	TVÅÅKER	0		"2026-02-24 09:02:01"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			bengt@jgb.se	0340-480190										
+178	"Bolist Bagge Bygg"	"LAPPSTAVÄGEN 14"	"962 31"	JOKKMOKK	0		"2026-01-05 12:11:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			anton@baggebygg.se	0971-58440										
+179	"Bolist Malå"	"STORGATAN 21"	"939 31"	MALÅ	0		"2026-01-05 12:24:01"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@malajarnfarg.se	0953-10061										
+180	"Bolist Svärdsjö Järn"	"BORGÄRDESVÄGEN 24"	"790 23"	SVÄRDSJÖ	0		"2026-03-04 10:09:09"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			info@svardsjojarn.se	0246-51030									Y	
+182	"Bolist Järpen"	"SKANSVÄGEN 67"	"837 32"	JÄRPEN	0		"2026-02-24 09:05:01"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			mimmi@jarpenselobygg.com	"0647-66 52 75"										
+183	"Bolist Järnhuset Järvsö"	"TURISTVÄGEN 70"	"827 50"	JÄRVSÖ	0		"2026-03-04 10:09:14"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			info@jarnhuset.se	0651-40440									Y	
+185	"Bolist Nordemans"	"KAROSSERIVÄGEN 2 M"	"891 41"	ÖRNSKÖLDSVIK	0		"2026-01-05 12:11:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			bekraftelse@nordemansjern.se	0660-295200										
+192	"Bolist Svenstavik"	"STATIONSVÄGEN 7"	"845 31"	SVENSTAVIK	0		"2026-03-24 09:24:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			ordererkannande@byggvaruhuset.se	0687-10720									Y	
+193	"Bolist Nora"	"BERGSLAGSGATAN 7"	"713 32"	NORA	0		"2026-04-24 09:04:43"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			info@bolistnora.se	58712850									Y	
+197	"Bolist Älvdalen"	"ANDVÄGEN 13"	79630	Älvdalen	0		"2026-02-24 10:22:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			info@byggv.se	0251-597330										
+201	"Bolist Vännäs"	"ÖSTRA JÄRNVÄGSGATAN 50"	"911 31"	VÄNNÄS	0		"2026-01-05 12:13:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@byggshopen.com	0935-30552										
+203	"S.O Fritid Bygg"	"TJÄLL 140"	"881 93"	SOLLEFTEÅ	0		"2026-01-05 12:13:00"	Y					0	192	0			MG						SWE			sten590222@gmail.com	0620-24164										
+212	"Byggcenter i Limmared"	"VÄSTRA JÄRNVÄGSGATAN 10"	"514 42"	LIMMARED	0		"2026-01-05 12:15:00"	Y					0	192	0			MG						SWE			kent.johansson@bygg-in.se	0325-619991										
+218	"Olinders Järn & Färg"	"ÖSTRA HAMNEN 2"	"475 42"	HÖNÖ	0		"2026-01-05 13:18:00"	Y					0	192	0			MG						SWE			ordererkannande@olinders.se	031-7573423										
+220	"Harås Byggvaror  Stora Höga"	"Stationsvägen 6"	44460	"Stora Höga"	0		"2026-02-24 10:23:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			info@harasbyggvaror.se	0303-798830										
+221	"Rydaholms Järnhandel"	"JÄRNVÄGSGATAN 12"	33176	Rydaholm	0		"2026-02-24 10:23:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			info@rydaholmsjarn.se	0472-20865									Y	
+222	"Elmsta Färg & Järnhandel"	"GRISSLEHAMNSVÄGEN 7"	"764 30"	VÄDDÖ	0		"2026-01-05 12:24:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			order@elmstajarn.se	0176-50111										
+225	"Handelsgruppen  Idre"	"PETTERSVÄG 1"	"797 92"	IDRE	0		"2026-01-05 12:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			idre@handelsgruppen.se	010-4719600										
+230	"Bromölla Trävaror"	"INDUSTRIGATAN 25"	"295 39"	BROMÖLLA	0		"2025-06-18 11:51:00"	Y					0	192	0	"MAX 135cm"		MG					0	SWE			benny@bromollatravaror.se											
+233	"Bolist Stehag"	"STATIONSVÄGEN 21"	24174	Stehag	0		"2026-03-04 13:47:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@oobygg.com	0413-540340										
+234	"Harry Perssons Byggnadsvaror"	"HOSABYVÄGEN 26, MJÄLLBY"	29471	Sölvesborg	0		"2026-02-24 10:24:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@hpb.se	0456-50022									Y	
+236	"Bolist Övertorneå"	"JÄRNVÄGSGATAN 3"	"957 31"	ÖVERTORNEÅ	0		"2026-01-05 12:17:01"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			jarnhandeln@stad.overtornea.se	0927-10009										
+237	"Torgnys Trä"	"BJÖRKNÄS 502"	65594	Karlstad	0		"2026-02-24 10:24:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@torgnys.se	"054-86 00 11"										
+240	"Anders Trä i Loftahammar"	BÅGVIK	59471	Loftahammar	0		"2026-02-24 10:25:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			info@anderstra.se	"0493-617 11"										
+244	"Grimslövs Järn & Bygg"	"SKATELÖVSVÄGEN 71"	"342 54"	GRIMSLÖV	0		"2026-02-24 10:25:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			gjb.sebastian@gmail.com	0470-750190										
+245	"Axel P"	"JÄRNGATAN 2"	"666 31"	BENGTSFORS	0		"2026-03-09 07:24:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			nathalie@axelp.se	0531-61533									Y	
+248	"Jensens Byggland"	"LÖPAREGATAN 3"	24161	Löberöd	0		"2026-02-24 10:25:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			order@JENSENSBYGGLAND.SE	"0413-300 01"										
+249	"Fristad Byggvaror"	"ASKVÄGEN 10"	"513 32"	FRISTAD	0		"2026-01-05 12:18:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			order@bolistfristad.se	033-444881									Y	
+251	"Önne Trä & Byggvaror"	"LEVINS VÄG 26"	29173	Önnestad	0		"2026-02-24 10:26:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@otbab.se	044-70170										
+253	"Linderöds Träindustri"	"HACKEVÄGEN 20"	29894	Linderöd	0		"2026-02-24 10:26:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@linderodstra.se	"044-34 01 00"									Y	
+254	"Bolist Kolmården"	"MUNKVÄGEN 8"	61830	Kolmården	0		"2026-03-04 10:09:25"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			kolmardens.byggtjanst@telia.com	"011-39 73 87"									Y	
+256	"Bolist Ödeshög"	"FABRIKSVÄGEN 15"	"599 33"	ÖDESHÖG	0		"2026-01-05 12:11:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			info@BACKBYGGMATERIAL.SE	0144-31710										
+260	"Jonssons Trä"	"FABRIKSVÄGEN 4"	"387 36"	BORGHOLM	0		"2025-12-02 13:15:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			butik@jonssonstra.com	070-5619277										
+261	"forssa järn och byggvaror"	"TEGELBRUKSVÄGEN 1"	"517 91"	BOLLEBYGD	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			rose-marie@forssabyggvaror.se	033-284020									Y	
+262	"Bolist Kvissleby"	"BYVÄGEN 8"	"862 32"	KVISSLEBY	0		"2026-01-05 12:14:01"	Y					0	192	0			MG						SWE			info@ntbyggmaterial.se	060-513620										
+263	"Esperöds Byggshop"	"BYAVÄGEN 5"	27576	Äsperöd	0		"2026-03-03 13:24:43"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@esperodsbyggshop.se	0417-27370									Y	
+266	"Slöinge trä"	"LUNDBYVÄGEN 17"	"311 68"	SLÖINGE	0		"2026-01-05 12:11:00"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			info@sloingetra.se	0346-40443									Y	
+271	"Forshalls Bygghandel"	"FORSHALL VÄSTRA FORSÖLE 5"	"467 92"	GRÄSTORP	0		"2026-01-05 12:14:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					76	SWE			marcus@forshallsbygg.se	051451170										
+272	"Grästorps Trävaruaffär"	"ODINSGATAN 20"	46740	Grästorp	0		"2026-02-05 08:20:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					76				lisa.malmberg@grastorpstra.se	0514-657486										
+273	"Hkb i Ljungryda"	"LJUNGRYDAVÄGEN 230"	29372	JÄMSHÖG	0		"2026-02-24 10:27:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					48	SWE			info@hkbygg.com	"0454-466 19"										
+274	"Bolist Nylands Järnhandel"	"BANKGATAN 7"	87371	Nyland	0		"2026-04-14 11:12:05"	Y					0	192	0	"MAX 135cm"		MG					53				tobias@nylandsjarn.se	061222815									Y	
+277	"Bolist Belganet"	"FRANS MÖLLARES VÄG 6A"	37293	HALLABRO	0		"2026-02-24 10:27:01"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@bolistbelganet.com	0457-452188										
+278	"Räppe Såg & Byggnadsvaror"	"STORA RÄPPEVÄGEN"	"352 50"	VÄXJÖ	0		"2026-02-24 10:28:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			info@rappesag.se	0470-69080										
+279	"Byggbutiken i Svedala"	"NORRA TVÄRGATAN 24"	"233 35"	SVEDALA	0		"2025-06-18 11:48:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@byggbutiken.se										Y	
+282	"Bolist Stugun"	"GJURDS VÄG 2"	84451	Stugun	0		"2026-03-24 09:31:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			order@stugunsbygg.se	0695-599000			Liftlossas							
+286	"Vallåkra Lantmannaaffär"	"BOKSTIGEN 3"	25341	Vallåkra	0		"2026-03-24 09:11:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@vallakra.net	042-99275									Y	
+288	"Räfsnäs såg"	"BERGSHAMNSVÄGEN 15"	"760 15"	GRÄDDÖ	0		"2026-03-09 07:24:10"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			info@rafsnassag.se	0176-40265									Y	
+290	"J&B Saltis"	"TORGGATAN 4"	13331	Saltsjöbaden	0		"2026-03-09 07:24:18"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@saltisjarn.com	08-7175550									Y	
+291	"Norbergs bygghandel"	"HACKSPETTSBACKEN 1A"	"738 35"	NORBERG	0		"2026-04-15 08:29:42"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			info@nbgh.se	0223-23105										
+292	"NYBE Handels"	"KULLAVÄGEN 5"	34372	Eneryda	0		"2026-02-24 10:31:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			info@nybeab.se	"0476-223 00"										
+295	"Torups Byggshop"	"BOSGÅRDSVÄGEN 30"	31441	Torup	0		"2026-03-10 14:11:05"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			mastergruppen@byggshop.nu	0345-21330			"Stänger kl : 17:00"							
+297	"Bolist Haparanda"	"NORRMALMSVÄGEN 10"	"953 34"	HAPARANDA	0		"2026-01-05 12:11:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			daniel@elonhaparanda.se	0922-15971									Y	
+298	"Bolist Kalix Bygg & Plåt"	"VALHALLAVÄGEN 25"	"952 31"	KALIX	0		"2026-01-05 12:18:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@kbp.se	0923-14026										
+300	"ABC Järn & Färg"	"Tenngatan 2"	23435	Lomma	0		"2026-02-24 10:31:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			joakim@abcjarnfarg.se	040-413590										
+301	"EmmaBoda Byggnadsvaror Bolist"	"RÖRGRÄND 1"	36131	Emmaboda	0		"2026-02-24 10:31:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			info@byggnadsvaror.se	"0471-100 00"										
+304	"Olsäter Såg"	"OLSÄTERSVÄGEN 29"	66992	DEJE	0		"2026-02-24 10:34:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@bolistolsater.se	"0552-310 96"										
+305	"Jlb Bygghandel"	"AVELSÄTER 4"	66194	SÄFFLE	0		"2026-02-24 10:35:00"	Y					0	192	0	"MAX 135cm"		MG					41				ellinor@jlb.se	0533-60150										
+308	"Grg Svensson Byggnads"	"LÖNNDAL 208"	"451 79"	GRUNDSUND	0		"2026-03-09 07:24:26"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			order@grgsvensson.se	0523-21172									Y	
+311	"Bolist Trosa"	"INDUSTRIGATAN 7"	61933	TROSA	0		"2026-03-24 09:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					97	SWE			oe@bolisttrosa.se	0156-21430									Y	
+314	"Byggman Gotland"	"RONEVÄGEN 7"	"623 50"	HEMSE	0		"2026-01-05 12:24:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			info@byggman.eu	0498-200551									Y	
+316	"backabo byggvaror"	"BACKABO 38"	"518 90"	SANDARED	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			elin.backabo@telia.com	033-258700										
+318	"Lindbro Byggvaror"	"LINDBRO 1"	"641 99"	SKÖLDINGE	0		"2026-01-05 12:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@lindbrobyggvaror.se	0157-50065									Y	
+322	"Löttorps Byggvaror"	"BYRUMSVÄGEN 17"	"387 72"	LÖTTORP	0		"2026-02-04 13:42:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@lottorpsbygg.se	0485-20675										
+324	"Bolist Bettna Såg"	SKENALA	"642 97"	BETTNA	0		"2026-04-28 07:42:08"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					97	SWE			henrik@bettnasag.se	0155-92113										
+325	"Lidingö Järn & Färghandel"	"STOCKHOLMSVÄGEN 72"	"181 42"	LIDINGÖ	0		"2026-01-05 12:11:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@LIDINGOJARN.SE	08-7650098									Y	
+326	"Byggvaruhuset i Mönsterås"	"VÄSTRA OKNEBÄCKSVÄGEN 5"	38336	Mönsterås	0		"2026-02-24 10:39:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			linda@byggvaruhusetab.se	0499-44825										
+327	"Österby Brädgård AB"	"ÖSTERBYVÄG 28"	"621 41"	VISBY	0		"2025-12-30 12:39:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			info@osterby.nu	0498-259990										
+329	"Handelsgruppen  Hällefors"	BYGGVÄGEN	"712 34"	HÄLLEFORS	0		"2026-04-29 09:20:26"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			maria.larsson@handelsgruppen.se	010-4719550									Y	
+330	"Nya Lammhults järnhandel"	"NORRA FABRIKSGATAN 11"	36344	Lammhult	0		"2026-03-24 09:11:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			butik@lammhultsjarnhandel.se	0472-260745										
+332	"Likenäs Bygg o färg"	"MÖREVÄGEN 10"	68063	Likenäs	0		"2026-03-04 10:09:31"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			butik@bolistlikenas.se	0564-40309									Y	
+334	"Järn & Fritid i Simrishamn"	TUMATORPSVÄGEN	27233	SIMRISHAMN	0		"2026-03-09 07:24:32"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44				info@jarnofritid.se	0414-10515									Y	
+338	"Catrinelunds Hyvleri & Byggvaror AB"	"CATRINELUND 140"	"733 91"	SALA	0		"2026-02-24 10:41:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@catrinelund.se	0224-14795										
+340	"Bolist Bergshamra"				0		"2026-01-05 12:23:00"	Y					0	192	0			MG																				
+341	"Bolist Taberg"	"SJÖHULTSVÄGEN 17"	56241	Taberg	0		"2026-02-24 10:41:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			info@lindkvistjarn.se	036-63130									Y	
+347	velltra	"FALSTERBOVÄGEN 245"	23591	vellinge	0		"2026-02-24 10:42:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			kontakt@velltra.se	"040-42 42 77"										
+348	"Bolist Bredbyn"	"PRÄSTBORDET 205"	"895 91"	BREDBYN	0		"2026-01-05 12:24:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			info@nordemansjern.se	0661-44050										
+351	"Bolist Fleninge"	"Fleningevägen 270"	"254 77"	Fleninge	0		"2026-02-24 10:42:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			anna.sonesson@bolistfleninge.se	042-205840										
+353	"Reftele Lantmän"	"Segerstadsvägen 6"	33375	Reftele	0		"2026-02-24 10:42:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			olof@lantisireftele.se	0371-20204										
+357	"Hörby Lantmän"	"RÅBYVÄGEN 42"	24234	Hörby	0		"2026-03-24 09:32:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			sara.zsolyomi@hbylm.se	0415-17100										
+358	"Löderups Lokalförening Ek För"	FABRIKSGATAN	27176	Löderup	0		"2026-02-24 10:43:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			johan@loderupslokalforening.se	"0411-55 86 80"										
+359	"ByggUppMera i Skivarp"	"ÖREMÖLLAVÄGEN 6"	27451	Skivarp	0		"2026-03-04 10:09:37"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			butik@BYGGUPP.NU	0411-67190									Y	
+360	"Örkelljunga Lantmannaaffär"	"DRAKABYGGET 1256"	28692	Örkelljunga	0		"2026-02-24 10:44:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			lagerbutik@orkelljungalma.se	0435-80320										
+364	"PMG Landvetter"				0		"2025-04-29 13:19:00"	Y					0	192	0			MG																				
+367	"Östra Ljungby Lantmän"	"BLÄSINGEVÄGEN 7"	26471	"Östra Ljungby"	0		"2026-02-24 11:07:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			christin@lantmaen.se	0435-21204									Y	
+368	"Föllinge Såg"				0		"2026-01-05 12:15:00"	Y					0	192	0			MG																				
+369	"Munka Lantmän"	"LJUNGSGÅRDSLEDEN 4"	26633	Munka-Ljungby	0		"2026-03-24 09:12:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			kristina.rundqvist@munkalantman.se	0431-445140										
+371	"Hälle Byggvaror"	"RÅGGATAN 6"	"452 33"	STRÖMSTAD	0		"2026-01-05 12:12:02"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			butiken@hallebyggvaror.se	0526-41044										
+372	"Bolist Lösvirkeshus i Strömsund"	"RAMSELEVÄGEN 40"	83335	Strömsund	0		"2026-03-24 09:11:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			info@losvirkeshus.nu	0670-12770										
+374	"Bertil Norrby"	"HOBURGSVÄGEN 42"	"623 35"	BURGSVIK	0		"2026-01-05 12:11:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			bertilnorrbyab@telia.com	0498-497025									Y	
+377	Gustis	"EKEBYVÄGEN 4"	74730	Alunda	0		"2026-03-09 07:24:35"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			invalid@email.trace	0174-10296									Y	
+380	"Eliassons Järn"	"TIMMERMANSGATAN 6"	61331	Oxelösund	0		"2026-03-05 18:41:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					97	SWE			info@eliassonsjarn.se	0155-205671										
+385	ByggGrossen	Dumpervägen	14250	Skogås	0		"2026-03-03 13:24:49"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			info@bygggrossen.se	"08-34 56 17"									Y	
+387	"Bergom Såg"	"BERGOM 213"	"864 91"	MATFORS	0		"2026-01-05 12:13:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			info@bergomsag.se	060-22120										
+390	"Bolist Hammarstrand"	"JÄRNGRÄND 4"	84431	Hammarstrand	0		"2026-02-24 11:08:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			info@bolisthammarstrand.se	0696-599100			Liftlossas							
+391	"Bolist Österbybruk"	"MARTINVÄGEN 8"	74832	Österbybruk	0		"2026-02-24 11:09:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			bolist@osterbyplat.se	0295-21020										
+392	"BENAB Byggmaterial"	"GIMSBÄRKE 17"	"781 90"	BORLÄNGE	0		"2026-01-05 12:12:01"	Y					0	192	0			MG						SWE			Faktura@benabbyggmaterial.se	0243-230634										
+393	"Bolist Ramsele"	"STORGATAN 14"	"883 70"	RAMSELE	0		"2026-01-05 12:24:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			jenny@ramselejarn.se	0623-10109										
+395	"Sävja Byggvaror"	"SÄVJA GÅRD"	"757 56"	UPPSALA	0		"2026-01-05 12:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			bengt@savjabyggvaror.se	018-420380										
+396	"Bolist Edebo Såg"	"HARBROBY 6"	"763 93"	SKEBOBRUK	0		"2025-12-04 09:30:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			info@edebosag.se	0175-40006										
+398	"Bolist Sören Svensson Byggvaror"	"HYBOVÄGEN 10 B"	82735	Ljusdal	0		"2026-02-24 11:09:00"	Y					0	192	0	"MAX 135cm"		MG					0	SWE			info@ssbyggvaror.se	0651-13770									Y	
+400	"Bolist Byggnadsnickerier Krokom"	"HISSMOFORSVÄGEN 55"	83533	Krokom	0		"2026-03-24 09:21:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			info@byggnadssnickerier.com	0640-61524									Y	
+401	"Skottorps Bygghandel"	"STRANDVÄGEN 59"	"312 77"	SKOTTORP	0		"2026-02-24 11:43:00"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			info@skottorpsbygghandel.se	"0430-206 27"										
+402	"Bolist Älvkarleby"	"BRÄNNMOVÄG 40B"	"814 70"	ÄLVKARLEBY	0		"2026-01-05 12:11:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			order.abybygg@hotmail.com	026-72062									Y	
+405	Mekservice	"HAMMARVÄGEN 2"	"668 32"	ED	0		"2026-01-05 12:17:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			kontor@mekservice-ed.se	0534-19981										
+407	"Järn & Maskin i Kristinehamn AB"	"VÄSTGÖTAGATAN 49"	"681 42"	KRISTINEHAMN	0		"2026-02-24 11:45:01"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			order@jarnochmaskin.se	"0550-393 91"									Y	
+408	"Harås Byggvaror Lysekils Trä"	"LYSE FISKEBÄCK 356"	"453 91"	LYSEKIL	0		"2026-01-05 12:11:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@lysekilstra.se	0523-13090										
+409	"Järn & Färghandel i Tumba"	"OLVONVÄGEN 4"	"147 33"	TUMBA	0		"2025-06-18 11:36:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			kontor@tumbajarn.se										Y	
+410	"Bolist Lindveden"	"ASSAREBO STENRÖSET"	"461 98"	TROLLHÄTTAN	0		"2026-01-05 12:13:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@lindvedensbyggvaruhus.se	0520-71130										
+412	"Bolist Färgelanda"	"KRÄMARVÄGEN 3"	"458 32"	FÄRGELANDA	0		"2026-01-05 12:17:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			marita@fargelandabygghandel.se	0528-241500										
+413	"Bolist Ljungaverk"	"FOLKETHUSVÄGEN 16"	"841 98"	LJUNGAVERK	0		"2026-01-05 12:18:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			lars@danielssonsab.se	0691-32930									Y	
+414	"LÖSVIRKESHUS (GÄDDEDE)"	"SAGAVÄGEN 12"	"833 61"	GÄDDEDE	0		"2026-02-24 11:47:00"	Y					0	192	0	"MAX 135cm"		MG					78	SWE			butiken@frostvikens.com	0670-12770										
+415	"Bolist Vilhelmina"	"Parallellgatan 84A"	91232	Vilhelmina	0		"2026-02-24 11:47:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			mg@bolistvilhelmina.se	0940-10248										
+416	"Coop Nord Skelefteå"	"GYMNASIEVÄGEN 10"	"931 57"	SKELLEFTEÅ	0		"2026-01-05 12:12:02"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			Coop.Bolist@coopnord.se	0910-713530										
+418	"Coop Nord Härnösand"	"KAPTENSGATAN 15"	"871 52"	HÄRNÖSAND	0		"2026-01-05 12:15:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			Emma.Thelin@coopnord.se	090-104084										
+419	"A Sjöbergs Byggmaterial"	"PAPPERSBRUKSVÄGEN 10B"	"289 41"	BROBY	0		"2025-06-18 11:37:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			erik@bolistbroby.se	044-46800										
+421	"Bolist Kalix Parallellgatan"	"PARALLELLGATAN 13"	"952 33"	KALIX	0		"2026-04-07 09:58:47"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			bolistkalix@coopnorrbotten.se	0107478100									Y	
+422	"Bolist Kiruna"	"ÖSTERLEDEN 12"	98138	Kiruna	0		"2026-02-24 11:51:01"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			bolistkiruna@coopnorrbotten.se	010-7474135										
+423	"Bolist Gällivare"	"METALLVÄGEN 16"	"982 38"	GÄLLIVARE	0		"2026-01-05 12:11:01"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			bolistgallivare@coopnorrbotten.se	010-7474322										
+432	"Härnösands Bygghandel"				0		"2026-01-05 12:24:01"	Y					0	192	0			MG																				
+433	"Bolist Nyqvist Byggvaruhandel"	"BERGLUNDAVÄGEN 46"	"861 42"	SÖRBERGE	0		"2026-01-05 12:18:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			leif@nyqvistsag.se	060-578600										
+434	"Bolist Långsele"	"KÖPMANGATAN 10"	"882 30"	LÅNGSELE	0		"2026-01-05 12:13:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			info@ramselejarn.se	070-3706225										
+436	Roje	"BANDYGATAN 1"	"711 34"	LINDESBERG	0		"2026-04-08 15:37:29"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			info@bolistlindesberg.se	0722287200									Y	
+437	"Handelsgruppen  Leksand"	"ÖVERMO MOSKOGSVÄGEN 2"	"793 35"	LEKSAND	0		"2026-01-05 12:12:02"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			leksand@handelsgruppen.se	010-4719660										
+441	"Forserums järnhandel"	"NÄSSJÖVÄGEN 3"	57177	Forserum	0		"2026-03-24 09:11:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			forserums.jarn@telia.com	0380-21213									Y	
+442	"Söders Järn"	"HORNSGATAN 69"	"118 49"	STOCKHOLM	0		"2026-02-24 11:53:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@sodersjarn.se	086690330										
+443	"Sollebrunns Järnhandel"	"GRÄFSNÄSVÄGEN 2"	44170	Sollebrunn	0		"2026-03-09 07:24:44"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			info@jarnia.nu	"0322-403 30"									Y	
+444	"Borås Elmotor & Drivteknik"	"JÖSSAGATAN 21"	"504 42"	BORÅS	0		"2026-01-05 12:18:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			service@boraselmotor.se	033-7991431									Y	
+445	"Bolist Utterströms"	"STORGATAN 3"	"914 33"	NORDMALING	0		"2026-01-05 12:12:02"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@utterstroms.nu	0930-10722										
+447	"Frydéns Järnhandel"	"STORA TORGET 1"	54330	Tibro	0		"2026-03-24 09:24:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			info@frydens.se	"070-981 72 00"										
+448	"Gärsnäsaktiebolaget N. Olsson & C:o"	"STORGATAN 26GEN 7"	"272 61"	GÄRSNÄS	0		"2026-02-24 14:18:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			wiktor@olsana.com	0414-50009										
+449	"Bolist Hammarö"	"SKRAGGEVÄGEN 2  LIFTLOSSAS"	66341	Hammarö	0		"2026-02-24 14:18:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			bygg-fritid@telia.com	054-524096			Liftlossas							
+450	"Bolist Lidéns"	"STRANDVÄGEN 19"	92432	Sorsele	0		"2026-02-24 14:19:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@jarniasorsele.se	0952-10034										
+451	"Lerums Järnhandel"	"ASPENÄSVÄGEN 2,   LIFTLOSSAS"	44330	Lerum	0		"2026-02-24 14:20:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			ordrar@lerumsjarn.se	"0302-109 80"			Liftlossas							
+453	"Svenssons Järn i Hörby KB"	"STORGATAN 11"	24231	Hörby	0		"2026-03-04 10:09:43"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			bitte@svenssonsjarn.se	"0415-197 90"									Y	
+454	"Bröderna i Bromölla AB"	"STORGATAN 32"	"295 31"	BROMÖLLA	0		"2026-01-05 12:14:00"	Y					0	192	0			MG						SWE			lager@brodernaibromolla.se	0456-28050									Y	
+455	"Kullenbergs järnaffär"	"JÄRNVÄGSGATAN 17"	27432	Skurup	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			ingrid.kullenbergs@telia.com	"0411-426 25"									Y	
+456	"KARLAPLANS JÄRNAFFÄR AB"	"KARLAPLAN 7"	"114 60"	STOCKHOLM	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			order@karlaplansjarn.se	"08-662 07 20"									Y	
+460	"A-Järn & Bygg"				0		"2026-01-05 12:16:00"	Y					0	192	0			MG																			Y	
+461	"Järnia Bålsta"	"ENKÖPINGSVÄGEN 6"	"746 52"	BÅLSTA	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			faktura.balstajarnhandel@telia.com	0171-50575										
+462	"LEIF MERELLS VERKTYG & TRÄDGÅRD"	"TORGET 2"	"594 32"	GAMLEBY	0		"2026-03-10 14:10:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			anna-lena@leifsverktyg.se	0493-51474										
+464	"Rune Wänerstedt AB"	"LIDKÖPINGSVÄGEN 9"	"533 32"	GÖTENE	0		"2026-03-24 09:11:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			bolistjarn@wanerstedt.se	0511-51670										
+467	"Rehnbergs Järn"				0		"2026-01-05 12:18:01"	Y					0	192	0			MG																				
+468	"Kungsholmens Järn"	"FLEMINGGATAN 75"	"112 33"	STOCKHOLM	0		"2026-02-24 14:23:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@kungs-jarn.se	08-7850720										
+469	"Elon / Järnia Lilla Edet"	"INDUSTRIGATAN 2    LIFTLOSSAS"	"463 30"	"LILLA EDET"	0		"2026-01-05 12:12:02"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			namfon.jonson@elon.se	0520-650010										
+470	"Järnia Favoriten"	"MARGRETELUND CENTRUM"	"184 60"	ÅKERSBERGA	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			johan.roth@supermarket.ica.se	"08-540 601 50"										
+471	"Ödeshögs Järn AB"				0		"2026-01-05 12:12:01"	Y					0	192	0			MG																				
+472	"Bolist Larssons Järn"	"STORGATAN 24"	"956 31"	ÖVERKALIX	0		"2026-01-05 12:33:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			kontor@larsonsjarn.se	0926-10017										
+473	"Bolist Valdemarsvik"	"HOSUM 2"	"615 91"	VALDEMARSVIK	0		"2026-02-24 14:24:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			info@magnussonsbyggvaror.se	0123-40647										
+474	"Sandholms Färg & Golv"	"SMEDMÄSTAREVÄGEN 3"	"579 32"	HÖGSBY	0		"2026-02-24 14:24:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			info@sandholms.se	0491-20862										
+475	"Handelsgruppen  Ekshärad"	"SNICKARVÄGEN 1"	"683 60"	EKSHÄRAD	0		"2026-02-24 14:25:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			eksharad@handelsgruppen.se	010-4719700										
+476	"Strömstad Järn & Fritid"	"PRÄSTÄNGVÄGEN 27"	"452 97"	STRÖMSTAD	0		"2026-01-05 12:11:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@jarniastromstad.se	0526-66222										
+477	"LÖSVIRKESHUS (HOTING)"	"RAMSELEVÄGEN 40"	"833 35"	HOTING	0		"2026-02-24 14:25:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			butik@msonbygg.se	0730231973										
+478	"Handelsgruppen Bygg och Järn Sunne Byggshop"	"Sundgatan 13"	68633	Sunne	0		"2026-02-24 14:26:00"	Y					0	192	0			MG						SWE			paulina.grassel@handelsgruppen.se	010-4719720										
+479	"Bolist Bjurholm"	"KÖPMANNAGATAN 3"	"916 31"	BJURHOLM	0		"2026-01-05 12:13:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@bolistbjurholm.se	0932-10067									Y	
+480	"Virserums Järn & Byggprodukter"	"BONAREGATAN 7"	"577 72"	VIRSERUM	0		"2026-01-05 12:24:01"	Y					0	192	0			MG						SWE			info@jarn-bygg.se	0495-31040										
+481	"Hantverkarhuset Göteborg"	"August barks gata 9"	"421 32"	GÖTEBORG	0		"2026-02-24 14:26:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			ekonomi@hantverkarhuset.se	031124730										
+482	"Hantverkarhuset Jönköping"	"Sjöåkravägen 27"	56431	Bankeryd	0		"2026-02-24 14:27:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			ekonomi@hantverkarhuset.se	031-124730										
+483	"EmmaBoda Byggnadsvaror Maskin & Trädgård"	"SÖDRA VÄGEN 32"	36131	Emmaboda	0		"2026-02-24 14:27:01"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			info@byggnadsvaror.se	047110000										
+484	"Bolist Brunflo"	"CENTRUMVÄGEN 33"	"834 31"	BRUNFLO	0		"2026-03-24 09:21:01"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			order@bolistbrunflo.se	063-7005050			Liftlossas							
+485	Kavelbrosågen	"KAVELBROVÄGEN 15"	38891	Vassmolösa	0		"2026-02-26 07:40:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@KAVELBROSAGEN.SE	0480-34012										
+486	"Wåhlstedts i Östervåla AB"	"DALVÄGEN 3"	"740 46"	ÖSTERVÅLA	0		"2026-01-05 12:11:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Marcus.liljeberg@hotmail.se	0292-71072			Liftlossas							
+487	"Hantverkarhuset Stockholm"	"Josefinavägen 11"	"112 61"	Stockholm	0		"2026-02-26 07:40:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			ekonomi@hantverkarhuset.se	"08-91 08 30"										
+488	"Bolist Mora"	"SKÅLMYRSVÄGEN 38"	79250	Mora	0		"2026-02-26 07:40:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			anders@byggnetto.net	070-5550351									Y	
+489	"BOLIST Oskarshamn"	"Åsavägen 45"	57236	Oskarshamn	0		"2026-03-04 10:09:47"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			martin@bolistoskarshamn.se	0491-767412									Y	
+490	"Bolist Ånge"	"Lantmannagatan 8"	84132	Ånge	0		"2026-03-19 08:40:14"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			staffan@bolistange.se	0730303268									Y	
+491	"Bolist Östhammar"	"Börstil 134"	74292	Östhammar	0		"2026-03-09 07:24:47"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			invalid@email.trace	"0173-44 00 30"									Y	
+492	"Bolist Kristdala"	"Västerviksvägen 35"	"572 73"	Kristdala	0		"2026-02-26 07:42:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			info@kristdalabygg.se	0491-70120										
+493	"BOLIST Byggjänst Arboga"	"Stenängsvägen 5"	73232	Arboga	0		"2026-02-26 07:43:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@byggtjanstarboga.se	"0589-177 90"									Y	
+494	"Hantverkarhuset Malmö"	"Mor Marnas Väg"	21291	Malmö	0		"2026-02-26 07:43:00"	Y					0	192	0			MG						SWE			ekonomi@hantverkarhuset.se	0103331430										
+495	"BOLIST Alfta"	"Bromansvägen 53"	82291	Alfta	0		"2026-03-09 07:24:51"	Y					0	192	0			MG					80	SWE			info@alftatrajarn.se	076-7707953			"Liftlossas , stänger 1600"						Y	
+496	"BOLIST Gårdings Järnaffär"	"Storgatan 8"	"942 31"	ÄLVSBYN	0		"2026-03-03 09:07:00"	Y					0	192	0			MG					59	SWE			butik@gardings.se	"0929-557 50"										
+602	"XL-BYGG Luleå"	"NORDKALOTTVÄGEN 11"	97254	Luleå	0		"2026-03-09 10:16:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info.lulea@xlbyggstenvalls.se	"010-1506 100"									Y	
+603	"XL-BYGG Kiruna"	"LINBANEVÄGEN 1"	98141	Kiruna	0		"2026-02-26 07:44:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@kiruna.xlbygg.se	010-1506300									Y	
+604	"XL-BYGG Pajala"	"TORNEDALSVÄGEN 6B"	98431	Pajala	0		"2026-02-26 07:45:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@pajala.xlbygg.se	010-1506400										
+605	"XL-BYGG Umeå"	"MÄTARVÄGEN 3"	90133	Umeå	0		"2026-02-26 09:43:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			inkop@umea.xlbygg.se	010-1506500										
+606	"XL-BYGG Skellefteå"	"TJÄRNVÄGEN 2"	93161	Skellefteå	0		"2026-03-24 09:12:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@skelleftea.xlbygg.se	+46101506600										
+607	"XL-BYGG Kalix"	"GALGBACKSVÄGEN 7"	95251	Kalix	0		"2026-02-26 09:45:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@kalix.xlbygg.se	010-1506700									Y	
+608	"XL-BYGG Umeå (Syd)"	"LÄRLINGSGATAN 15"	"904 22"	UMEÅ	0		"2026-01-05 12:12:01"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@umea.syd.xlbygg.se											
+609	"XL-BYGG Luleå Notviken"	"SPANTGATAN 1"	"973 46"	LULEÅ	0		"2026-02-26 09:46:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@lulea.notviken.xlbygg.se	010-1506100										
+610	"XL-BYGG Boden"	"HERMELINGATAN 1"	"961 73"	Boden	0		"2026-02-26 09:47:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@boden.xlbygg.se	0921-12330									Y	
+611	"XL-BYGG Gällivare"	"TREENIGHETENSVÄG 1"	98235	Gällivare	0		"2026-02-26 09:48:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@gallivare.xlbygg.se	0970-78250									Y	
+612	"XL-BYGG Björka"	KUMLA-BJÖRKA	69293	BJÖRKA	0		"2026-03-13 06:56:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78				bjorka@xlbjorka.se	019-570905									Y	
+614	"XL-BYGG Kopparberg"	"KAVELTORPSGATAN 1"	"714 31"	KOPPARBERG	0		"2026-02-26 09:51:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@kopparberg.xlbygg.se	0580-71470									Y	
+615	"XL-BYGG Simons Bygg & Trä"	"DALKARBYVÄGEN 11"	"221 00"	MARIEHAMN	0		"2026-03-09 14:41:39"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					93	FI			anthony.utter@simons.ax	+3581821022									Y	
+616	"XL-BYGG Falun"	"VÄSTERMALMSVÄGEN 8"	79177	Falun	0		"2026-02-26 09:52:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			order@falutra.se	023-22190									Y	
+617	"XL-BYGG Faringe"	"PACKSTENSGRÄND 25"	16250	VÄLLINGBY	0		"2026-03-24 09:15:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@faringe.se	08-4455200									Y	
+618	"XL-BYGG Håga"	"TUNGELSTAVÄGEN 73"	13737	Västerhaninge	0		"2026-02-26 09:53:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			inkop@hagabygg.se	08-50022520									Y	
+619	"XL-BYGG KG Ahlqvist"	"VERKSTADSGATAN 4"	62141	Visby	0		"2026-03-24 09:31:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			info@kgahlqvist.se	0498-218030									Y	
+620	"XL-BYGG Lebe Byggvaror"	"VENDELSÖVÄGEN 37"	13551	Tyresö	0		"2026-02-26 09:54:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			order@lebe.se	08-7120080									Y	
+621	"XL-BYGG Siljan Mora"	"KASVÄGEN 3"	79233	Mora	0		"2026-02-26 09:55:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			order.mora@xlsiljan.se	0250-17930									Y	
+622	"XL-BYGG Siljan Rättvik"	"INDUSTRIVÄGEN 1"	79532	Rättvik	0		"2026-03-24 09:11:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			order.rattvik@xlsiljan.se	0248-51935									Y	
+623	"XL-BYGG Nykvarn"	"SKÄLBYVÄGEN 6"	15535	Nykvarn	0		"2026-02-26 09:55:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@nykvarn.xlbygg.se	"08-552 479 99"									Y	
+624	"XL-BYGG Nynäshamn"	"HAMMARHAGSVÄGEN 16"	14945	Nynäshamn	0		"2026-03-09 07:24:59"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@nynashamn.xlbygg.se	"08-520 174 75"									Y	
+626	"XL-BYGG Palms"	"STRÖMFALLSVÄGEN 63"	13549	Tyresö	0		"2026-03-24 09:23:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			oe@palms.se	08-7701140										
+627	"XL-BYGG Finspång"	"GRINDVÄGEN 3"	61244	Finspång	0		"2026-02-26 09:56:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			info@xlbyggfinspang.se	0122-14150									Y	
+628	"XL-BYGG Linköping"	"LÄRLINGSGATAN 2"	58239	Linköping	0		"2026-02-26 09:56:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			info@xlbygglinkoping.se	013-3410622									Y	
+629	"XL-BYGG Sten & Son"	"SPJÄLLGATAN 29"	74941	Enköping	0		"2026-03-24 09:18:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			order@sten-son.se	"0171-330 70"									Y	
+630	"XL-BYGG Norrköping"	"MALMGATAN 45"	60223	Norrköping	0		"2026-02-26 10:03:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			order@norrkoping.xlbygg.se	011-107520									Y	
+631	"XL-BYGG Östra Husby"	"STORA GYLLINGE"	61024	Vikbolandet	0		"2026-02-26 10:03:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			order@ostrahusby.xlbygg.se	0125-50018									Y	
+632	"XL-BYGG Skärblacka"	"FÖRRÅDSVÄGEN 1"	61730	Skärblacka	0		"2026-02-26 10:04:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			order@skarblacka.xlbygg.se	011-58832									Y	
+633	"XL-BYGG Svahns"	"STORGATAN 51"	62350	Hemse	0		"2026-02-26 10:04:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			info@svahns.org	0498-480009									Y	
+634	"XL-BYGG Pousette"	"HALLSTAVIKSVÄGEN 1B"	76298	Edsbro	0		"2026-03-24 09:19:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			marlene@pousette.se	0175-690000									Y	
+635	"XL-BYGG Ålsäter"	ÅLSÄTER	64194	Katrineholm	0		"2026-02-26 10:05:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@alsater.xlbygg.se	0150-23150									Y	
+636	"XL-BYGG Ljusdal"	"SJULHAMREGATAN 1"	82735	Ljusdal	0		"2026-02-26 10:06:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			linda@ljusdal.xlbygg.se	0651-15600									Y	
+637	"XL-BYGG Täby"	"TUMSTOCKSVÄGEN 15"	18766	Täby	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			orderbekraftelse@xlbyggtaby.se	08-51939710										
+639	"XL-BYGG Hilmer"	RUDSGÅRDEN	67041	Koppom	0		"2026-02-26 10:06:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@xlbygghilmer.se	0571-10040									Y	
+640	"XL-BYGG Byggbiten Nossebro"	"BERGSGATAN 4"	46531	Nossebro	0		"2026-02-26 10:07:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			bekraftelse@nossebro.xlbygg.se	0512-50600									Y	
+641	"XL-BYGG Lidköping"	"KARTÅSGATAN 9"	53140	Lidköping	0		"2026-02-26 10:07:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			bekraftelse@lidkoping.xlbygg.se	0510-301100									Y	
+642	"XL-BYGG Byggcenter Varberg"	"KARDANVÄGEN 12"	43232	Varberg	0		"2026-03-09 07:25:02"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			info@byggcentervarberg.se	"0340-899 90"									Y	
+643	"XL-BYGG Skärhamn"	ENEBACKEN	47133	Skärhamn	0		"2026-03-26 15:43:44"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			order@xlskarhamn.se	0304-671614									Y	
+644	"XL-BYGG Varekil"	"BORGEN 102"	47295	Varekil	0		"2026-02-26 10:13:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@xlvarekil.se	0304-10050									Y	
+645	"XL-BYGG Bleket"	"BLEKETVÄGEN 35"	47150	Bleket	0		"2026-03-24 09:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			invalid@email.trace	0304-675220									Y	
+646	"XL-BYGG Karlstad"	"RATTGATAN 1"	65341	Karlstad	0		"2026-02-26 10:14:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@xlbyggkarlstad.se	054-7706000									Y	
+647	"XL-BYGG Grums"	"TIMMERMANSVÄGEN 2"	66434	Grums	0		"2026-02-26 10:14:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@xlbygg.net	0555-785000										
+648	"XL-BYGG Oskarshamn"	"ÅSAVÄGEN 37"	57236	Oskarshamn	0		"2026-03-24 09:21:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			info@oskarshamn.xlbygg.se	"0491-78 18 80"									Y	
+649	"XL-BYGG Herrljunga Brädgård"	"VERKSTADSGATAN 9"	52431	Herrljunga	0		"2026-02-26 10:15:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			gunilla@herrljunga.xlbygg.se	0513-25050									Y	
+650	"XL-BYGG Vårgårda"	"WALLENTINSVÄGEN 28"	44737	Vårgårda	0		"2026-03-24 09:18:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			info@vargarda.xlbygg.se	0322-651010									Y	
+651	"XL-BYGG Helgenäs"	"HELGENÄSVÄGEN 41"	"594 75"	EDSBRUK	0		"2026-02-26 10:15:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			kalle@helgenas.xlbygg.se	0493-70100										
+652	"XL-BYGG Herok"	"TACKJÄRNSGATAN 4"	70363	Örebro	0		"2026-02-26 10:15:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			order@herok.se	"019-16 75 35"									Y	
+653	"XL-BYGG Nihlmarks Trä"	"EXPORTGATAN 17"	42246	"Hisings Backa"	0		"2026-03-09 07:25:06"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			bekraftelse@nihlmarks.se	031-520760									Y	
+654	"XL-BYGG Nordbäcks Trä"	NORDBÄCK	"335 91"	GNOSJÖ	0		"2026-01-05 12:12:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			info@nordbacks.se											
+656	"XL-BYGG Norrby Trä"	"Mårtensgatan 5"	"504 41"	Borås	0		"2026-02-26 10:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			orderbekraftelse@norrbytra.se	033-237500									Y	
+658	"XL-BYGG Kungsbacka"	"MAGASINGATAN 19"	43437	Kungsbacka	0		"2026-02-26 10:17:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			kungsbacka@byggvaror.com	0300-566540									Y	
+659	"XL-BYGG Kungsbacka - Fjärås"	"FJÄRÅS INDUSTRIVÄG 5"	43974	Fjärås	0		"2026-02-26 10:17:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			fjaras@byggvaror.com	0300-566540									Y	
+660	"XL-BYGG Mölndal"	"BAGGEÅKERSGATAN 1"	43153	Mölndal	0		"2026-02-26 10:19:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			molndal@byggvaror.com	031-3766640										
+661	"XL-BYGG Skene Järn"	"VARBERGSVÄGEN 31"	"511 62"	Skene	0		"2026-02-26 10:20:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			Godsmottagning@skenejarn.se	0320-19500									Y	
+663	"XL-BYGG TL Byggvaror Falkenberg"	"SPÄNNAVÄGEN 1"	31190	Morup	0		"2026-02-26 10:20:00"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			order@xlfalkenberg.se	0346-94250									Y	
+664	"XL-BYGG Torsby"	"ALSTIGEN 4"	68534	Torsby	0		"2026-02-26 10:20:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@xlbyggtorsby.se	0560-689860									Y	
+666	"XL-BYGG Årjäng"	"BONDEGATAN 2"	67231	Årjäng	0		"2026-02-26 10:22:00"	Y					0	192	0	"MAX 135cm"		MG					41	SWE			info@arjangsjarn.se	0491-454545									Y	
+667	"XL-BYGG Hönö"	"ÖSTRA HAMNEN 17"	47542	Hönö	0		"2026-03-17 13:27:48"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			lev@xlbygghono.se	031-967249									Y	
+668	"XL-BYGG Nybergs Ed"	"JORDBROVÄGEN 18"	66832	ED	0		"2026-03-24 09:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			rebecca@nybergsbygg.se	0534-12533									Y	
+669	"XL-BYGG Alingsås"	"KRANGATAN 12"	"441 38"	ALINGSÅS	0		"2026-02-26 10:24:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			xl-bygg@jordnara.se	0322-10163									Y	
+670	"XL-BYGG Vänersborg"	"SVARVARGATAN 5"	46256	Vänersborg	0		"2026-02-26 10:24:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@vanersborg.xlbygg.se	0521-711011									Y	
+671	"XL-BYGG Götene"	"JÄRNVÄGSGATAN 23B"	53330	Götene	0		"2026-02-26 10:26:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			malin@gotene.xlbygg.se	0511-50500									Y	
+674	"XL-BYGG A-trä"	"VERKSTADSGATAN 53"	"261 35"	LANDSKRONA	0		"2026-05-06 13:56:13"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@atra.xlbygg.se	0418-446644									Y	
+675	"XL-BYGG Hans Anders, Skurup"	"MÅRTENSGATA 2"	"274 22"	SKURUP	0		"2026-02-26 10:28:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Skurup@xlhansanders.se	0411-536516									Y	
+676	"XL-BYGG Hans Anders, Ystad"	"SPJALJÉGATAN 1"	"271 52"	YSTAD	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Ystad@xlhansanders.se	0411-557525									Y	
+677	"XL-BYGG Hans Anders, Simrishamn"	"FABRIKSGATAN 15"	"272 36"	SIMRISHAMN	0		"2026-02-26 10:28:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Simrishamn@xlhansanders.se	"0775 - 200 300"									Y	
+678	"XL-BYGG Hans Anders, Malmö"	"KNACKSTENGATAN 4"	"213 76"	MALMÖ	0		"2026-02-26 10:29:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Malmo@xlhansanders.se	0775-200300									Y	
+680	"XL-BYGG Hans Anders, Höör"	"BANGÅRDSGATAN 17"	"243 32"	HÖÖR	0		"2026-02-26 10:29:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Hoor@xlhansanders.se	0413-559955									Y	
+681	"XL-BYGG Hans Anders, Veberöd"	"SÖDRA JÄRNVÄGSGATAN"	"247 62"	Veberöd	0		"2026-02-26 10:29:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Veberod@xlhansanders.se	046-238880									Y	
+682	"XL-BYGG JBM Jämjö"	"VÄSTRA STATIONVÄGEN 2"	"373 72"	JÄMJÖ	0		"2026-02-26 10:29:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			oe.jamjo@xljbm.se	0455-59310									Y	
+683	"XL-BYGG Lundgrens"	"VERKSTADSGATAN 19"	"392 39"	KALMAR	0		"2026-03-04 07:36:00"	Y					0	192	0	"MAX 135cm"		MG					63				Jan.johansson@lundgrens.xlbygg.se	0480-721900									Y	
+684	"XL-BYGG JBM Mjällby"	"LISTERVÄGEN 40"	"294 72"	SÖLVESBORG	0		"2026-02-26 10:31:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			oe.mjallby@xljbm.se	0456-50074									Y	
+685	"XL-BYGG JBM Karlshamn"	"SÖLVESBORGSVÄGEN 21"	"374 41"	KARLSHAMN	0		"2026-03-24 09:13:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			oe.karlshamn@xljbm.se	0454-19000										
+687	"XL-BYGG Ronneby"	"VÄSTERVÄGEN 5"	"372 52"	KALLINGE	0		"2026-02-26 10:31:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@ronneby.xlbygg.se	0457-78543									Y	
+688	"XL-BYGG Brålanda"	"JÄRNVÄGSGATAN 10"	46462	Brålanda	0		"2026-02-26 10:31:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			order@xlbyggbralanda.se	0521778850									Y	
+689	"XL-BYGG Tibro Byggvaror"	"Brovägen 24"	54335	Tibro	0		"2026-02-26 10:32:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			info@xlbyggtibrobyggvaror.se	"0504-616 75"										
+690	"XL-BYGG Grängesberg"	"INDUSTRIVÄGEN 8"	"772 32"	GRÄNGESBERG	0		"2026-01-05 12:12:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			order@xlgrangesberg.se	0240-23720										
+691	"XL-BYGG Smedjebacken"	"VARGSTIGEN 1"	"777 34"	SMEDJEBACKEN	0		"2026-01-05 12:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			order@xlsmedjebacken.se	0240-71140										
+692	"XL-BYGG Nylands Trä Docksta"	"Dockstavägen 27"	"873 96"	Docksta	0		"2026-01-05 12:24:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			Kassa.docksta@nylandstra.se	0612-22230									Y	
+693	"XL-BYGG Nylands Trä Kramfors"	"Gränsgatan 11"	"872 30"	Kramfors	0		"2026-02-26 10:32:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			kassa.kramfors@nylandstra.se	0722343202									Y	
+694	"XL-BYGG Nylands Trä Nyland"	"Lilla Nygatan 1"	87371	Nyland	0		"2026-01-05 12:12:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			bygga@nylandstra.se	0612-22230									Y	
+695	"XL-BYGG Burträsk"	"SUNDBROGATAN 14"	"937 31"	BURTRÄSK	0		"2026-03-24 09:31:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@burtrask.xlbygg.se	0914-10200										
+696	"XL-BYGG JBM Bergkvara"	"STORGATAN 83"	"385 40"	BERGKVARA	0		"2026-01-05 12:14:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			oe.bergkvara@xljbm.se	"0486 - 201 00"									Y	
+697	"XL-BYGG JBM Lessebo"	"STORGATAN 41"	"365 32"	LESSEBO	0		"2026-02-26 10:33:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			invalid@email.trace	"0478 - 707720"									Y	
+698	"XL-BYGG Gråbo"	"Gråbo Industriväg 1"	44340	Gråbo	0		"2026-02-26 10:34:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			marcus.grosshed@graboxlbygg.se	0733854853										
+699	"XL-BYGG Kungälv"	"Motorgatan 2"	44240	Kungälv	0		"2026-03-09 07:25:10"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			kungalv@xlbygg.net	0303-215020									Y	
+700	"C24-BYGG Ockelbo"	"JON JONSVÄGEN 1"	81631	Ockelbo	0		"2026-02-26 10:42:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Order.ockelbo@c24bygg.se	010-2229040									Y	
+701	"C24-BYGG Sandviken"	"STALLGATAN 18"	81140	Sandviken	0		"2026-02-26 10:42:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Order.sandviken@c24bygg.se	010-2229010									Y	
+702	"C24-BYGG Spillersboda"	"SPILLERSBODAVÄGEN 185"	76197	Norrtälje	0		"2026-02-26 10:42:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			Order.spillersboda@c24bygg.se	010-2229060									Y	
+703	"C24-BYGG Gävle PopUp"	"KRYDDSTIGEN 29"	"802 92"	GÄVLE	0		"2026-01-05 12:18:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			order.gavle@c24bygg.se											
+704	"C24-BYGG Gimo"	"UPPSALAVÄGEN 30"	"747 42"	Gimo	0		"2026-02-26 10:43:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Order.gimo@c24bygg.se	010-2229080									Y	
+705	"C24-BYGG Gävle"	"KRYDDSTIGEN 29"	80292	Gävle	0		"2026-02-26 10:43:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Order.gavle@c24bygg.se	010-2229020									Y	
+706	"C24-BYGG Tierp"	"BYGGMÄSTARGATAN 2"	81535	Tierp	0		"2026-02-26 10:44:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Order.tierp@c24bygg.se	010-2229050									Y	
+708	"XL-BYGG Arjeplog"	"Storgatan 9"	93831	Arjeplog	0		"2026-03-03 13:24:57"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info@arjeplog.xlbygg.se	010-1467300									Y	
+709	"XL-BYGG Arvidsjaur"	"Storgatan 87"	93333	Arvidsjaur	0		"2026-01-05 12:15:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			order@arvidsjaur.xlbygg.se	010-1467200									Y	
+710	"XL-BYGG Landvetter"	"HÖKABERGSVÄGEN 1"	43834	Landvetter	0		"2026-04-09 14:17:26"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			butiken@xlbygglandvetter.se	031-977090									Y	
+711	"C24-BYGG Bergshamra"	"BERGSHAMRAVÄGEN 69"	"761 11"	BERGSHAMRA	0		"2026-02-26 10:45:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					85	SWE			order.bergshamra@c24bygg.se	0176-261210									Y	
+712	"XL-BYGG MaterialMännen Vimmerby"	"SÖDRA INDUSTRIGATAN 17"	59840	Vimmerby	0		"2026-02-26 10:46:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			invalid@email.trace	"0492-177 16"									Y	
+713	"XL-BYGG MaterialMännen Västervik"	"FOLKPARKSVÄGEN 60"	"593 62"	Västervik	0		"2026-02-26 10:46:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			invalid@email.trace	"0490-855 20"									Y	
+714	"XL-BYGG MaterialMännen Oskarshamn"	"ÅSAVÄGEN 45"	"572 36"	OSKARSHAMN	0		"2026-03-24 09:19:00"	Y					0	192	0			MG						SWE			inkop@materialmannen.se	0491-767412									Y	
+715	"XL-BYGG MaterialMännen Eksjö"	"KRÅKEBERGSVÄGEN 2"	"575 91"	EKSJÖ	0		"2026-02-26 10:47:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			inkop@materialmannen.se	"0381-66 38 47"									Y	
+716	"XL-BYGG MaterialMännen Valdemarsvik"	"HAGADALSSGATAN 8"	"615 32"	VALDEMARSVIK	0		"2026-02-26 10:47:00"	Y					0	192	0	"Bygg på höjden Max 180 cm "		MG					51	SWE			invalid@email.trace	"0123-548 87"									Y	
+717	"XL-BYGG MaterialMännen Tranås"	"VERKSTADSGATAN 1"	"573 41"	Tranås	0		"2026-03-24 09:26:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			inkop@materialmannen.se	0140-770121									Y	
+718	"XL-BYGG MaterialMännen Centrallager"	"Södra Industrigatan 25"	59840	Vimmerby	0		"2026-03-04 10:09:50"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			inkop@materialmannen.se	"0492-177 00"									Y	
+719	"XL-BYGG Lagan"	"VÄSTERGATAN 36"	"341 50"	LAGAN	0		"2026-03-24 09:21:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			info@laganstra.se	0372-30988									Y	
+720	"C24-BYGG Uppsala"	"Pustgatan 6"	75454	UPPSALA	0		"2026-01-05 12:12:02"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78				order.uppsala@c24bygg.se	"010 - 222 90 30"									Y	
+721	"XL-BYGG Mörbylånga"	"KÖPMANGATAN 19"	"386 50"	MÖRBYLÅNGA	0		"2026-02-09 06:51:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@morbylanga.xlbygg.se	"0485-50 05 80"										
+722	"XL-BYGG Mysingen"	"TUNGELSTAVÄGEN 73"	"137 37"	VÄSTERHANINGE	0		"2026-01-05 12:14:01"	Y					0	192	0			MG						SWE			john@hagabygg.se	072-2259797										
+723	"XL-BYGG Åkersberga"	"NORRÖVÄGEN 1"	18442	Åkersberga	0		"2026-03-24 09:15:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			eva.rydberg@xlbyggakersberga.se	"08-540 601 90"									Y	
+724	"Herok Rental Småland AB"				0		"2026-01-05 12:14:00"	Y					0	192	0			MG																				
+725	"XL-BYGG Karlskoga"	"Labinhöjdsvägen 6"	69147	Karlskoga	0		"2026-02-26 10:51:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			order.karlskoga@herok.se	0722450909									Y	
+726	"XL-BYGG Bergqvist Askersund"	"Smidevägen 3"	69633	ASKERSUND	0		"2026-04-08 15:36:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			katarina@xlbergqvist.se	058312035									Y	
+727	"XL-BYGG Ljungby"	"Kungsgatan 52"	34131	Ljungby	0		"2026-02-26 10:52:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			philip@laganstra.se	0372-30988									Y	
+728	"XL-BYGG Upplands Väsby"	"Banvaktarvägen 2"	19443	Upplands-Väsby	0		"2026-02-26 10:52:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			order@xlvasby.se	076-6696245										
+729	"XL-BYGG Gnosjö"	Nordbäck	33591	Gnosjö	0		"2026-02-26 10:52:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			info@nordbacks.se	0372-755275										
+730	"XL-BYGG Gråbo"	"Gråbo Industriväg 1"	44340	Gråbo	0		"2026-03-04 10:10:10"	Y					0	192	0			MG					73	SWE			info@grabo.xlbygg.se	+46302495490									Y	
+731	"XL-BYGG Alingsås"	"Krangatan 12"	44138	Alingsås	0		"2026-02-26 10:53:00"	Y					0	192	0			MG						SWE			fredrik@jordnara.se	"0322-938 50"										
+732	"XL-BYGG Byggcenter Skene"	"Varbergsvägen 31"	"511 62"	Skene	0		"2026-04-30 10:42:00"	Y					0	192	0			MG					78	SWE			angelica@byggcenterskene.se	"073 9294970"										
+888	Tömningsorder				0		"2025-02-27 14:42:57"					1	0	0	0			MG																				
+8888	"BVL - Bygglagret kund"				0		"2025-10-21 09:43:00"	Y					0	192	0			MG																				
+9998	"Malorama AS"	"Alf Bjerckes vei 10"	582	OSLO	0		"2024-12-06 11:39:00"	Y				JKP	0	192	0			MG						NOR			gungor.turkoz@farveringen.no											
+9999	"CBL - Järnlagret kund"				0		"2025-10-21 09:43:00"	Y					0	192	0			MG																				
+22107	"C24-BYGG Hofors"	"Bornvägen 2"	81333	Hofors	0		"2026-01-05 12:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			lena@c24bygg.se	"010 - 222 90 90"									Y	
+30100	"XL-BYGG Jönköping"	"INDUSTRIGATAN 7"	"553 02"	JÖNKOPING	0		"2026-02-24 10:32:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			order@jkpg.xlbygg.se	"036-290 59 10"									Y	
+40002	"E-handelskund Bolist"				0		"2025-02-24 15:07:28"	Y				JKP	0	0	0			MG	EHANDEL				90							Q								
+90002	"E-handelskund XL-BYGG"				0		"2025-03-03 11:55:13"	Y				JKP	0	0	0			MG	EHANDEL				90							Q								
+133334	"Materialmännen Vimmerby"	"Södra Industrigatan 17"	59840	Vimmerby	0		"2026-02-24 08:44:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			inkop@materialmannen.se	49217700										
+133335	"Materialmännen Västervik"	"Folkparksvägen 60"	59362	Västervik	0		"2026-03-24 09:18:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			inkop@materialmannen.se	49085500										
+133336	"Materialmännen Oskarshamn"	"Åsavägen 45, Åsa Köpcenter"	57236	Oskarshamn	0		"2026-03-04 10:09:55"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			inkop@materialmannen.se	491767400									Y	
+133337	"Materialmännen Eksjö"	"Kråkebergsvägen 2"	57596	Eksjö	0		"2026-03-24 09:21:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			inkop@materialmannen.se	381663830										
+133338	"Materialmännen Valdemarsvik"	"Vammars Köpcenter"	61595	Valdemarsvik	0		"2026-02-24 08:54:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					51	SWE			inkop@materialmannen.se	12354880										
+133339	"Materialmännen Tranås"	"Verkstadsgatan 1"	57341	Tranås	0		"2026-02-24 08:55:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			inkop@materialmannen.se	140770121										
+133342	"Mal Proff Uppsala"	"Svederusgatan 1"	75450	Uppsala	0		"2026-03-24 09:17:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			uppsala@malproff.se	0184306320										
+133343	"Mal proff  Norrköping"	"Litiumgatan 8/10"	60223	Norrköping	0		"2026-02-24 08:56:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					51	SWE			norrkoping@malproff.se	11105640										
+133345	"Mal proff Västerås"	"Ringborregatan 1C"	"721 34"	Västerås	0		"2026-03-04 10:10:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			vasteras@malproff.se	214404990									Y	
+133358	"Mal proff Örebro"	"Adolfsbergsvägen 4"	70227	Örebro	0		"2026-02-24 08:58:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			orebro@malproff.se	19107540										
+133376	"Mal proff Upplands Väsby"	"Stockholmsvägen 37"	"194 61"	"Upplands Väsby"	0		"2026-02-24 08:58:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			upplandsvasby@malproff.se	868444070										
+192100	"Färgtrend i Alingsås AB"	"Hemvägen 17"	44139	Alingsås	0		"2026-02-24 09:06:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			kicki.refstange@happyhomes.se	32217381										
+192102	"Lundgrens Färg & Måleri i Arvidsjaur AB"	"Storgatan 7"	93331	Arvidsjaur	0		"2026-03-03 13:25:02"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			lundgrensfarg@happyhomes.se	96010906									Y	
+192104	"Billdals färghus AB"	"Kungsporten 2A"	42750	Billdal	0		"2026-02-25 10:47:00"	Y					0	192	0	"MAX 135cm"		MG					73				billdal@colorama.se										Y	
+192106	"Karl Es Färg AB"	"Östra Kyrkogatan 17"	38731	Borgholm	0		"2026-03-03 13:26:29"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			karlesfarg@telia.com	852016868									Y	
+192107	"Happy Homes Borlänge AB"	"Hammargatan 4"	78171	Borlänge	0		"2026-03-03 13:26:05"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			borlange@happyhomes.se	24312370			Liftlossas						Y	
+192109	"Färggiganten AB"	"Stockholmsvägen 113"	74632	Bålsta	0		"2026-04-14 11:47:06"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			balsta@happyhomes.se	171467761			Liftlossas							
+192125	"Hartvigs Måleri & Färgbutik AB"	"Lillgatan 4"	57731	Hultsfred	0		"2026-03-03 12:37:00"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			Peter@hartvigs.se	49541987			Liftlossas							
+192129	"Målarnes Färg AB"	"Herkulesvägen 1 B"	"553 03"	Jönköping	0		"2026-02-26 10:11:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			order.jonkoping@happyhomes.se	36710501			Liftlossas						Y	
+192130	"Hallbergs Färg AB"	"Skogsbovägen 2"	69147	Karlskoga	0		"2026-03-03 09:43:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			karlskoga@happyhomes.se	58636275			Liftlossas						Y	
+192131	"Happy Homes Karlskrona AB"	"Järavägen 5"	37150	Karlskrona	0		"2026-02-24 09:12:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			patrik.andersson@happyhomes.se	45557560										
+192136	"Jannes Färg & Tapet AB"	"Lilla Verkstadsgatan 7"	43442	Kungsbacka	0		"2026-03-19 13:38:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			ekonomi@jannesfarg.se	30074574			"Bil med baklift "						Y	
+192139	"Ljungbergs Färg AB"	"Kostervägen 1"	"181 47"	Lidingö	0		"2026-03-17 13:27:54"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			butiken.lidingo@happyhomes.se	87670930			Liftlossas						Y	
+192140	"Målarboden Allt i färg i Lidköping AB"	"Kållandsgatan 20"	53160	Lidköping	0		"2026-02-24 09:13:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			lidkoping@happyhomes.se	51029380			Liftlossas							
+192144	"Färghuset i Lund AB"	"Traktorvägen 19"	22660	Lund	0		"2026-02-24 09:13:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@farghusetlund.se	46305430										
+192148	"AB LO Johnsson"	"Lisagatan 31"	78231	Malung	0		"2026-03-19 13:41:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			malung@happyhomes.se	028071491										
+192149	"Happy Homes Mariestad"	"Stockholmsvägen 57"	54233	Mariestad	0		"2026-03-09 07:25:14"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			toreboda@happyhomes.se	50610027			Liftlossas						Y	
+192153	"Happy Homes Mölndal AB"	"Argongatan 3"	"431 53"	Göteborg	0		"2026-04-28 13:32:35"	Y					0	192	0	"MAX 135cm"		MG					73				info@fargab.se	31876700			Liftlossas							
+192154	"Moveus Ljud Bild & Färghall AB"	"Karlshamnsvägen 17"	37533	Mörrum	0		"2026-03-17 13:28:01"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			info@moveus.se	45450500									Y	
+192155	"O Janssons Golvtjänst AB"	"Hagavägen 2 A"	71330	Nora	0		"2026-03-24 09:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@golvtjanst-nora.se	58713010										
+192158	"Franks Färg AB"	"Radarvägen 9B"	76142	Norrtälje	0		"2026-02-24 09:15:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			maria.ohman@happyhomes.se	17610880										
+192159	"Brunelius Färg AB"	"Östra Längdgatan 5 (Hamnen)"	61135	Nyköping	0		"2026-02-24 09:15:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					97	SWE			info.brunelius@happyhomes.se	155210008										
+192160	"Hedins Färg i Orsa AB"	"Centralgatan 2"	79430	Orsa	0		"2026-02-24 09:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			orsa@happyhomes.se	25040155			Liftlossas							
+192163	"Gårdsservice Gotland AB"	"Visbyvägen 35 B"	62254	Romakloster	0		"2026-03-03 13:26:18"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			zabina@gsgab.se	498287160									Y	
+192165	"Färg & Hobbyhörnan Collén AB"	"Fridhemsgatan 35"	73339	Sala	0		"2026-03-19 08:40:21"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@farg-hobbyhornan.com	22410299			Liftlossas						Y	
+192167	"Sjöbecks Färg AB"	"Trädgårdsgatan 3"	27532	Sjöbo	0		"2026-02-24 09:17:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			info@sjobecksfarg.se	41610805									Y	
+192168	"Happy Homes Skellefteå"	"Svedjevägen 1"	93136	Skellefteå	0		"2026-02-24 09:17:01"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			leverans@fargotapet.com	91050700			Liftlossas							
+192175	"K.Bloms Färg och Måleri ab"	"Prästagärdet 2"	51253	Svenljunga	0		"2026-03-24 09:23:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			blomsmaleri@gmail.com	32512160			Liftlossas							
+192182	"Målarboden i Trollhättan AB"	"Kardanvägen 34 B"	46138	Trollhättan	0		"2026-02-24 09:18:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@malarbodentrollhattan.se	520485550			Liftlossas						Y	
+192184	"Färg & Kakelhuset i Uddevalla AB"	"Pukevägen 3"	45155	Uddevalla	0		"2026-02-24 09:19:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			kontoret@fargokakelhuset.se	522645070										
+192185	"Happy Homes Umeå"	"Förrådsvägen 2"	90132	Umeå	0		"2026-02-24 09:19:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			leverans@fargotapet.com	90714100			Liftlossas							
+192186	"Happy Homes Upsala Färg"	"Bolandsgatan 18"	75323	Uppsala	0		"2026-03-17 13:28:07"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			butik@upsalafarg.se	18183100									Y	
+192190	"Färg & Kakel i Varberg AB"	"Härdgatan 33"	43232	Varberg	0		"2025-12-29 09:32:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			emmelie.ornstedt@happyhomes.se	340675860										
+192191	"Inspiration & Färg i Vetlanda AB"	"Storgatan 29-31"	57431	Vetlanda	0		"2026-02-24 09:20:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			peder.hellqvist@happyhomes.se	38356100			Liftlossas							
+192194	"Runes Färger AB"	"Hallsta Gårdsgata 3"	72138	Västerås	0		"2026-04-29 08:39:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78				butiken.runesfarg@happyhomes.se	21304900									Y	
+192198	"Åseda Färghandel AB"	"Järnvägsgatan 13"	36430	Åseda	0		"2026-02-24 09:20:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			asedafarg@telia.com	47410019			Liftlossas							
+192199	"Interiör & Design i Älvsbyn AB"	"Hantverkargatan 1"	94231	Älvsbyn	0		"2026-03-03 13:25:52"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			alvsbyn@happyhomes.se	92955770									Y	
+192200	"HE:s Färggross AB"	"Ormestagatan 1"	70283	Örebro	0		"2026-03-24 09:15:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			order@hesfarggross.se	19323830									Y	
+192205	"Happy Homes Övertorneå AB"	"Matarengivägen 23"	95731	Övertorneå	0		"2026-02-24 09:21:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info.overtornea@happyhomes.se	92710514			Liftlossas							
+192206	"Happy Homes Luleå"	"Spantgatan 16"	97346	Luleå	0		"2026-02-24 09:22:01"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info.lulea@happyhomes.se	920244150			Liftlossas							
+192208	"Happy Homes Upsala Färg Citybutik"	"Bredgränd 7"	75320	Uppsala	0		"2026-02-24 09:22:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			martin.lindqvist@upsala-farg.se	018183100										
+192214	"Happy Homes Sandviken AB"	"Industrivägen 18"	81140	Sandviken	0		"2026-03-03 13:25:29"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			sandviken@happyhomes.se	26275108									Y	
+192218	"Växjö Färg & Tapetaffär AB"	"Ljungadalsgatan 6"	35246	Växjö	0		"2026-02-24 09:23:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			inkop@vft.se	470739800			Liftlossas						Y	
+192220	"Färghallen i Lövånger AB"	"Kungsvägen 2D"	93261	Lövånger	0		"2026-02-24 09:23:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			farghallen@happyhomes.se	91310403										
+192223	"Sudergolv AB"	"Ronevägen 5"	62350	Hemse	0		"2026-03-24 09:16:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			sudergolv@telia.com	498480306			Liftlossas							
+192225	"Lasses i Ryd AB"	"Storgatan 8"	"362 56"	Ryd	0		"2026-03-24 09:12:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			lassesiryd@gmail.com	45980001			Liftlossas						Y	
+192234	"Happy Homes Piteå"	"Fläktgatan 12A"	94147	Piteå	0		"2026-02-24 09:35:01"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			info.pitea@happyhomes.se	91192150			Liftlossas							
+192238	"Klintqvist AB"	"Industrigatan 3"	31234	Laholm	0		"2026-03-24 09:12:00"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			laholm@happyhomes.se	43017365										
+192239	"Färgetablissemanget Strängnäs AB"	"Larmvägen 2"	"645 47"	Strängnäs	0		"2026-03-24 09:32:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			butikenistrangnas@happyhomes.se	15232200			Liftlossas							
+192250	"Växjö Färg & Tapet AB"	"Ljungadalsgatan 6"	35246	Växjö	0		"2026-02-24 09:36:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			inkop@vft.se	470739800			Liftlossas							
+192254	"Happy Homes Töreboda"	"Skövdevägen 1"	54531	Töreboda	0		"2026-03-09 07:25:17"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			toreboda@happyhomes.se	50610027									Y	
+192257	"Ivars Färg AB"	"Högelidsvägen 5"	47334	Henån	0		"2026-03-18 12:03:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			martin@ivars.se	30430067			Liftlossas						Y	
+192258	"Ivars Färg Tjörn AB"	"Vallhamns Industriby 1"	47193	Kållekärr	0		"2026-03-10 11:53:17"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			tjorn@ivars.se	709222254			Liftlossas						Y	
+192259	"Ivars Färg Stenungsund AB"	"Ängsvägen 5"	44131	Stenungsund	0		"2026-03-10 11:53:17"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			stenungsund@ivars.se	709222254			Liftlossas						Y	
+192261	"Färgcenter i Skurup AB"	"Mackleansgatan 3"	27434	Skurup	0		"2026-02-24 10:10:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			gert@gofi.se	41140134										
+192265	"Södertälje Designa AB"	"Bergaholmsvägen 10"	15242	Södertälje	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42				butik@designa.se	812140604									Y	
+192267	"Färgservice i Linköping AB"	"Gillbergsgatan 36B"	58273	Linköping	0		"2026-03-19 08:40:25"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					51	SWE			erik.wetterhall@happyhomes.se	13146970			"Bil med baklift "						Y	
+192269	"Törnqvist Måleri och Golv AB"	"Gängesvägen 12 "	34131	Ljungby	0		"2026-03-24 09:14:00"	Y					0	192	0	"MAX 135cm"		MG					67				ljungby@happyhomes.se	37213011										
+192270	"Färgnyans i Enköping AB"	"Hamngatan 6"	"185 32"	Vaxholm	0		"2026-03-06 14:58:10"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			enkoping@happyhomes.se	17137760			Liftlossas							
+192271	"Happy Homes Vaggeryd AB"	"Hammarvägen 2"	56732	Vaggeryd	0		"2026-03-24 09:11:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			vaggeryd@happyhomes.se	39312740									Y	
+192272	"Happy Homes Hässleholm AB"	"Kristianstadsvägen 2"	28133	Hässleholm	0		"2026-02-24 10:12:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			hassleholm@happyhomes.se	451745240			Liftlossas						Y	
+192279	"Happy Homes Gävle AB"	"Lötängsgatan 2"	"803 01"	Gävle	0		"2026-04-20 10:24:43"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			gavle@happyhomes.se	26129740									Y	
+192281	"Barkmans Färg AB"	"Kungsgatan 87"	63221	Eskilstuna	0		"2026-03-09 07:25:21"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78				butik@barkmansfarg.se	16514195									Y	
+192283	"Happy Homes Borås AB"	"Varbergsvägen 48"	"504 30"	Borås	0		"2026-02-24 10:13:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			boras@happyhomes.se	38212031									Y	
+192285	"Färggiganten Värmdö AB"	"Gustavsbergsvägen 24-34"	13439	Värmdö	0		"2026-02-24 10:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			varmdo@happyhomes.se	08334025			Liftlossas							
+192286	"Happy Homes Habo"	"Snickaregatan 2"	"566 33"	HABO	0		"2026-02-24 10:19:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			habo@happyhomes.se	451745240			Liftlossas						Y	
+192287	"Färgteknik i Karlstad AB"	"Regnvindsgatan 17"	65221	Karlstad	0		"2026-02-24 10:21:01"	Y					0	192	0			MG					41	SWE			info@fargteknik.se	706668843										
+192288	"Färghuset AK Lack i Skövde AB"	"Oljevägen 3"	54134	Skövde	0		"2026-02-24 10:21:01"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			aklack@telia.com	730568874										
+192289	"Kålbäcks Färghall AB"	"Lövlundsvägen 21"	"149 30"	Nynäshamn	0		"2026-02-24 10:19:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			kalbacksfarghall@telia.com	852016868										
+192291	"Färg och Tapet i Helsingborg AB"	"Ängelholmsvägen 10"	25442	Helsingborg	0		"2026-02-24 10:19:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			helsingborg@happyhomes.se	42198490										
+192299	"HappyColour AB"	"Renslyckan 18"	"821 50"	Bollnäs	0		"2026-02-24 10:19:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			bollnas@happyhomes.se	278665501			Liftlossas							
+192300	"Målarnes Färg AB (Filial Caparol Färg)"	"Kämpevägen 21"	55302	Jönköping	0		"2026-02-24 10:19:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			caparol.jonkoping@happyhomes.se	36164230			Liftlossas						Y	
+192301	"Färg & Tapet i Västerås AB"	"Klockartorpsgatan 16"	72344	Västerås	0		"2026-02-24 10:20:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			butiken.caparolvas@happyhomes.se	21811130										
+192302	"Golvman i Trestad"	"Paralellgatan 16"	46232	Vänersborg	0		"2026-02-24 10:20:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			info@golvman.se	17610880			Liftlossas						Y	
+326035	"Klintebergs Färg & Golv AB"	"Kvarngatan 20"	28531	Markaryd	0		"2026-02-24 10:40:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			sara@klintebergs.se	43371220										
+326050	"Rosersbergs Golv AB"	"Sönderborgsgatan 2"	19530	Märsta	0		"2026-03-10 14:40:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			butiken@abgolv.se	859440700										
+418188	"Colorama Östersund"	"Odenskogsvägen 17"	83148	ÖSTERSUND	0		"2026-02-24 11:48:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			ostersund@colorama.se	6320350										
+418218	"Colorama Hönö"	"ÖSTRA HAMNEN 2"	47542	Hönö	0		"2026-02-24 11:50:00"	Y					0	192	0			MG					78	SWE			ordererkannande@olinders.se	"031-96 53 29"			"Bil med baklift "							
+418479	"Johanssons Taxi i Bjurholm"	"Köpmannagatan 3"	91731	Bjurholm	0		"2026-02-24 11:51:01"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info@bolistbjurholm.se	93210067										
+484021	"Colorama Lidköping"	"Lindhagsgatan 1"	"531 40"	LIDKÖPING	0		"2026-03-03 13:25:34"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			order.lidkoping@colorama.se	51029650									Y	
+484035	"Colorama Hällefors"	"Handelsvägen 4"	71234	HÄLLEFORS	0		"2026-04-28 08:59:31"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			Hakan.Berglund@Colorama.se	59110087			"Bil med baklift "						Y	
+484039	"Colorama Sävsjö"	"Hornsgatan 6"	57631	SÄVSJÖ	0		"2026-03-03 13:25:48"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			savsjo@colorama.se	38210755									Y	
+484040	"Colorama Stockholm Älvsjö"	"Malmköpingsvägen 48"	"125 40"	ÄLVSJÖ	0		"2026-02-24 14:29:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			alvsjo@colorama.se	86471021										
+484041	"Colorama Hedemora"	"Ivarshyttevägen 15"	77633	HEDEMORA	0		"2026-03-24 09:21:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			hedemora@colorama.se	22513572										
+484050	"Colorama Eksjö"	"Norra Storgatan 33"	57532	EKSJÖ	0		"2026-02-24 14:31:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			kimmie.eksjo@colorama.se	381611654										
+484054	"Colorama Osby"	"Västra Storgatan 27"	28331	OSBY	0		"2026-03-24 09:13:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			order.osby@colorama.se	47913120										
+484055	"Colorama Sollentuna Norrorts Färg"	"Skolvägen 14"	19270	SOLLENTUNA	0		"2026-03-24 09:12:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@norrortsfarg.se	87541298										
+484067	"Colorama Köping"	"Nygatan 6"	73130	KÖPING	0		"2026-03-19 13:34:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			info@maleribolagetab.se	22112840			"Bil med baklift "							
+484073	"Colorama Piteå"	"Fläktgatan 9"	94147	PITEÅ	0		"2026-03-02 07:03:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			pitea@colorama.se	911231990										
+484096	"Colorama Mariestad"	"Verkstadsgatan 9"	54233	MARIESTAD	0		"2026-02-24 14:31:01"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			info.mariestad@colorama.se	50170020			Liftlossas							
+484101	"Colorama Sölvesborg"	"Sölvevägen 54"	29439	SÖLVESBORG	0		"2026-03-09 07:25:25"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			solvesborg@colorama.se	45612425									Y	
+484126	"Colorama Kramfors"	"Stenhagsvägen 4"	87263	LUNDE	0		"2026-02-24 14:32:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			kramfors@colorama.se	0612-13750										
+484135	"Hagfors Måleri RT AB"	"Görsjövägen 2"	68322	HAGFORS	0		"2026-02-24 14:32:01"	Y					0	192	0			MG					41	SWE			hagfors@colorama.se	563540240										
+484138	"Colorama Tibro"	"Norra Vägen 7 A"	54335	TIBRO	0		"2026-03-06 13:10:58"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			tibro@colorama.se	50410258									Y	
+484159	"Colorama Sundborn"	"Utanmyra 50"	79015	SUNDBORN	0		"2026-02-24 14:33:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			info@goranssons.se	2362155										
+484172	"Colorama Arvika"	"Flodqvist Backe 1"	67131	Arvika	0		"2026-02-24 14:33:01"	Y					0	192	0			MG					41	SWE			order.arvika@colorama.se	57019065										
+484176	"Colorama Kristinehamn"	"Västgötagatan 47"	68142	KRISTINEHAMN	0		"2026-03-03 12:33:00"	Y					0	192	0	"Balkbil. Max 135cm höga pallar"		MG					41	SWE			kristinehamn@colorama.se	55016251									Y	
+484359	"Colorama Ystad"	"Titangatan 3"	27139	YSTAD	0		"2026-02-24 14:34:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			kontor@12070.se	41112070										
+484360	"Colorama Halmstad"	"Söndrumsvägen 39"	30237	HALMSTAD	0		"2026-03-03 12:41:00"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			halmstad@colorama.se	3521808									Y	
+484361	"Colorama Pajala"	"Tornedalsvägen 2 A"	98431	PAJALA	0		"2026-02-24 14:34:01"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			pajalafarg@colorama.se	0978-10165										
+484362	"Colorama Avesta"	"Myntgatan 12"	77430	Avesta	0		"2026-02-24 14:35:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					74	SWE			avesta@farghuset.se	0707104605										
+484363	"Colorama Fagersta"	"Västmannavägen 6"	73740	Fagersta	0		"2026-02-24 14:35:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			invalid@email.trace	0707104605										
+484364	"Colorama Västervik"	"Folkparksvägen 60"	59362	Västervik	0		"2026-03-04 10:10:05"	Y					0	192	0	"MAX 135cm"		MG					69	SWE			inkop@materialmannen.se	0703717704									Y	
+484367	"Colorama Hagfors"	"Görsjövägen 2"	68322	Hagfors	0		"2026-02-24 14:36:00"	Y					0	192	0			MG					41	SWE			hagfors@colorama.se	0563-322337										
+484402	"Colorama Askim"	"Sisjövägen 49"	43633	ASKIM	0		"2026-02-24 14:36:01"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			askim@colorama.se	317484730									Y	
+484403	"Colorama Boden"	"Lulevägen 35"	96173	BODEN	0		"2026-02-24 14:38:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			boden@colorama.se	92151300										
+484404	"Colorama Bollnäs"	"Skidvägen 9"	82130	Bollnäs	0		"2026-02-24 14:38:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			bollnas@colorama.se	27819053			Liftlossas							
+484406	"Colorama Edsbyn"	"Långgatan 35"	82833	EDSBYN	0		"2026-02-24 14:38:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			edsbyn@colorama.se	27120044										
+484407	"Colorama Filipstad"	"Hertig Filipsgatan 1"	68230	FILIPSTAD	0		"2026-03-19 08:40:31"	Y					0	192	0	"Balkbil, Max 135cm"		MG					41	SWE			order.filipstad@colorama.se	59012515			Liftlossas						Y	
+484410	"Colorama Göteborg Danska Vägen"	"Danska Vägen 96"	41659	GÖTEBORG	0		"2026-02-24 14:49:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			goteborg@colorama.se	313375550									Y	
+484414	"Colorama Höör"	"Barkvägen 1"	24393	HÖÖR	0		"2026-02-24 14:49:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Jeanette.andersson@colorama.se	41324595										
+484420	"Colorama Kungälv"	"Teknikergatan 7"	44234	KUNGÄLV	0		"2026-02-24 14:50:01"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			kungalv@colorama.se	30363040									Y	
+484422	"Colorama Laxå"	"Röforsvägen 24"	69530	LAXÅ	0		"2026-02-24 14:50:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			laxa@colorama.se	58410686										
+484424	"Colorama Linköping"	"Roxtorpsgatan 1"	"582 73"	LINKÖPING	0		"2026-02-24 14:50:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					51	SWE			butik.linkoping@colorama.se	13375160			Liftlossas						Y	
+484429	"Colorama Motala"	"Mineralvägen 14"	59153	MOTALA	0		"2026-02-24 14:51:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					51	SWE			motala@colorama.se	14154540										
+484430	"Colorama Mölnlycke"	"Hönekullavägen 21"	43544	MÖLNLYCKE	0		"2026-03-02 06:21:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			molnlycke@colorama.se	31885688									Y	
+484433	"Colorama Partille"	"Mellbyvägen 33"	43330	PARTILLE	0		"2026-03-03 12:41:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			partille@colorama.se	313400570									Y	
+484434	"Colorama Rimbo"	"Västra Stockholmsvägen 17"	76231	RIMBO	0		"2026-03-24 09:12:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			rimbo@colorama.se	17575990										
+484438	"Colorama Stenkullen"	"Färgvägen 6"	44361	STENKULLEN	0		"2026-02-24 14:51:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			stenkullen@colorama.se	30222245									Y	
+484441	"Colorama Tranås"	"Storgatan 36"	57332	TRANÅS	0		"2026-03-24 09:19:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			butik.tranas@colorama.se	140385400			Liftlossas							
+484445	"Colorama Varberg"	"Birger Svenssons väg 19"	43240	VARBERG	0		"2026-03-16 22:01:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			varberg@colorama.se	34089025									Y	
+484447	"Colorama Vilhelmina"	"Storgatan 23"	91233	VILHELMINA	0		"2026-03-24 09:21:01"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			vilhelmina@colorama.se	0940-10007			Liftlossas							
+484452	"Colorama Ånge"	"Norra Borgsjövägen 18"	84132	ÅNGE	0		"2026-02-24 14:54:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			ange@colorama.se	69010222										
+484458	"Colorama Sundsvall"	"Antennvägen 16"	86337	Sundsvall	0		"2026-03-24 09:11:00"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			sundsvall@colorama.se	705188304			Liftlossas							
+484500	"Colorama Aneby"	"Köpmangatan 7"	57832	ANEBY	0		"2026-03-03 13:25:07"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			butik.aneby@colorama.se	38040056									Y	
+484503	"Colorama Älvsbyn"	"Storgatan 8"	"942 31"	ÄLVSBYN	0		"2026-03-03 09:08:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			butik@gardings.se	92955750			Liftlossas						Y	
+484521	"Colorama Gislaved"	"Järnvägsgatan 14"	33230	GISLAVED	0		"2026-03-03 22:01:00"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			gislaved@colorama.se	37110069										
+484524	"Colorama Tingsryd"	"Lokgatan 3"	36230	TINGSRYD	0		"2026-03-06 12:54:00"	Y					0	192	0	"MAX 135cm"		MG					61				jonas.soderberg@colorama.se	47731265										
+484550	"Colorama Lindesberg"	"Fotbollsgatan 4 B"	71134	LINDESBERG	0		"2026-04-23 08:16:13"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			lindesberg@colorama.se	58114505			Liftlossas						Y	
+484551	"Colorama Ljungby"	"Bolmstadsvägen 38"	34134	LJUNGBY	0		"2026-02-24 14:55:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			ljungby@colorama.se	37262028										
+484575	"Colorama Sala"	"Norrbygatan 11"	73331	SALA	0		"2026-03-24 09:32:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			sala@colorama.se	22410147			Liftlossas							
+484594	"Colorama Tvååker"	"Björkängsvägen 3"	43278	TVÅÅKER	0		"2026-02-24 14:56:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			tvaaker@colorama.se	34040162			"Bil med baklift , Öppnar kl 0900"							
+484597	"Colorama Grums"	"Industrigatan 24"	66434	GRUMS	0		"2026-02-24 14:56:00"	Y					0	192	0			MG					41	SWE			order.grums@colorama.se	0555-12320									Y	
+484601	"Colorama Älvängen"	"Svenstorpsvägen 25"	44638	ÄLVÄNGEN	0		"2026-03-03 13:26:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			alvangen@colorama.se	303746085									Y	
+484604	"Colorama Östhammar"	"Gammelbygatan 22"	74234	ÖSTHAMMAR	0		"2026-03-19 08:40:37"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			Andreas.Blomster@colorama.se	"0173-100 13"			Liftlossas						Y	
+484607	"Colorama Stockholm Folkungagatan"	"KOCKSGATAN 5"	"116 24"	STOCKHOLM	0		"2026-02-24 14:57:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			info@wirstroms.se	08-6400924										
+484609	"Colorama Malmö Limhamn"	"Linnégatan 85"	21615	LIMHAMN	0		"2026-03-24 09:35:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			limhamn@colorama.se	040162609			Liftlossas						Y	
+484612	"Colorama Stockholm Tyresö"	"Vendelsövägen 47"	13551	TYRESÖ	0		"2026-03-17 10:36:33"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			trollbacken@colorama.se	87127610									Y	
+484614	"Colorama Finspång"	"Norrköpingsvägen 36"	61244	FINSPÅNG	0		"2026-02-24 14:57:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					51	SWE			finspang@colorama.se	12218750			"Bil med baklift "						Y	
+484621	"Colorama Gävle"	"Strömsbrovägen 22"	80309	GÄVLE	0		"2026-03-23 22:02:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					80	SWE			gavle@colorama.se	26124420										
+484623	"Colorama Klippan"	"Karossvägen 1"	26431	KLIPPAN	0		"2026-03-03 10:01:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			klippan@colorama.se	43514262			Liftlossas							
+484629	"Colorama Höganäs"	"Brännerigatan 17 A"	26337	HÖGANÄS	0		"2026-02-24 14:59:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			hoganas@colorama.se	42341020										
+484632	"Färghuset Österport"	"Ronnebyvägen 1"	37430	KARLSHAMN	0		"2026-02-24 14:59:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			karlshamn@colorama.se	454301860										
+484645	"Colorama Karlskoga"	"Skrantabacken 38"	69142	KARLSKOGA	0		"2026-03-09 07:25:28"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			karlskoga@colorama.se	58638500									Y	
+484647	"Färg & Interiör i Timrå AB"	"Köpmangatan 53"	86131	TIMRÅ	0		"2026-02-24 14:59:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			timra@colorama.se	060-572610										
+484652	"Rosengrens Färgcenter"	"Idrottsvägen 4"	29333	OLOFSTRÖM	0		"2026-02-24 14:59:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			olofstrom@colorama.se	45446442										
+484653	"Ronneby Färg AB"	"Vierydsvägen 1"	37230	RONNEBY	0		"2026-03-24 09:13:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			ronneby@colorama.se	45713500										
+484655	"Colorama Stockholm Vällingby"	"Siktgatan 11"	16250	VÄLLINGBY	0		"2026-03-03 13:26:10"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			order.vallingby@colorama.se	8381192			Liftlossas						Y	
+484657	"Colorama Kristianstad"	"Björkhemsvägen 23"	29154	KRISTIANSTAD	0		"2026-03-17 13:28:18"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			kristianstad@colorama.se	44109330									Y	
+484658	"Colorama Hjo"	"Industrigatan 40"	54450	HJO	0		"2026-03-02 06:34:00"	Y					0	192	0	"MAX 135cm"		MG					65				hjo@colorama.se	50312338										
+484659	"Colorama Gällivare"	"Treenighetens väg 1"	98235	GÄLLIVARE	0		"2026-03-24 09:18:00"	Y					0	192	0	"MAX 135cm"		MG					59	SWE			order@gallivare.xlbygg.se	97078250									Y	
+484660	"Colorama Märsta Arlandastad"	"Servogatan 14"	19560	ARLANDASTAD	0		"2026-02-25 11:55:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			arlandastad@colorama.se	859441450			Liftlossas						Y	
+484664	"Colorama Stockholm Ekerö"	"Tunnlandsvägen 3"	17837	EKERÖ	0		"2026-03-24 09:17:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			ekero@colorama.se	856031340			Liftlossas							
+484667	"Colorama Mellerud"	"Verkstadsgatan 4"	46434	MELLERUD	0		"2026-02-25 11:55:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					82	SWE			daniel.feuerstein@colorama.se	53010277										
+484668	"Colorama Örkelljunga"	"Hammarsmedsgatan 7 A"	28632	ÖRKELLJUNGA	0		"2026-02-25 11:55:01"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			Order.orkelljunga@colorama.se	43552250										
+484669	"Colorama Mullsjö"	"Järnvägsgatan 21"	56532	MULLSJÖ	0		"2026-02-25 11:56:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			camilla.britsmar@colorama.se	39210660			Liftlossas							
+484672	"Colorama Visby"	"Österbyväg 8"	"621 41"	VISBY	0		"2026-03-17 10:36:41"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					47	SWE			inkop.visby@colorama.se	498259500									Y	
+484675	"Västsvenska Fasad och Träförädling AB"	"Kungsparksvägen 50"	43439	KUNGSBACKA	0		"2026-02-25 12:33:00"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			kungsbacka@colorama.se	300404080										
+484676	"Colorama Falkenberg"	"Kanslistvägen 14"	31139	FALKENBERG	0		"2026-02-25 12:33:00"	Y					0	192	0	"MAX 135cm"		MG					71	SWE			falkenberg@colorama.se	34613600									Y	
+484683	"Nya Ohrstedts Färg AB"	"Jannebergsvägen 6"	37432	KARLSHAMN	0		"2026-02-25 12:34:00"	Y					0	192	0	"MAX 135cm"		MG					63	SWE			butiken.janneberg@colorama.se	45410676										
+484687	"Colorama Bräcke"	"Riksvägen 22"	84060	BRÄCKE	0		"2026-02-25 12:34:00"	Y					0	192	0	"MAX 135cm"		MG					55	SWE			bracke@colorama.se	69310044										
+484694	"Colorama Stockholm Tomtebogatan"	"Tomtebogatan 14"	11339	STOCKHOLM	0		"2026-02-25 12:34:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					42	SWE			stockholmfargcenter@colorama.se	8320505			Liftlossas							
+484696	"Colorama Lund"	"Bondevägen 2"	22764	LUND	0		"2026-02-25 12:34:00"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					44	SWE			lund@colorama.se	46190950										
+484699	"Colorama Lycksele"	"Storgatan 99"	92132	LYCKSELE	0		"2026-03-24 09:12:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			lycksele@colorama.se	95027870			Liftlossas							
+484700	"Colorama Vännäsby"	"Företagsvägen 15"	91135	VÄNNÄSBY	0		"2026-02-25 12:35:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			vannasby@colorama.se	935150019			Liftlossas							
+484701	"Colorama Skellefteå"	"Tjärnvägen 18"	93161	SKELLEFTEÅ	0		"2026-03-24 09:15:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			skelleftea@colorama.se	0910-217010			Liftlossas							
+484702	"Colorama Askersund"	"Smidesvägen 3"	69633	ASKERSUND	0		"2026-04-08 15:36:10"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					40	SWE			henrik@xlbygg.se	58312035										
+484704	"Colorama Värnamo"	"Silkesvägen 4"	33153	VÄRNAMO	0		"2026-02-25 12:40:01"	Y					0	192	0	"MAX 135cm"		MG					67	SWE			varnamo@colorama.se	370695600									Y	
+484705	"Colorama Skövde"	"Gustav Adolfs gata 44"	"549 54"	SKÖVDE	0		"2026-03-26 08:16:30"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			skovde@colorama.se	500482222										
+484709	"Colorama Säffle"	"Norrlandsvägen 37"	66140	SÄFFLE	0		"2026-02-25 12:40:01"	Y					0	192	0			MG					41	SWE			saffle@colorama.se	53310988										
+484710	"Colorama Åmål"	"Lunnegatan 14"	66231	ÅMÅL	0		"2026-02-25 12:41:01"	Y					0	192	0			MG					41	SWE			amal@colorama.se	53218880										
+484725	"Colorama Örnsköldsvik"	"Vikingagatan 30"	89137	ÖRNSKÖLDSVIK	0		"2026-02-25 12:41:01"	Y					0	192	0	"MAX 135cm"		MG					53	SWE			info.ornskoldsvik@colorama.se	660211800			Liftlossas						Y	
+484727	"Colorama Kungsbacka"	"Kungsparksvägen 50"	43439	KUNGSBACKA	0		"2026-02-25 12:41:01"	Y					0	192	0	"MAX 135cm"		MG					73	SWE			kungsbacka@colorama.se	30074444									Y	
+484728	"Colorama Vara"	"Badhusgatan 30"	53450	VARA	0		"2026-02-25 12:41:01"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			vara@colorama.se	512180180									Y	
+484729	"Colorama Falköping"	"Lönnerbladsgatan 10"	52140	FALKÖPING	0		"2026-02-25 12:42:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			falkoping@colorama.se	515717550									Y	
+484730	"Colorama Skövde Stallsiken"	"Norra Metallvägen 1B"	54139	SKÖVDE	0		"2026-02-26 07:38:00"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			info.skovde@colorama.se	500500050									Y	
+484731	"Colorama Mark"	"Varbergsvägen 48"	51162	SKENE	0		"2026-03-03 13:26:33"	Y					0	192	0	"Bygg på höjden Max 180 cm"		MG					78	SWE			mark@colorama.se	32040268									Y	
+484735	"Colorama Karlstad"	"Örsholmsgatan 4"	65221	KARLSTAD	0		"2026-03-24 09:11:00"	Y					0	192	0			MG					41	SWE			info@fargbutikenkarlstad.se	54100894			Liftlossas						Y	
+1921042	"Colorama Billdal"	"Kungsporten 2A"	42750	BILLDAL	0		"2026-03-03 13:26:37"	Y					0	192	0			MG					73	SWE			billdal@colorama.se	031-915739									Y	
+1921493	"Happy Homes Mariestad"	"Stockholmsvägen 57"	54233	Mariestad	0		"2026-03-18 08:21:16"	Y					0	192	0	"MAX 135cm"		MG					65	SWE			toreboda@happyhomes.se	50610027			Liftlossas							
+1923039	"Färggiganten Vaxholm AB"				0		"2025-12-03 14:35:00"	Y					0	192	0			MG																				
+1923046	"Habo Färg & Design AB"	"Snickaregatan 2"	"566 33"	Habo	0		"2026-02-24 10:22:00"	Y					0	192	0			MG					67	SWE			habo@happyhomes.se	"036-405 21"										
+4843657	"Colorama Vårgårda"	"Wallentinsvägen 28"	44737	Vårgårda	0		"2026-02-24 14:35:01"	Y					0	192	0			MG					71	SWE			info.vargarda@colorama.se	0322651010										
+4843688	"Colorama Ängelholm"	"Verkstadsgatan 8"	26271	Ängelholm	0		"2026-03-31 09:11:01"	Y					0	192	0	"MAX 135cm"		MG					44	SWE			order.angelholm@colorama.se	"073-322 12 70"			Liftlossas							
+4844432	"Colorama Umeå"	"Formvägen 13"	90621	UMEÅ	0		"2026-02-24 14:53:00"	Y					0	192	0	"MAX 135cm"		MG					57	SWE			info.umea@colorama.se	90160660										
+4846283	"Colorama Växjö"	"Arabygatan 41"	35246	VÄXJÖ	0		"2026-02-24 14:58:00"	Y					0	192	0	"MAX 135cm"		MG					61	SWE			vaxjo@colorama.se	470707470										
+4846719	"Angbergs Färg i Filipstad AB (filial Forshaga)"	"Storgatan 43 A"	66730	FORSHAGA	0		"2026-02-25 11:56:01"	Y					0	192	0			MG					41	SWE			order.forshaga@colorama.se	054870189										
+999999999	"Test kunde produksjon"				0		"2025-10-21 09:44:00"	Y					0	192	0			MG																				
