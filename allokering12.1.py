@@ -2371,7 +2371,10 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
         art_col_ps = find_col(df, ORDER_SCHEMA["artikel"], required=False, default=None)
     except Exception:
         art_col_ps = None
-    groups = df.groupby([kund_col] if kund1_col is None else [kund_col, kund1_col])
+    if kund1_col is None:
+        groups = df.groupby(kund_col)
+    else:
+        groups = df.groupby([kund_col, kund1_col])
     records: list[dict] = []
     import math
     for keys, sub in groups:
@@ -2389,7 +2392,12 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
             top_A = 0
         mask_topH = (sub[zone_col] == "H") & (sub[stack_col] == "Y") & (sub[palltyp_col] != "SJÖ")
         top_H = int(mask_topH.sum())
-        mask_rf = sub[zone_col].isin({"R", "F"})
+        rows_F = int((sub[zone_col] == "F").sum())
+        if rows_F > 0:
+            top_F = math.ceil(rows_F / 20.0)
+        else:
+            top_F = 0
+        mask_rf = sub[zone_col] == "R"
         if art_col_ps and art_col_ps in sub.columns:
             mask_rf = mask_rf & ~sub[art_col_ps].astype(str).str.strip().isin(RF_PALLPLATS_EXCLUDE_ARTICLES)
         rows_R = int(mask_rf.sum())
@@ -2418,7 +2426,7 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
             top_S = 5
         mask_sjo = (sub[zone_col] == "H") & (sub[palltyp_col] == "SJÖ")
         S_rows = int(mask_sjo.sum())
-        T = top_A + top_H + top_R + top_S
+        T = top_A + top_H + top_R + top_S + top_F
         half_sum = (B + T) / 2.0
         P_component = math.ceil(half_sum)
         max_val = T if T > P_component else P_component
@@ -2430,6 +2438,7 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
         skrymme_pallar = top_S
         plockpall = top_A
         autostore_pallar = top_R
+        hib_pallar = top_F
         record = {
             "Kund": kund_val,
             "Kund1": kund1_val,
@@ -2439,6 +2448,7 @@ def compute_pallet_spaces(result_df: pd.DataFrame) -> pd.DataFrame:
             "Skrymme": skrymme_pallar,
             "Plockpall": plockpall,
             "autostore": autostore_pallar,
+            "HIB": hib_pallar,
             "Botten Pallar": B,
             "Topp Pallar": T,
             "Totalt Pallar": total_pallar,
