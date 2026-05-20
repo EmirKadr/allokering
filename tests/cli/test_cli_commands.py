@@ -371,3 +371,53 @@ def test_eftersok_cli_writes_report(tmp_path: Path, run_cli_cmd) -> None:
     report_text = report_out.read_text(encoding="utf-8")
     assert "PO1" in report_text
     assert "A1" in report_text
+
+
+def test_allocate_cli_counts_hib_pallet_spaces_separately_from_autostore(tmp_path: Path, run_cli_cmd) -> None:
+    orders_path = _write_csv(
+        tmp_path / "orders_hib.csv",
+        [
+            {
+                "Artikel": "F1",
+                "Antal": 1,
+                "Ordernr": f"OF{i}",
+                "Radnr": str(i),
+                "Kund": "Butik F",
+                "Zon": "F",
+            }
+            for i in range(21)
+        ],
+    )
+    buffer_path = _write_csv(
+        tmp_path / "buffer_hib.csv",
+        [
+            {
+                "Artikel": "B1",
+                "Antal": 1,
+                "Lagerplats": "H-01",
+                "Datum/Tid": "2024-01-01 08:00",
+                "PallID": "PB1",
+                "Status": 29,
+                "Palltyp": "EURO",
+            },
+        ],
+    )
+    pallet_out = tmp_path / "pallet_spaces_hib.csv"
+
+    completed = run_cli_cmd(
+        "allocate",
+        "--orders",
+        str(orders_path),
+        "--buffer",
+        str(buffer_path),
+        "--pallet-spaces-out",
+        str(pallet_out),
+        "--json",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    pallet_df = pd.read_csv(pallet_out, dtype=str, encoding="utf-8-sig")
+    assert pallet_df["Kund"].tolist() == ["Butik F"]
+    assert pallet_df["HIB"].tolist() == ["2"]
+    assert pallet_df["autostore"].tolist() == ["0"]
+    assert pallet_df["Pallplatser"].tolist() == ["2"]
