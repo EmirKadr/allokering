@@ -459,7 +459,7 @@ INVALID_LOC_EXACT: set[str] = {"TRANSIT", "TRANSIT_ERROR", "MISSING", "UT2"}
 
 ALLOC_BUFFER_STATUSES: set[int] = {29, 30, 32}
 REFILL_BUFFER_STATUSES: set[int] = {29, 30}
-ORDER_MAX_ALLOCATABLE_STATUS = 31
+ORDER_MAX_ALLOCATABLE_STATUS = 33
 
 # Vecka 27 - tak/hus -> tillåtna matchande gräsklippare (per order krävs minst lika många gräsklippare som tak)
 VECKA27_ROOF_TO_MOWERS: dict[str, frozenset[str]] = {
@@ -2805,7 +2805,7 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     """
     Allokera beställningsrader mot buffert enligt HELPALL→AUTOSTORE→HUVUDPLOCK.
     - Buffert filter: status {29,30,32} + platsfilter (ej AA*, TRANSIT, TRANSIT_ERROR, MISSING, UT2).
-    - Ignorera orderrader med Status > 31.
+    - Ignorera orderrader med Status > 33.
     Returnerar (allocated_df, near_miss_df).
     """
     def _log(msg: str):

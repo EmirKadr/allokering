@@ -73,20 +73,20 @@ def test_allocate_cli_writes_result_and_near_miss_files(tmp_path: Path, run_cli_
     assert near_df.empty
 
 
-def test_allocate_cli_ignores_order_rows_above_status_31(tmp_path: Path, run_cli_cmd) -> None:
+def test_allocate_cli_ignores_order_rows_above_status_33(tmp_path: Path, run_cli_cmd) -> None:
     orders_path = _write_csv(
         tmp_path / "orders_status.csv",
         [
-            {"Artikel": "A31", "Antal": 1, "Ordernr": "O31", "Radnr": "1", "Status": 31, "Zon": "A"},
-            {"Artikel": "A32", "Antal": 1, "Ordernr": "O32", "Radnr": "1", "Status": 32, "Zon": "A"},
+            {"Artikel": "A33", "Antal": 1, "Ordernr": "O33", "Radnr": "1", "Status": 33, "Zon": "A"},
+            {"Artikel": "A34", "Antal": 1, "Ordernr": "O34", "Radnr": "1", "Status": 34, "Zon": "A"},
             {"Artikel": "A40", "Antal": 1, "Ordernr": "O40", "Radnr": "1", "Status": 40, "Zon": "A"},
         ],
     )
     buffer_path = _write_csv(
         tmp_path / "buffer_status.csv",
         [
-            {"Artikel": "A31", "Antal": 1, "Lagerplats": "H31", "Datum/Tid": "2024-01-01 10:00", "PallID": "P31", "Status": 29},
-            {"Artikel": "A32", "Antal": 1, "Lagerplats": "H32", "Datum/Tid": "2024-01-01 10:00", "PallID": "P32", "Status": 29},
+            {"Artikel": "A33", "Antal": 1, "Lagerplats": "H33", "Datum/Tid": "2024-01-01 10:00", "PallID": "P33", "Status": 29},
+            {"Artikel": "A34", "Antal": 1, "Lagerplats": "H34", "Datum/Tid": "2024-01-01 10:00", "PallID": "P34", "Status": 29},
             {"Artikel": "A40", "Antal": 1, "Lagerplats": "H40", "Datum/Tid": "2024-01-01 10:00", "PallID": "P40", "Status": 29},
         ],
     )
@@ -108,8 +108,8 @@ def test_allocate_cli_ignores_order_rows_above_status_31(tmp_path: Path, run_cli
     assert payload["result_rows"] == 1
 
     result_df = pd.read_csv(result_out, dtype=str, encoding="utf-8-sig")
-    assert result_df["Ordernr"].tolist() == ["O31"]
-    assert result_df["Artikel"].tolist() == ["A31"]
+    assert result_df["Ordernr"].tolist() == ["O33"]
+    assert result_df["Artikel"].tolist() == ["A33"]
 
 
 def test_ordersaldo_cli_writes_shortage_report(tmp_path: Path, run_cli_cmd) -> None:
