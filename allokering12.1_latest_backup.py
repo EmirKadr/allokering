@@ -459,6 +459,7 @@ INVALID_LOC_EXACT: set[str] = {"TRANSIT", "TRANSIT_ERROR", "MISSING", "UT2"}
 
 ALLOC_BUFFER_STATUSES: set[int] = {29, 30, 32}
 REFILL_BUFFER_STATUSES: set[int] = {29, 30}
+ORDER_MAX_ALLOCATABLE_STATUS = 31
 
 # Vecka 27 - tak/hus -> tillåtna matchande gräsklippare (per order krävs minst lika många gräsklippare som tak)
 VECKA27_ROOF_TO_MOWERS: dict[str, frozenset[str]] = {
@@ -2804,7 +2805,7 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
     """
     Allokera beställningsrader mot buffert enligt HELPALL→AUTOSTORE→HUVUDPLOCK.
     - Buffert filter: status {29,30,32} + platsfilter (ej AA*, TRANSIT, TRANSIT_ERROR, MISSING, UT2).
-    - Ignorera orderrader med Status=35.
+    - Ignorera orderrader med Status > 31.
     Returnerar (allocated_df, near_miss_df).
     """
     def _log(msg: str):
@@ -2843,12 +2844,12 @@ def allocate(orders_raw: pd.DataFrame, buffer_raw: pd.DataFrame, log=None) -> Tu
         _status_str = orders[order_status_col].astype(str).str.strip()
         _status_num = pd.to_numeric(_status_str.str.extract(r"(-?\d+)")[0], errors="coerce")
         _before = len(orders)
-        orders = orders[~(_status_num == 35)].copy()
+        orders = orders[~(_status_num > ORDER_MAX_ALLOCATABLE_STATUS)].copy()
         _removed = _before - len(orders)
         if _removed:
-            _log(f"Ignorerar {_removed} orderrad(er) pga Status = 35.")
+            _log(f"Ignorerar {_removed} orderrad(er) pga Status > {ORDER_MAX_ALLOCATABLE_STATUS}.")
     else:
-        _log("OBS: Ingen order-statuskolumn hittad; kan inte filtrera Status = 35.")
+        _log(f"OBS: Ingen order-statuskolumn hittad; kan inte filtrera Status > {ORDER_MAX_ALLOCATABLE_STATUS}.")
 
     buffer_df = buffer_raw.copy()
     buffer_df["_artikel"] = buffer_df[buff_article_col].astype(str).str.strip()
