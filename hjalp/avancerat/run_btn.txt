@@ -5,7 +5,7 @@ Funktionen run_allocation() orchestrerar hela flödet:
 1. Läser orders- och buffer-CSV via normalize_*()-funktioner med fuzzy kolumnmatchning (find_col).
 2. Kör allocate(orders_df, buffer_df) – FIFO-allokering i tre prioritetssteg:
    • HELPALL (H) → AUTOSTORE (A/R) → HUVUDPLOCK (A)
-   • Orderrader med Status > 31 ignoreras.
+   • Orderrader med Status > 33 ignoreras.
 3. Kör calculate_refill() för påfyllningsbehov.
 4. Kör compute_pallet_spaces() för pallplatsrapport.
 5. Filtrerar buffert på ALLOC_BUFFER_STATUSES = {29, 30, 32}.
